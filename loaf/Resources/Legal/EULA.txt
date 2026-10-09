@@ -1,0 +1,83 @@
+Effective October 8, 2026 · version 1.3
+
+This End User License Agreement is between you and Owen Van Vooren, an independent developer in Minnesota, United States (“Owen,” “I,” or “licensor”), for the loaf Mac application, including its first-party components, documentation, and updates (“loaf”). Contact: [hi@tryloaf.app](mailto:hi@tryloaf.app).
+
+## Acceptance and eligibility
+
+Before first use, loaf presents this agreement and the linked Proprietary License and asks you to choose “agree and continue.” That action records your affirmative acceptance of both documents. Installing or downloading loaf, including through Homebrew, does not itself mean you have accepted. If you do not agree, choose “quit loaf” and do not use the app. Changed agreement documents included with an updated version are presented again before you use that version. Visiting the website or reading this agreement alone is not acceptance. You must have legal capacity to enter this agreement; where permitted, a parent or guardian may accept and take responsibility for a minor’s use. If accepting for an organization, you must be authorized to bind it.
+
+loaf does not require an account or contact address. Your acceptance receipt stays on your Mac and is not sent to Owen. Acceptance does not subscribe you to emails or give Owen a way to identify or contact you.
+
+## Your license
+
+Subject to this agreement, you receive a limited, non-exclusive, non-transferable license to install and use unmodified, authorized copies of loaf on compatible Macs you own or control, for personal or internal business use. You may make a reasonable backup for that use. loaf is currently free to use; that does not make it public domain or grant source-code rights. Changes to the price or terms of future offerings will not retroactively create a charge for a copy already licensed as free.
+
+loaf is licensed, not sold. Owen retains ownership of first-party code, designs, artwork, documentation, and other intellectual property. No trademark license or ownership transfer is granted. Source deliberately published for transparency may be reviewed only under the review and testing permission in the [Proprietary License](https://tryloaf.app/license) (“Proprietary License”). Third-party software, fonts, filter data, and other materials remain subject to their own licenses and rights. Those licenses prevail for their respective materials; this agreement does not restrict rights they grant.
+
+## Restrictions and lawful exceptions
+
+Except as this agreement, the Proprietary License, applicable law, or a relevant third-party license permits, you may not redistribute loaf or its modified binaries, sell or sublicense it, offer it as a hosted service to others, remove ownership or license notices, bypass license or security controls, or use first-party code, artwork, or branding in another product. You may not reverse engineer, decompile, disassemble, or create derivative works of first-party components except where applicable law permits despite this restriction, including lawful interoperability work.
+
+This agreement does not prohibit security research or disclosures protected by law, fair use, or other non-waivable rights. Permission for uses outside the license can be requested at hi@tryloaf.app. Linking to the official download page is permitted.
+
+You are responsible for using loaf lawfully, having rights to content you submit, respecting website and service terms, and avoiding unauthorized access, malware, abuse, or interference with others. You remain responsible for your device, backups, permissions, extensions, account security, and actions taken through loaf.
+
+## Privacy and outside services
+
+The [privacy policy](https://tryloaf.app/privacy) explains local storage, optional network features, updates, and support. Acceptance of this agreement is not consent to unrelated processing or permission to access your camera, microphone, location, or other protected resources. Any consent or system permission required for an optional feature is requested separately.
+
+Search suggestions are off by default in a fresh installation. You may enable them during onboarding or in search settings, and turn them off again there. Enabling suggestions allows your selected suggestion provider to receive relevant text as you type, as described in the privacy policy; they remain off in private browsing. Updating loaf preserves existing saved choices. Accepting this agreement does not enable search suggestions or remote site discovery.
+
+Websites, search engines, extensions, AI providers, weather services, Apple frameworks, and distribution services are operated by third parties. Their terms, permissions, licenses, availability, and privacy practices apply independently. Owen does not control or warrant their content, conduct, accuracy, security, or continued availability. Third-party references do not imply endorsement. Apple is not a party to this agreement or responsible for providing support for loaf.
+
+## Development builds, updates, and support
+
+Pre-release builds and experimental features may be incomplete, incompatible, unstable, or changed or removed. Chrome extension compatibility varies. AI output can be incorrect; verify it before relying on it. Keep backups and use particular care with important accounts or data.
+
+Update checks and installation follow loaf’s updater controls and applicable macOS permissions. Updates may change features, compatibility, or system requirements. No particular feature, maintenance period, support response, security fix, or uninterrupted availability is promised unless separately agreed in writing. Services and future distribution may end. Ending a service does not by itself revoke your license to an existing authorized copy.
+
+Materially changed license terms for a future version must be presented for acceptance where required; merely posting a change does not replace the agreement for an already licensed copy. Security or legal requirements may prevent continued operation of an outside service.
+
+## Disclaimer of warranties
+
+**TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, LOAF, ITS DOCUMENTATION, UPDATES, AND ASSOCIATED SERVICES ARE PROVIDED “AS IS” AND “AS AVAILABLE,” WITH ALL FAULTS. OWEN DISCLAIMS ALL EXPRESS, IMPLIED, AND STATUTORY WARRANTIES, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, AND WARRANTIES ARISING FROM COURSE OF DEALING OR USAGE OF TRADE.**
+
+**NO WARRANTY IS MADE THAT LOAF WILL BE ERROR-FREE, SECURE, UNINTERRUPTED, COMPATIBLE WITH EVERY DEVICE, WEBSITE, OR EXTENSION, OR THAT DATA WILL BE PRESERVED, RECOVERABLE, OR FREE FROM UNAUTHORIZED ACCESS. YOU ASSUME THE RISKS OF INSTALLATION, USE, AND RELIANCE ON ITS OUTPUT. ADVICE OR SUPPORT DOES NOT CREATE A WARRANTY UNLESS EXPRESSLY AGREED IN WRITING.**
+
+These disclaimers do not exclude consumer guarantees or other warranties that cannot lawfully be excluded. They apply only to the extent permitted in your jurisdiction.
+
+## Limitation of liability
+
+**TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, OWEN WILL NOT BE LIABLE FOR INDIRECT, INCIDENTAL, CONSEQUENTIAL, SPECIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR LOST PROFITS, REVENUE, BUSINESS OPPORTUNITIES, GOODWILL, DATA, CREDENTIALS, OR USE; BUSINESS INTERRUPTION; OR COSTS OF SUBSTITUTE PRODUCTS OR DATA RECOVERY, ARISING OUT OF OR RELATED TO LOAF OR THIS AGREEMENT, EVEN IF ADVISED OF THE POSSIBILITY.**
+
+**TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, OWEN’S TOTAL AGGREGATE LIABILITY ARISING OUT OF OR RELATED TO LOAF AND THIS AGREEMENT WILL NOT EXCEED THE GREATER OF US $100 OR THE AMOUNTS YOU PAID OWEN FOR LOAF IN THE TWELVE MONTHS BEFORE THE EVENT GIVING RISE TO THE CLAIM. RELATED CLAIMS DO NOT MULTIPLY THIS CAP.**
+
+These limitations apply regardless of the legal theory, including contract, warranty, tort, ordinary negligence, or strict liability, to the extent permitted by law. They do not exclude or limit liability for fraud, gross negligence, reckless or willful misconduct, death or personal injury, or any other liability to the extent it cannot lawfully be excluded or limited. Non-waivable statutory remedies remain available. If a limitation is invalid or a limited remedy fails its essential purpose, the remaining provisions apply only as the law permits.
+
+## Claims caused by unlawful misuse
+
+To the extent permitted by law, you agree to indemnify Owen for reasonable losses, third-party claims, and legal expenses directly caused by your unlawful use of loaf, your infringement of third-party rights, or your material breach of this agreement. This obligation does not cover losses caused by Owen’s own breach, negligence, or other wrongdoing. Owen must promptly notify you, reasonably cooperate at your expense, and not settle a claim imposing an obligation on you without your consent. You may control the defense of a covered claim using qualified counsel reasonably acceptable to Owen. Owen may participate through separate counsel at his own expense. If you do not assume the defense within a reasonable time after notice, Owen may defend the claim and seek reimbursement only for reasonable costs covered by this section. You may not settle a claim in a way that admits fault by Owen, imposes a non-monetary obligation on him, or fails to release him from the covered claim without his written consent, which will not be unreasonably withheld. Mandatory consumer protections remain unaffected.
+
+## Suggestions and feedback
+
+If you voluntarily send ideas, suggestions, or other non-code product feedback about loaf, you grant Owen a non-exclusive, worldwide, perpetual, irrevocable, royalty-free right to use, reproduce, adapt, and incorporate that feedback into loaf and related materials, without payment or attribution. This grant applies only to rights you can grant and does not transfer ownership of unrelated work. Do not send confidential ideas that you expect me to keep secret under an agreement we have not made. Private bug reports and correspondence remain subject to the privacy policy; this clause does not authorize publishing personal information, credentials, private report text, or confidential security details.
+
+Source-code patches and other code contributions are not accepted under this feedback clause. They require a separate written agreement as explained in the Proprietary License. A message alone does not grant permission to reuse someone else’s code.
+
+## Export compliance
+
+You must comply with applicable export-control and economic-sanctions laws, including applicable United States laws. You may not export, re-export, transfer, or use loaf where a required authorization has not been obtained, for a prohibited end use, or for a person or destination subject to an applicable prohibition. This clause does not claim that a license is required for every download or transfer, and does not replace either party’s independent legal obligations.
+
+## Termination
+
+Your license ends if you materially breach this agreement and do not remedy a remediable breach within thirty days after written notice is delivered to you. Individual notice may be sent by email or other written correspondence using contact details reasonably available to Owen. loaf does not collect an address at acceptance or provide a way to send an individual termination notice inside the app. A general website post or app update alone is not individual termination notice. The cure period starts only when notice is delivered; if notice cannot be delivered, this thirty-day termination procedure does not operate. For a breach posing an immediate security threat, involving unlawful use, or incapable of remedy, termination may be immediate to the extent permitted by law. You may end the license by stopping use and deleting your copies.
+
+On termination, stop using and remove first-party copies you control, except legally required archival copies that are not used. Termination does not require deleting independently licensed third-party materials or eliminate accrued rights and mandatory remedies. Ownership, applicable restrictions, disclaimers, liability limits, and provisions intended to survive continue to apply.
+
+## Governing law and other terms
+
+Minnesota law governs, excluding conflict-of-law rules, to the extent permitted by applicable law. Disputes may be brought in competent state or federal courts in Minnesota, subject to mandatory rights to bring claims in your home jurisdiction and any other non-waivable consumer protections. This agreement does not require arbitration or waive rights to a jury trial, class proceedings, or statutory complaints.
+
+This agreement and the [Proprietary License](https://tryloaf.app/license) form the agreement concerning use of loaf and replace earlier statements on that subject. The privacy policy separately describes processing; third-party licenses and separately signed agreements remain effective for their subject matter. A failure to enforce a provision is not a waiver. If a provision is unenforceable, it is limited only as needed if lawful, and the rest remains effective. You may not assign this agreement without permission except as the law requires. Any licensor assignment remains subject to existing obligations and mandatory rights. No third party gains enforcement rights under this agreement.
+
+Questions, permissions, or legal notices: [hi@tryloaf.app](mailto:hi@tryloaf.app).

@@ -1,0 +1,43 @@
+Copyright © 2026 Owen Van Vooren. All rights reserved.
+
+Proprietary License · effective October 8, 2026 · version 1.1
+
+## Source inspection and proprietary license
+
+loaf’s first-party source code, application binaries, designs, artwork, documentation, and other first-party materials are proprietary. They are not open source, public domain, or offered under an open-source license. Publishing source for transparency does not make it open source. Access to a repository or the ability to inspect a file does not grant permission to reuse it.
+
+Authorized end users may install and use distributed, unmodified loaf binaries under the [End User License Agreement](https://tryloaf.app/terms). That binary-use license does not grant rights to the first-party source code beyond the separate review permissions below. loaf is currently free to use; free distribution does not waive ownership or these restrictions.
+
+Except for the review, testing, excerpt, and GitHub permissions below, the EULA’s express permissions, a separate written agreement, applicable law, or rights granted by a relevant third-party license, you may not copy, modify, redistribute, sublicense, sell, publish, create derivative works of, or incorporate first-party materials into another product. You may not remove copyright notices or use loaf’s name or branding to imply endorsement. You may link to the official website and download page.
+
+No patent, trademark, ownership, or additional source-code license is granted by implication. Rights not expressly granted are reserved. This notice does not prohibit legally protected fair use, interoperability, security research, or other non-waivable rights. Repository access granted for a specific collaboration remains subject to that collaboration’s written authorization; it is not a general redistribution license.
+
+## Source review and personal testing
+
+When Owen deliberately publishes first-party source for transparency, you may view it, make unmodified local copies, and compile and run it privately on Macs you control solely for personal review, security research, reproducibility checks, and testing. Changes strictly necessary to build the published version in your local environment are permitted for that review; this does not permit feature changes, derivative products, general reuse, or distribution. Review builds are not offered as supported releases. Their use is subject to the EULA’s applicable warranty disclaimers and liability provisions, without removing non-waivable rights.
+
+You may fork the published repository on GitHub to the extent GitHub’s governing terms allow. That platform permission does not grant a broader right to reuse the code, publish modifications, distribute binaries, create an independently hosted mirror, or operate a derivative product. A GitHub fork must retain notices; no wider license is implied. The restrictions below do not prohibit GitHub forks expressly allowed in this paragraph.
+
+Outside those GitHub platform rights, you may not publish or redistribute first-party source or review builds, or use the source for other purposes, without written permission, except as applicable law allows. Do not imply that a review build or fork is an official loaf release. A local review build does not grant an app-signing identity, proprietary font redistribution rights, production service credentials, or access to someone else’s accounts.
+
+## Short excerpts and reports
+
+You may quote limited source excerpts reasonably necessary to discuss, review, explain a finding, or report a bug or security issue, with attribution and a link to the original source where practical. This includes reviews, blog posts, and private reports. The permission does not cover wholesale copying, reconstructing substantial portions of the project, or incorporating excerpts into another product. Redact credentials and personal information; disclose sensitive security details privately before public disclosure where appropriate. Legally protected disclosure and fair-use rights remain unaffected.
+
+## Contributions
+
+Unsolicited outside code contributions are not currently accepted. Do not submit a pull request or patch expecting it to be merged. Submitting code does not transfer its ownership or authorize Owen to relicense it; code will not be incorporated without a separate written contribution agreement. Non-code suggestions are welcome and are governed by the EULA’s feedback clause. This policy does not prevent reporting bugs or security issues, including the limited excerpts permitted above.
+
+This is a proprietary, source-available license, not an open-source license. All review, testing, excerpt, and platform permissions above are limited to their stated purposes. Third-party licenses and mandatory legal rights remain independently effective.
+
+## Third-party materials
+
+Third-party components retain their respective copyrights, notices, and licenses. This proprietary license does not replace or restrict those licenses. In particular, Sparkle, ZIPFoundation, AdGuard filter data, fonts, Apple frameworks, and extension packages are not claimed as Owen’s original work. Applicable notices and license texts accompany the distributed components. AdGuard filter data is licensed separately under the GNU General Public License version 3; it must not be represented as proprietary first-party code.
+
+Where a third-party license requires notices, corresponding source, or other permissions, those requirements and rights apply to that component. They are not withdrawn by this notice. A component’s inclusion does not, by itself, grant a license to unrelated first-party materials. Contact hi@tryloaf.app about a missing notice or a component-specific source request.
+
+## No warranty
+
+**TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, FIRST-PARTY MATERIALS ARE PROVIDED “AS IS,” WITHOUT WARRANTIES, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, OR NON-INFRINGEMENT. LIABILITY FOR END-USER USE IS SUBJECT TO THE EULA, INCLUDING ITS EXCEPTIONS FOR NON-WAIVABLE RIGHTS AND LIABILITIES.**
+
+This notice does not give someone who lacks a license permission to use the materials. For permissions beyond the EULA, contact [hi@tryloaf.app](mailto:hi@tryloaf.app).

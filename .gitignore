@@ -1,0 +1,12 @@
+/*
+!/.gitignore
+!/LICENSE
+!/README.md
+!/loaf/
+!/loaf.xcodeproj/
+
+.DS_Store
+*.xcuserstate
+xcuserdata/
+__pycache__/
+*.pyc

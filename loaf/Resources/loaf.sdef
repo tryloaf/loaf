@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dictionary title="loaf">
+  <suite name="loaf" code="Loaf" description="Browse and automate loaf.">
+    <class name="application" code="capp" description="loaf">
+      <cocoa class="NSApplication"/>
+      <element type="window"><cocoa key="scriptWindows"/></element>
+      <responds-to command="make"><cocoa method="handleBrowserScriptCommand:"/></responds-to>
+    </class>
+    <class name="window" code="cwin" description="A browser window.">
+      <cocoa class="LoafScriptWindow"/>
+      <property name="id" code="ID  " type="text" access="r"><cocoa key="scriptID"/></property>
+      <property name="name" code="pnam" type="text" access="r"/>
+      <property name="visible" code="pvis" type="boolean"/>
+      <property name="bounds" code="pbnd" description="Window edges in screen coordinates: left, top, right, bottom."><type type="integer" list="yes"/></property>
+      <property name="active tab" code="ATab" type="tab"><cocoa key="activeTab"/></property>
+      <element type="tab"><cocoa key="tabs"/></element>
+      <responds-to command="make"><cocoa method="handleBrowserScriptCommand:"/></responds-to>
+      <responds-to command="close"><cocoa method="handleBrowserScriptCommand:"/></responds-to>
+    </class>
+    <class name="tab" code="ctab" description="A tab in a browser window.">
+      <cocoa class="LoafScriptTab"/>
+      <property name="id" code="ID  " type="text" access="r"><cocoa key="scriptID"/></property>
+      <property name="name" code="pnam" type="text" access="r"/>
+      <property name="URL" code="pURL" type="text"/>
+      <property name="muted" code="Mute" type="boolean"/>
+      <property name="loading" code="Load" type="boolean" access="r"/>
+      <responds-to command="close"><cocoa method="handleBrowserScriptCommand:"/></responds-to>
+      <responds-to command="reload"><cocoa method="handleBrowserScriptCommand:"/></responds-to>
+      <responds-to command="select"><cocoa method="handleBrowserScriptCommand:"/></responds-to>
+      <responds-to command="go back"><cocoa method="handleBrowserScriptCommand:"/></responds-to>
+      <responds-to command="go forward"><cocoa method="handleBrowserScriptCommand:"/></responds-to>
+    </class>
+    <command name="count" code="corecnte"><cocoa class="NSCountCommand"/><direct-parameter type="specifier"/><parameter name="each" code="kocl" type="type" optional="yes" hidden="yes"><cocoa key="ObjectClass"/></parameter><result type="integer"/></command>
+    <command name="exists" code="coredoex"><cocoa class="NSExistsCommand"/><direct-parameter type="any"/><result type="boolean"/></command>
+    <command name="quit" code="aevtquit"><cocoa class="NSQuitCommand"/></command>
+    <command name="make" code="corecrel"><cocoa class="LoafCreateScriptCommand"/><parameter name="new" code="kocl" type="type"><cocoa key="ObjectClass"/></parameter><parameter name="at" code="insh" type="location specifier" optional="yes"><cocoa key="Location"/></parameter><parameter name="with properties" code="prdt" type="record" optional="yes"><cocoa key="KeyDictionary"/></parameter><result type="specifier"/></command>
+    <command name="open location" code="GURLGURL"><cocoa class="LoafBrowserScriptCommand"/><direct-parameter type="text"/><result type="tab"/></command>
+    <command name="open tab" code="LoafNTab"><cocoa class="LoafBrowserScriptCommand"/><direct-parameter type="text" optional="yes"/><parameter name="in window" code="Wher" type="window" optional="yes"><cocoa key="window"/></parameter><result type="tab"/></command>
+    <command name="close" code="coreclos"><cocoa class="LoafBrowserScriptCommand"/><direct-parameter type="specifier"/></command>
+    <command name="reload" code="LoafRlod"><cocoa class="LoafBrowserScriptCommand"/><direct-parameter type="tab" optional="yes"/></command>
+    <command name="select" code="LoafSlct"><cocoa class="LoafBrowserScriptCommand"/><direct-parameter type="tab"/></command>
+    <command name="go back" code="LoafBack"><cocoa class="LoafBrowserScriptCommand"/><direct-parameter type="tab" optional="yes"/></command>
+    <command name="go forward" code="LoafFrwd"><cocoa class="LoafBrowserScriptCommand"/><direct-parameter type="tab" optional="yes"/></command>
+    <command name="do JavaScript" code="LoafDoJS"><cocoa class="LoafBrowserScriptCommand"/><direct-parameter type="text"/><parameter name="in tab" code="Wher" type="tab" optional="yes"><cocoa key="tab"/></parameter><result type="any"/></command>
+  </suite>
+</dictionary>

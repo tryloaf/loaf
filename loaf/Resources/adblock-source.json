@@ -1,0 +1,7 @@
+{
+  "source": "AdGuard DNS filter",
+  "url": "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt",
+  "retrieved": "2026-09-29",
+  "domains": 175768,
+  "scope": "Exact domain rules and domain exceptions only. No cosmetics or scriptlets."
+}
