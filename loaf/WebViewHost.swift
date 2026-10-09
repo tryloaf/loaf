@@ -441,8 +441,8 @@ struct WebViewHost: NSViewRepresentable {
         return host
     }
     func updateNSView(_ host: HostView, context: Context) {
-        // SwiftUI may update the retiring split host after constructing its replacement.
-        // Only the latest host may move this tab’s live web view.
+
+
         guard tab.webViewHost === host else { return }
         guard !tab.isDisposed else {
             host.cancelResizeSnapshot()
@@ -472,8 +472,8 @@ struct WebViewHost: NSViewRepresentable {
         let view = tab.webView
         view.removeFromSuperview()
         view.translatesAutoresizingMaskIntoConstraints = true
-        // A newly constructed SwiftUI host often has zero bounds until layout.
-        // Collapsing a live viewport can advance scroll-snap pages (YouTube Shorts).
+
+
         if host.bounds.width > 0, host.bounds.height > 0 { view.frame = host.bounds }
         view.autoresizingMask = []
         host.addSubview(view)

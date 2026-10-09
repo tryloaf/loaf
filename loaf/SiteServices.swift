@@ -45,6 +45,8 @@ enum AssetRequest {
     private struct Pending {
         let id: UUID
         let task: Task<NSImage?, Never>
+        let declared: [URL]
+        let discoverPage: Bool
     }
     private var pending: [String: Pending] = [:]
     init(directory: URL, fetch: @escaping (URL) async throws -> Data = { try await AssetRequest.data($0) }) {
@@ -80,19 +82,27 @@ enum AssetRequest {
         remember(image, key: "normal" + origin)
         return image
     }
-    func image(for url: URL, privateID: UUID? = nil, declared: [URL] = [], refresh: Bool = false, quick: Bool = false) async -> NSImage? {
+    func image(for url: URL, privateID: UUID? = nil, declared: [URL] = [], refresh: Bool = false, quick: Bool = false, discoverPage: Bool = true) async -> NSImage? {
         guard let origin = BrowserAddress.websiteOrigin(url) else { return nil }
         let key = (privateID?.uuidString ?? "normal") + origin
         let generation = privateID.map { privateGenerations[$0, default: 0] }
         func valid() -> Bool { privateID.map { privateGenerations[$0, default: 0] == generation } ?? true }
         if !refresh, let image = memory[key] { return image }
         if let request = pending[key] {
-            let image = await request.task.value
-            guard valid() else { return nil }
-            if let image { return image }
-            if pending[key]?.id == request.id { pending[key] = nil }
-            if declared.isEmpty { return nil }
+
+
+            if !declared.isEmpty && request.declared != declared
+                || !discoverPage && request.discoverPage && request.declared.isEmpty {
+                pending.removeValue(forKey: key)?.task.cancel()
+            } else {
+                let image = await request.task.value
+                guard valid(), !Task.isCancelled else { return nil }
+                if let image { return image }
+                if pending[key]?.id == request.id { pending[key] = nil }
+                if declared.isEmpty { return nil }
+            }
         }
+        guard !Task.isCancelled else { return nil }
         if declared.isEmpty, let failed = failures[key], Date().timeIntervalSince(failed) < 60 { return nil }
         let file = cacheFile(for: origin)
         let assets = assets
@@ -122,7 +132,7 @@ enum AssetRequest {
                 PublicSuffixList.shared.registrableDomain(url.host ?? "") == "reddit.com"
                 ? [URL(string: "https://www.redditstatic.com/shreddit/assets/favicon/192x192.png")!] : []
             var discovered = declared
-            if discovered.isEmpty, let pageURL = URL(string: origin), let data = try? await fetch(pageURL),
+            if discoverPage, discovered.isEmpty, let pageURL = URL(string: origin), let data = try? await fetch(pageURL),
                 data.count <= 512_000, !Task.isCancelled, let html = String(data: data, encoding: .utf8)
             {
                 discovered = Self.declaredIcons(in: html, relativeTo: pageURL)
@@ -142,9 +152,10 @@ enum AssetRequest {
             return nil
         }
         let id = UUID()
-        pending[key] = Pending(id: id, task: task)
+        pending[key] = Pending(id: id, task: task, declared: declared, discoverPage: discoverPage)
         let result = await task.value
-        if pending[key]?.id == id { pending[key] = nil }
+        guard pending[key]?.id == id else { return valid() ? memory[key] : nil }
+        pending[key] = nil
         guard valid() else { return nil }
         if let result {
             remember(result, key: key)

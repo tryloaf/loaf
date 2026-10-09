@@ -88,7 +88,11 @@ struct StartWidgetDragHandle: NSViewRepresentable {
                 if !frame.insetBy(dx: -16, dy: -16).contains(screenPoint) {
                     sourceRemoved?()
                     if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-                        NSAnimationEffect.poof.show(centeredAt: screenPoint, size: .zero) {}
+                        if #available(macOS 14.0, *) {
+                            NSCursor.disappearingItem.set()
+                        } else {
+                            NSAnimationEffect.poof.show(centeredAt: screenPoint, size: .zero) {}
+                        }
                     }
                 }
             }

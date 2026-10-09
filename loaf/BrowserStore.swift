@@ -270,6 +270,11 @@ import WebKit
         return adapter
     }
     func forgetProfile(_ profileID: UUID) {
+        if selectedProfileID == profileID,
+            let fallback = application.profiles.first(where: { $0.id != profileID && !$0.privateMode }) {
+            switchProfile(fallback.id)
+        }
+        if editingProfileID == profileID { editingProfileID = nil }
         sidebarEntryCache = nil
         for (id, tab) in groupPreviews where tab.profileID == profileID {
             tab.dispose()
@@ -281,19 +286,18 @@ import WebKit
         }
         cancelPasswordFill()
         if passwordOffer?.profileID == profileID { passwordOffer = nil }
-        for tab in runtime(for: profileID).tabs.values.filter({ $0.windowID == id }) {
+        let forgottenTabs = application.runtimes[profileID]?.tabs.values.filter { $0.windowID == id } ?? []
+        for tab in forgottenTabs {
             tab.dispose()
             tabObservers.removeValue(forKey: tab.id)
-            runtime(for: profileID).tabs.removeValue(forKey: tab.id)
+            restoredInteractionStates.removeValue(forKey: tab.id)
+            application.runtimes[profileID]?.tabs.removeValue(forKey: tab.id)
         }
         workspaces.removeValue(forKey: profileID)
         restoredProfiles.remove(profileID)
         closedTabs.removeValue(forKey: profileID)
+        recentTabIDs.removeValue(forKey: profileID)
         adapters.removeValue(forKey: profileID)
-        if selectedProfileID == profileID, let fallback = application.profiles.first(where: { !$0.privateMode }) {
-            selectedProfileID = fallback.id
-            restoreTabs(for: fallback.id)
-        }
     }
     func dispose() {
         restoredInteractionStates.removeAll()
@@ -423,6 +427,8 @@ import WebKit
     }
 
     func select(_ tab: BrowserTab) {
+        selectedTab?.clearHoveredLink()
+        tab.clearHoveredLink()
         if workspaces[tab.profileID]?.tabs.contains(where: { $0.id == tab.id }) != true, tab.groupMemberID != nil {
             let open = openGroupMember(tab)
             if open !== tab { select(open) }
@@ -552,6 +558,23 @@ import WebKit
             tab.sleeping = true
         }
         select(tab)
+    }
+
+    func dismissOmnibar() {
+        omnibarVisible = false
+        omnibarCreatesTab = false
+        omnibarBufferedInput = false
+        omnibarQuery = ""
+        omnibarOriginalURL = nil
+        omnibarFocusID = UUID()
+        OmnibarTextField.fields.removeValue(forKey: id)
+        retainedSuggestions?.cancel()
+    }
+
+    @discardableResult func openReceivedURL(_ url: URL) -> BrowserTab? {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+        dismissOmnibar()
+        return newTab(url: url, showOmnibar: false)
     }
 
     func openOmnibar(newTab: Bool = false, query: String? = nil) {

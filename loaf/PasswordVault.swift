@@ -285,4 +285,11 @@ extension PasswordVault {
         }
         changed(profileID: profileID)
     }
+    static func deleteAll(profileID: UUID) throws {
+        let status = SecItemDelete(query(profileID: profileID) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
+        changed(profileID: profileID)
+    }
 }

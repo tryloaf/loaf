@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Cursor ownership stays with AppKit, so disappearing controls cannot leave a pushed cursor behind.
+
 struct CursorRegion: NSViewRepresentable {
     let cursor: NSCursor
     func makeNSView(context: Context) -> Region { Region() }

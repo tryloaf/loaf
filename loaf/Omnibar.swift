@@ -376,8 +376,8 @@ struct Suggestion: Identifiable {
                 }
             }
             if let domainPrefix, !store.profile.privateMode, store.preferences.remoteSites == true {
-                // A navigation result learned while typing "macrumors" remains
-                // available for "macrumors." without sending partial URLs again.
+
+
                 for (key, cached) in cache where key.profile == store.selectedProfileID && key.sites
                     && key.provider == (store.preferences.suggestionProvider ?? .google)
                     && Date().timeIntervalSince(cached.date) < 300

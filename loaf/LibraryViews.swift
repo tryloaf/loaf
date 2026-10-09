@@ -35,7 +35,7 @@ struct HistoryView: View {
         return VStack(spacing: 0) {
             LibraryHeader(title: "history", icon: .history)
             HStack(spacing: 8) {
-                TextField("search history…", text: $presentation.query).textFieldStyle(.roundedBorder)
+                TextField("search history…", text: $presentation.query).textFieldStyle(.roundedBorder).focusRingPadding()
                 ZStack {
                     if presentation.isBusy {
                         ProgressView().controlSize(.mini).accessibilityLabel(

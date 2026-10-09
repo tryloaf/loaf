@@ -267,9 +267,9 @@ private struct PasswordEditorView: View {
                     .system(size: 18, weight: .medium))
             }
             Form {
-                TextField("title", text: value(\.title), prompt: Text("optional"))
-                TextField("website", text: value(\.website)).disabled(vault.draft?.original != nil)
-                TextField("username", text: value(\.username)).disabled(vault.draft?.original != nil)
+                TextField("title", text: value(\.title), prompt: Text("optional")).focusRingPadding()
+                TextField("website", text: value(\.website)).disabled(vault.draft?.original != nil).focusRingPadding()
+                TextField("username", text: value(\.username)).disabled(vault.draft?.original != nil).focusRingPadding()
                 LabeledContent("password") {
                     HStack(spacing: 5) {
                         Group {
@@ -278,7 +278,7 @@ private struct PasswordEditorView: View {
                             } else {
                                 SecureField("password", text: value(\.password))
                             }
-                        }.labelsHidden().accessibilityLabel("password")
+                        }.labelsHidden().accessibilityLabel("password").focusRingPadding()
                         IconButton(
                             icon: showing ? .privateMode : .eye, label: showing ? "hide password" : "show password"
                         ) { showing.toggle() }
@@ -302,7 +302,7 @@ private struct PasswordEditorView: View {
                         }
                     }
                 }
-                TextField("notes", text: value(\.notes), axis: .vertical).lineLimit(3...5)
+                TextField("notes", text: value(\.notes), axis: .vertical).lineLimit(3...5).focusRingPadding()
             }.textFieldStyle(.roundedBorder)
             Text("use an HTTPS website. login matching includes its full host and port.").font(.caption)
                 .foregroundStyle(.secondary)

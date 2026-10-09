@@ -28,8 +28,8 @@ import WebKit
     static func normalize(_ menu: NSMenu) {}
     static func normalize(_ item: NSMenuItem) {}
 
-    // Normalize the system-generated page actions at construction time only.
-    // Keep quoted selection text and product names as supplied by WebKit.
+
+
     static func normalizeWebContext(_ menu: NSMenu) {
         let verbs: Set<String> = ["open", "download", "copy", "look", "share", "save", "inspect", "enter", "exit",
             "play", "pause", "mute", "unmute", "show", "hide", "loop", "back", "forward", "reload", "stop",
@@ -83,9 +83,14 @@ extension NSMenuItem {
     private var observations = Set<AnyCancellable>()
     private var editingMenu: NSMenu?
     private var refreshPending = false
+    private var mainMenu: NSMenu?
+    private var baseItems: [NSMenuItem] = []
+    private var mainMenuObservation: NSKeyValueObservation?
+    private var restoringMainMenu = false
     private let bookmarks = NSMenu(title: "Bookmarks")
     private let profiles = NSMenu(title: "Profiles")
     private let develop = NSMenu(title: "develop")
+    private let developItem = NSMenuItem(title: "develop", action: nil, keyEquivalent: "")
     private let userAgents = NSMenu(title: "User Agent")
     private var store: BrowserStore? { coordinator.commandState }
 
@@ -94,9 +99,36 @@ extension NSMenuItem {
         super.init()
     }
 
+    func dockMenu() -> NSMenu {
+        let menu = NSMenu(title: "loaf")
+        for (title, command) in [
+            ("New Window", Command.newWindow),
+            ("New Private Window", Command.newPrivateWindow),
+        ] {
+            let item = add(title, command, to: menu)
+            item.action = #selector(runDockCommand(_:))
+        }
+        return menu
+    }
+
+    @objc private func runDockCommand(_ item: NSMenuItem) {
+        guard validateMenuItem(item), let raw = item.representedObject as? String,
+            let command = Command(rawValue: raw) else { return }
+        switch command {
+        case .newWindow:
+            let profileID = store?.profile.privateMode == true
+                ? coordinator.application.profiles.first(where: { !$0.privateMode })?.id : store?.selectedProfileID
+            coordinator.newWindow(profileID: profileID)
+        case .newPrivateWindow:
+            coordinator.newPrivateWindow()
+        default: return
+        }
+        NSApp.activate()
+    }
+
     func install() {
         LowercaseMenus.install()
-        NSApp.mainMenu?.removeAllItems()
+        guard mainMenu == nil else { restoreMainMenu(); return }
         let main = NSMenu(title: "loaf")
         let app = appendMenu("loaf", to: main)
         add("About loaf", .about, to: app)
@@ -222,7 +254,21 @@ extension NSMenuItem {
         add("loaf Help", .help, to: help)
         NSApp.helpMenu = help
         LowercaseMenus.normalize(main)
-        NSApp.mainMenu = main
+        mainMenu = main
+        baseItems = main.items
+
+        restoreMainMenu()
+        mainMenuObservation = NSApp.observe(\.mainMenu, options: [.new]) { [weak self] _, _ in
+
+
+            Task { @MainActor [weak self] in self?.scheduleRefresh() }
+        }
+        NotificationCenter.default.publisher(for: NSMenu.didRemoveItemNotification, object: main)
+            .receive(on: RunLoop.main).sink { [weak self] _ in self?.scheduleRefresh() }.store(in: &observations)
+        NotificationCenter.default.publisher(for: NSApplication.willUpdateNotification)
+            .sink { [weak self] _ in
+                self?.restoreMainMenu()
+            }.store(in: &observations)
         for publisher in [
             coordinator.application.objectWillChange.eraseToAnyPublisher(),
             coordinator.objectWillChange.eraseToAnyPublisher(),
@@ -235,12 +281,12 @@ extension NSMenuItem {
         ] {
             NotificationCenter.default.publisher(for: name).receive(on: RunLoop.main).sink { [weak self] _ in
                 DispatchQueue.main.async {
+                    self?.restoreMainMenu()
                     self?.editingMenu?.update()
                     self?.refreshCommands()
                 }
             }.store(in: &observations)
         }
-        syncDevelop()
         LowercaseMenus.normalize(main)
     }
 
@@ -250,7 +296,7 @@ extension NSMenuItem {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.refreshPending = false
-            self.syncDevelop()
+            self.restoreMainMenu()
             self.refreshCommands()
         }
     }
@@ -299,8 +345,8 @@ extension NSMenuItem {
         LowercaseMenus.normalize(menu)
     }
 
-    private func refreshCommands(in menu: NSMenu? = NSApp.mainMenu) {
-        guard let menu else { return }
+    private func refreshCommands(in menu: NSMenu? = nil) {
+        guard let menu = menu ?? mainMenu else { return }
         for item in menu.items {
             if item.target === self {
                 let enabled = validateMenuItem(item)
@@ -355,21 +401,37 @@ extension NSMenuItem {
         appendMenu("User Agent", submenu: userAgents, to: develop)
         userAgents.delegate = self
         rebuildUserAgents()
+        developItem.submenu = develop
     }
 
-    private func syncDevelop() {
-        guard let main = NSApp.mainMenu else { return }
-        let existing = main.items.first { $0.submenu === develop }
+    private func restoreMainMenu() {
+        guard !restoringMainMenu, let main = mainMenu else { return }
+        restoringMainMenu = true
+        defer { restoringMainMenu = false }
+
+
+        var expected = baseItems
         if coordinator.application.preferences.developerMenu == true {
-            if existing == nil {
-                let item = NSMenuItem(title: "develop", action: nil, keyEquivalent: "")
-                item.submenu = develop
-                let index = main.items.firstIndex { $0.submenu === NSApp.windowsMenu } ?? main.numberOfItems
-                main.insertItem(item, at: index)
-            }
-        } else if let existing {
-            main.removeItem(existing)
+
+            if developItem.title != "develop" { developItem.title = "develop" }
+            let index = expected.firstIndex { $0.title == "window" } ?? expected.count
+            expected.insert(developItem, at: index)
         }
+        if main.items.map(ObjectIdentifier.init) != expected.map(ObjectIdentifier.init) {
+            for (index, item) in expected.enumerated() {
+                if index < main.numberOfItems, main.item(at: index) === item { continue }
+                item.menu?.removeItem(item)
+                main.insertItem(item, at: min(index, main.numberOfItems))
+            }
+            while main.numberOfItems > expected.count { main.removeItem(at: main.numberOfItems - 1) }
+        }
+        if NSApp.mainMenu !== main { NSApp.mainMenu = main }
+        if let services = baseItems.first?.submenu?.items.first(where: { $0.submenu?.title == "services" })?.submenu,
+            NSApp.servicesMenu !== services { NSApp.servicesMenu = services }
+        if let window = baseItems.first(where: { $0.title == "window" })?.submenu,
+            NSApp.windowsMenu !== window { NSApp.windowsMenu = window }
+        if let help = baseItems.first(where: { $0.title == "help" })?.submenu,
+            NSApp.helpMenu !== help { NSApp.helpMenu = help }
     }
 
     private func rebuildUserAgents() {

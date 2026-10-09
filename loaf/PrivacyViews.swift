@@ -113,7 +113,7 @@ struct CookieManagerView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                TextField("search cookies…", text: $query).textFieldStyle(.roundedBorder)
+                TextField("search cookies…", text: $query).textFieldStyle(.roundedBorder).focusRingPadding()
                 Button("select all") { selectedCookies = Set(filtered.map(cookieID)) }
                     .controlSize(.small).disabled(filtered.isEmpty)
                 if !selectedCookies.isEmpty {

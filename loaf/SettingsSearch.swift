@@ -42,6 +42,8 @@ enum SettingsSearch {
         .init(
             id: "download-permissions", section: "websites", title: "ask before downloading from a new site",
             keywords: "downloads permission prompt allow block domain subdomain private"),
+        .init(id: "link-preview", section: "general", title: "show link preview on hover",
+            keywords: "link destination url hover status bar toast preview"),
         .init(id: "link-groups", section: "general", title: "browsing trails", keywords: "links groups tab history"),
         .init(
             id: "resize-transition", section: "appearance", title: "soften sidebar resizing",
@@ -83,7 +85,7 @@ enum SettingsSearch {
             keywords: "popular websites catalog suggestions"),
         .init(
             id: "profiles", section: "profiles", title: "profiles and personalization",
-            keywords: "name emoji icon tint color edit container private"),
+            keywords: "name emoji icon tint color edit delete remove container private"),
         .init(
             id: "websites", section: "websites", title: "saved website decisions",
             keywords: "site permissions camera microphone javascript autoplay zoom"),

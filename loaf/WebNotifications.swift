@@ -9,6 +9,7 @@ import WebKit
     private var requesting = Set<String>()
     private struct WeakTarget {
         weak var tab: BrowserTab?
+        let profileID: UUID
         let navigation: UUID
     }
     init(application: BrowserApplication) {
@@ -81,8 +82,8 @@ import WebKit
         if !silent { content.sound = .default }
         let key = "web." + tab.id.uuidString + "." + id
         targets = targets.filter { $0.value.tab != nil }
-        targets[key] = .init(tab: tab, navigation: tab.navigationID)
-        if targets.count > 200 { targets = [key: .init(tab: tab, navigation: tab.navigationID)] }
+        targets[key] = .init(tab: tab, profileID: tab.profileID, navigation: tab.navigationID)
+        if targets.count > 200 { targets = [key: .init(tab: tab, profileID: tab.profileID, navigation: tab.navigationID)] }
         UNUserNotificationCenter.current().delegate = self
         try await UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: key, content: content, trigger: nil))
@@ -91,6 +92,12 @@ import WebKit
         let key = "web." + tab.id.uuidString + "." + id
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [key])
         targets.removeValue(forKey: key)
+    }
+    func forgetProfile(_ id: UUID) {
+        let identifiers = targets.filter { $0.value.profileID == id }.map(\.key)
+        if !identifiers.isEmpty { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: identifiers) }
+        for identifier in identifiers { targets.removeValue(forKey: identifier) }
+        deliveries.removeValue(forKey: id)
     }
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,

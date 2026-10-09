@@ -1,6 +1,27 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+private final class ImportWindowReference {
+    weak var window: NSWindow?
+}
+
+private struct ImportWindowReader: NSViewRepresentable {
+    let reference: ImportWindowReference
+    final class View: NSView {
+        var reference: ImportWindowReference?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            reference?.window = window
+        }
+    }
+    func makeNSView(context: Context) -> View {
+        let view = View()
+        view.reference = reference
+        return view
+    }
+    func updateNSView(_ view: View, context: Context) { reference.window = view.window }
+}
+
 struct ProfileImportView: View {
     @ObservedObject var store: BrowserStore
     @Environment(\.dismiss) private var dismiss
@@ -19,9 +40,15 @@ struct ProfileImportView: View {
     @State private var history = true
     @State private var bookmarks = true
     @State private var cookies = false
+    @State private var tabs = false
     @State private var requestingAccess = false
     @State private var checkingAccess = false
+    @State private var selectedFolderURL: URL?
     @State private var dataAccess: BrowserImportDiscovery.DataAccess?
+    @State private var sourcePanel: NSOpenPanel?
+    @State private var contentHeight: CGFloat = 360
+    @State private var advancedAccessHelp = false
+    @State private var importerWindow = ImportWindowReference()
     init(store: BrowserStore, initialPreview: ProfileImportPreview? = nil) {
         self.store = store
         if let initialPreview {
@@ -41,39 +68,32 @@ struct ProfileImportView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             HStack {
-                if let icon = LoafAppIcon.image {
-                    Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit).frame(width: 54, height: 54)
-                        .accessibilityHidden(true)
-                }
+                HStack(spacing: 5) {
+                    ForEach(0..<3) { index in
+                        Capsule().fill(index <= step ? profileTint(store.profile) : Color.primary.opacity(0.08))
+                            .frame(width: 24, height: 3)
+                    }
+                }.accessibilityElement(children: .ignore).accessibilityLabel("import step \(step + 1) of 3")
                 Spacer()
-                if !busy {
-                    Button {
-                        dismiss()
-                    } label: {
-                        GolzheimIcon(icon: .close, size: 14)
-                    }.buttonStyle(.plain).accessibilityLabel("close import")
-                }
+                Button { dismiss() } label: { GolzheimIcon(icon: .close, size: 14) }
+                    .buttonStyle(.plain).accessibilityLabel("close import").disabled(busy || sourcePanel != nil)
             }
-            HStack(spacing: 5) {
-                ForEach(0..<3) { index in
-                    Capsule().fill(index <= step ? profileTint(store.profile) : Color.primary.opacity(0.08)).frame(
-                        width: 26, height: 4)
-                }
-            }.accessibilityElement(children: .ignore).accessibilityLabel("import step \(step + 1) of 3")
             VStack(alignment: .leading, spacing: 8) {
-                Text(step == 0 ? "import browsing data" : step == 1 ? "choose what to import" : "import complete").font(
-                    .system(size: 27, weight: .semibold, design: .rounded))
+                Text(step == 0 ? selectedBrowser.map { "import from " + $0.name } ?? "import browsing data" : step == 1 ? "choose what to import" : "import complete").font(
+                    .system(size: 24, weight: .semibold))
                 Text(
                     step == 0
-                        ? "bring your history, bookmarks, tabs and cookies into loaf. choose a browser to preview its profiles."
+                        ? selectedBrowser == nil ? "choose a browser, then review what comes over." : "read your browsing data, then choose what to bring over."
                         : step == 1
                             ? "choose what to bring into loaf. your source data stays where it is."
                             : "your selected data is saved in this profile."
                 ).font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            ScrollView {
+            FocusRingSafeScrollView {
               VStack(alignment: .leading, spacing: 12) {
-                if step == 0 {
+                if step == 0, let selectedBrowser {
+                    browserSource(selectedBrowser)
+                } else if step == 0 {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Text("installed browsers").font(.system(size: 12, weight: .medium))
@@ -81,34 +101,35 @@ struct ProfileImportView: View {
                             if scanning { ProgressView().controlSize(.small) }
                             Button("scan again") { discover() }.controlSize(.small).disabled(scanning || busy)
                         }
-                        ScrollView {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], spacing: 12) {
-                                ForEach(browsers) { browser in
-                                    Button { chooseBrowser(browser) } label: {
-                                        VStack(spacing: 8) {
-                                            Image(nsImage: NSWorkspace.shared.icon(forFile: browser.applicationURL.path))
-                                                .resizable().scaledToFit().frame(width: 44, height: 44)
-                                            Text(browser.name).font(.system(size: 12)).lineLimit(2)
-                                        }.frame(maxWidth: .infinity).frame(height: 90)
-                                            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
-                                            .contentShape(RoundedRectangle(cornerRadius: 12))
-                                    }.buttonStyle(LoafButtonStyle()).disabled(busy)
-                                }
+                        VStack(spacing: 6) {
+                            ForEach(browsers) { browser in
+                                Button { chooseBrowser(browser) } label: {
+                                    HStack(spacing: 12) {
+                                        Image(nsImage: NSWorkspace.shared.icon(forFile: browser.applicationURL.path))
+                                            .resizable().scaledToFit().frame(width: 36, height: 36)
+                                        Text(browser.name).font(.system(size: 14, weight: .medium))
+                                        Spacer()
+                                        if busy && selectedBrowser?.id == browser.id {
+                                            ProgressView().controlSize(.small)
+                                        } else {
+                                            GolzheimIcon(icon: .forward, size: 14)
+                                                .foregroundStyle(.tertiary)
+                                        }
+                                    }.padding(.horizontal, 14).padding(.vertical, 11)
+                                        .background(Color.primary.opacity(selectedBrowser?.id == browser.id ? 0.07 : 0.035),
+                                            in: RoundedRectangle(cornerRadius: 10))
+                                        .contentShape(RoundedRectangle(cornerRadius: 10))
+                                }.buttonStyle(LoafButtonStyle()).disabled(busy || requestingAccess || sourcePanel != nil)
                             }
-                        }.frame(maxHeight: 210)
+                        }
                         if browsers.isEmpty && !scanning {
-                            Text("no browsers found. you can still choose a profile folder or an export.")
+                            Text("no browsers found. choose a profile folder or bookmarks export below.")
                                 .font(.system(size: 12)).foregroundStyle(.secondary)
                         }
-                        Text("close the source browser first. protected data needs Full Disk Access. after enabling it, quit and reopen loaf before importing.")
+                        Divider().padding(.vertical, 4)
+                        Button("choose file or folder…") { chooseSource() }.disabled(busy || sourcePanel != nil)
+                        Text("close the source browser before importing. your data stays on this Mac; source files stay untouched.")
                             .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        HStack {
-                            Button("Full Disk Access…") {
-                                requestAccess()
-                            }.controlSize(.small)
-                            Spacer()
-                            Button("choose file or folder…") { chooseSource() }.controlSize(.small).disabled(busy)
-                        }
                     }
                 } else if step == 1, let preview {
                     VStack(alignment: .leading, spacing: 12) {
@@ -120,12 +141,13 @@ struct ProfileImportView: View {
                                 history = self.preview?.history.isEmpty == false
                                 bookmarks = self.preview?.bookmarks.isEmpty == false
                                 cookies = false
+                                tabs = false
                             }
                         }
                         if previews.count > 1 {
                             Toggle("import every profile / space", isOn: $importAll)
                                 .disabled(previews.count > 8 - store.profiles.count)
-                                .onChange(of: importAll) { _, _ in history = historyCount > 0; bookmarks = bookmarkCount > 0; cookies = false }
+                                .onChange(of: importAll) { _, _ in history = historyCount > 0; bookmarks = bookmarkCount > 0; cookies = false; tabs = false }
                             if previews.count > 8 - store.profiles.count {
                                 Text("choose one profile at a time; loaf has room for \(max(0, 8 - store.profiles.count)) more.")
                                     .font(.caption).foregroundStyle(.secondary)
@@ -143,20 +165,21 @@ struct ProfileImportView: View {
                             "history",
                             detail:
                                 "\(historyCount.formatted()) \(historyCount == 1 ? "visit" : "visits")",
-                            icon: "clock", selection: $history, enabled: historyCount > 0)
+                            icon: .history, selection: $history, enabled: historyCount > 0)
                         importRow(
                             "bookmarks",
                             detail:
                                 "\(bookmarkCount.formatted()) \(bookmarkCount == 1 ? "bookmark" : "bookmarks")",
-                            icon: "star", selection: $bookmarks, enabled: bookmarkCount > 0)
+                            icon: .favorite, selection: $bookmarks, enabled: bookmarkCount > 0)
                         importRow(
                             "cookies",
                             detail:
                                 "\(cookieCount.formatted()) readable \(cookieCount == 1 ? "cookie" : "cookies")",
-                            icon: "circle.dotted", selection: $cookies, enabled: cookieCount > 0)
-                        if tabCount > 0 {
-                            Text("\(tabCount.formatted()) tabs will open in the imported profile.")
-                                .font(.caption).foregroundStyle(.secondary)
+                            icon: .cookie, selection: $cookies, enabled: cookieCount > 0)
+                        importRow("open saved tabs", detail: "\(tabCount.formatted()) tabs", icon: .profiles,
+                            selection: $tabs, enabled: tabCount > 0)
+                        if tabs {
+                            Text("opening tabs contacts those websites.").font(.system(size: 11)).foregroundStyle(.secondary)
                         }
                         if let selectedBrowser, preview.warnings.contains(where: { $0.contains("protected cookies") }) {
                             Button("unlock encrypted cookies…") { unlockCookies(selectedBrowser) }.controlSize(.small)
@@ -168,28 +191,33 @@ struct ProfileImportView: View {
                         ForEach(preview.warnings, id: \.self) {
                             Text($0).font(.system(size: 11)).foregroundStyle(.secondary)
                         }
-                        if preview.warnings.contains(where: { $0.contains("permission") || $0.contains("Full Disk Access") }) {
-                            Button("allow access to protected data…") { requestAccess() }.controlSize(.small)
+                        if selectedBrowser != nil && preview.warnings.contains(where: { $0.contains("permission") || $0.contains("Full Disk Access") || $0.contains("blocked") }) {
+                            Button("choose another data folder…") {
+                                if let selectedBrowser { chooseBrowserFolder(selectedBrowser) }
+                            }.controlSize(.small)
                         }
                     }.disabled(busy)
                 } else if step == 2 {
                     Label("ready in \(store.profile.name)", systemImage: "checkmark.circle.fill").font(
                         .system(size: 16)
-                    ).foregroundStyle(profileTint(store.profile)).padding(.vertical, 24)
+                    ).foregroundStyle(profileTint(store.profile)).padding(.vertical, 8)
                 }
               }.frame(maxWidth: .infinity, alignment: .leading)
-            }.scrollIndicators(.hidden).transition(.opacity)
-            if let error {
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+            }.frame(height: min(contentHeight, 430)).scrollIndicators(.hidden)
+                .id(step == 0 ? selectedBrowser?.id ?? "sources" : "step\(step)")
+                .transition(.opacity)
+            if let error, step != 0 || selectedBrowser == nil {
                 Text(error).font(.system(size: 12)).foregroundStyle(.red).accessibilityLabel("import error: " + error)
             }
-            Spacer(minLength: 0)
+            if busy || step > 0 || selectedBrowser != nil {
             HStack {
                 if busy {
                     ProgressView().controlSize(.small)
                     Text(step == 0 ? "reading your data…" : "bringing it over…").font(.system(size: 12))
                         .foregroundStyle(.secondary)
-                } else if step == 1 {
-                    Button("back") { transition(to: 0) }.buttonStyle(.plain)
+                } else if step == 1 || (step == 0 && selectedBrowser != nil) {
+                    Button("back") { resetSource() }.buttonStyle(.plain)
                 }
                 Spacer()
                 if step == 1 {
@@ -202,60 +230,129 @@ struct ProfileImportView: View {
                         .defaultAction)
                 }
             }
-        }.padding(32).frame(width: 560, height: 700).background(Color(nsColor: .windowBackgroundColor))
-            .interactiveDismissDisabled(busy).onAppear { newProfile = store.profiles.count < 8; discover() }
+            }
+        }.padding(24).frame(width: 520).background(Color(nsColor: .windowBackgroundColor))
+            .background(ImportWindowReader(reference: importerWindow))
+            .interactiveDismissDisabled(busy || sourcePanel != nil).onAppear { newProfile = store.profiles.count < 8; discover() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 if step == 0 { discover() }
                 if requestingAccess { checkAccess() }
             }
+            .onDisappear {
+                sourcePanel?.cancel(nil)
+                sourcePanel = nil
+                releaseFolderAccess()
+            }
             .sheet(isPresented: $requestingAccess) { accessRequest }
+    }
+    private func browserSource(_ browser: ImportBrowser) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: browser.applicationURL.path))
+                    .resizable().scaledToFit().frame(width: 40, height: 40)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(browser.name).font(.system(size: 15, weight: .medium))
+                    Text(busy ? "reading browsing data…" : "choose a data folder")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            }
+            if !busy {
+                if dataAccess == .denied {
+                    Text("allow folder access").font(.system(size: 14, weight: .medium))
+                    Text("macOS blocked this source. choose \(browser.name)’s data folder to allow access for this import.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(error ?? "choose the browser’s profile folder or a bookmarks export.")
+                        .foregroundStyle(.secondary)
+                }
+                Text("loaf reads the folder you choose. your source files stay untouched; passwords aren’t included.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                Button("choose data folder…") { chooseBrowserFolder(browser) }
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .disabled(sourcePanel != nil).keyboardShortcut(.defaultAction)
+                HStack {
+                    Button("choose an export…") { chooseSource() }.disabled(sourcePanel != nil)
+                    if selectedFolderURL != nil && dataAccess == .denied {
+                        Button("macOS access help…") { requestAccess() }
+                    }
+                }
+            }
+        }.font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+    }
+    private func resetSource() {
+        releaseFolderAccess()
+        selectedBrowser = nil
+        dataAccess = nil
+        error = nil
+        advancedAccessHelp = false
+        transition(to: 0)
     }
     private var accessRequest: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 14) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundleURL.path))
-                    .resizable().scaledToFit().frame(width: 56, height: 56)
-                    .onDrag { NSItemProvider(object: Bundle.main.bundleURL as NSURL) }
-                Text("allow browser data access").font(.system(size: 22, weight: .semibold, design: .rounded))
-            }
-            Text("macOS protects Safari and other browser data. allow loaf to read it for this local import in System Settings.")
+            Text("access to \(selectedBrowser?.name ?? "browser data")")
+                .font(.system(size: 22, weight: .semibold))
+            Text("choose the browser’s data folder to allow access for this import. passwords aren’t included in this importer.")
                 .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 12) {
-                Text("1. open Privacy & Security → Full Disk Access.")
-                Text("2. add loaf with the + button, or drag its icon above into the list. turn loaf on.")
-                Text("3. quit and reopen loaf, then return to importing.").fontWeight(.semibold)
+            if let browser = selectedBrowser {
+                Button("choose \(browser.name) data folder…") { chooseBrowserFolder(browser) }
+                    .buttonStyle(.borderedProminent)
             }
-            Text("you must restart loaf after enabling access. scanning again without restarting won’t apply the permission.")
-                .font(.callout).foregroundStyle(.secondary)
+            if selectedFolderURL != nil && (dataAccess == .denied || dataAccess == .partial) {
+                DisclosureGroup("other macOS access options", isExpanded: $advancedAccessHelp) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("macOS still blocks some of these source files. Full Disk Access may help with protected locations; it isn’t required for every import and doesn’t unlock passwords.")
+                            .foregroundStyle(.secondary)
+                        Text("if you enable it, add this copy of loaf, quit and reopen it, then retry.")
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundleURL.path))
+                                .resizable().scaledToFit().frame(width: 32, height: 32)
+                                .onDrag { NSItemProvider(object: Bundle.main.bundleURL as NSURL) }
+                            Text(Bundle.main.bundleURL.path).font(.system(size: 11)).foregroundStyle(.secondary)
+                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        }
+                        HStack {
+                            Button("show this copy in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL]) }
+                            Button("System Settings…") {
+                                if let selectedBrowser {
+                                    UserDefaults.standard.set(selectedBrowser.id, forKey: "importBrowserAfterAccessRestart")
+                                }
+                                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles")!)
+                            }
+                        }
+                    }.padding(.top, 8)
+                }
+            }
             if checkingAccess { ProgressView().controlSize(.small) }
-            else if dataAccess == .readable {
-                Label("the selected browser’s data is readable", systemImage: "checkmark.circle").font(.callout)
-            } else if dataAccess == .denied {
-                Text("macOS is currently blocking the selected browser’s data.").font(.callout).foregroundStyle(.secondary)
-            }
-            HStack {
-                Button("show loaf in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL]) }
-                Spacer()
-                Button("open System Settings") {
-                    if let selectedBrowser {
-                        UserDefaults.standard.set(selectedBrowser.id, forKey: "importBrowserAfterAccessRestart")
-                    }
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles")!)
-                }.buttonStyle(.borderedProminent)
+            else if let dataAccess {
+                Text(accessDescription(dataAccess)).foregroundStyle(.secondary)
             }
             Divider()
             HStack {
-                Button("not now") { requestingAccess = false }
+                Button("close") { requestingAccess = false }
                 Spacer()
-                Button("check access") { checkAccess() }.disabled(checkingAccess)
-                Button("quit loaf") { NSApp.terminate(nil) }
+                Button("check source access") { checkAccess() }.disabled(checkingAccess || busy)
+                if dataAccess == .readable || dataAccess == .partial, let browser = selectedBrowser {
+                    Button("continue") {
+                        requestingAccess = false
+                        chooseBrowser(browser, authorizedFolder: selectedFolderURL)
+                    }.buttonStyle(.borderedProminent).disabled(busy)
+                }
             }
         }.font(.system(size: 13)).padding(28).frame(width: 510)
             .onAppear { checkAccess() }
     }
+    private func accessDescription(_ access: BrowserImportDiscovery.DataAccess) -> String {
+        switch access {
+        case .readable: "this browser’s source files are readable"
+        case .partial: "some source files are readable; other locations are blocked"
+        case .denied: "macOS denied access to this browser’s source files"
+        case .noData: "no supported source files found in this location"
+        case .unreadable: "source files couldn’t be read; this does not indicate Full Disk Access is off"
+        }
+    }
     private func requestAccess() {
-        if selectedBrowser == nil { selectedBrowser = browsers.first { $0.id == "com.apple.Safari" } }
-        dataAccess = nil
+        guard selectedBrowser != nil else { return }
         requestingAccess = true
     }
     private func checkAccess() {
@@ -266,18 +363,65 @@ struct ProfileImportView: View {
             checkingAccess = false
         }
     }
+    private func releaseFolderAccess() {
+        selectedFolderURL?.stopAccessingSecurityScopedResource()
+        selectedFolderURL = nil
+    }
+    private func chooseBrowserFolder(_ browser: ImportBrowser) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.directoryURL = browser.suggestedFolder
+        panel.message = "choose \(browser.name)’s data folder or a profile inside it. loaf reads this folder only for importing."
+        panel.prompt = "allow and preview"
+        presentSourcePanel(panel) { folder in
+            guard let folder else { return }
+            requestingAccess = false
+            chooseBrowser(browser.selectingFolder(folder), authorizedFolder: folder)
+        }
+    }
+    private func presentSourcePanel(_ panel: NSOpenPanel, completion: @escaping (URL?) -> Void) {
+        guard sourcePanel == nil else { return }
+
+
+        var presentingWindow = importerWindow.window ?? NSApp.keyWindow ?? store.nativeWindow
+
+
+        while let sheet = presentingWindow?.attachedSheet { presentingWindow = sheet }
+        let presenter = presentingWindow
+        let returnWindow = importerWindow.window ?? presenter
+        sourcePanel = panel
+        let finished: (NSApplication.ModalResponse) -> Void = { response in
+            guard sourcePanel === panel else { return }
+            sourcePanel = nil
+            completion(response == .OK ? panel.url : nil)
+            DispatchQueue.main.async {
+                let target = presenter?.isVisible == true ? presenter : returnWindow
+                guard let target, target.isVisible, NSApp.isActive else { return }
+                target.sheetParent?.makeKeyAndOrderFront(nil)
+                target.makeKeyAndOrderFront(nil)
+            }
+        }
+        if let presenter, presenter.isVisible {
+            panel.beginSheetModal(for: presenter, completionHandler: finished)
+        } else {
+            panel.begin(completionHandler: finished)
+        }
+    }
     private var canImport: Bool {
-        guard let preview else { return false }
+        guard preview != nil else { return false }
         return (importAll || !newProfile || !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            && (tabCount > 0 || history && historyCount > 0 || bookmarks && bookmarkCount > 0
+            && (tabs && tabCount > 0 || history && historyCount > 0 || bookmarks && bookmarkCount > 0
                 || cookies && cookieCount > 0)
     }
-    private func importRow(_ title: String, detail: String, icon: String, selection: Binding<Bool>, enabled: Bool)
+    private func importRow(_ title: String, detail: String, icon: LoafIcon, selection: Binding<Bool>, enabled: Bool)
         -> some View
     {
         Toggle(isOn: selection) {
             HStack(spacing: 10) {
-                Image(systemName: icon).frame(width: 20)
+                GolzheimIcon(icon: icon, size: 16).frame(width: 20)
                 Text(title)
                 Spacer()
                 Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
@@ -293,16 +437,26 @@ struct ProfileImportView: View {
         Task {
             browsers = await Task.detached(priority: .userInitiated) { BrowserImportDiscovery.installed() }.value
             scanning = false
-            if selectedBrowser == nil,
+            if step == 0, selectedBrowser == nil,
                 let id = UserDefaults.standard.string(forKey: "importBrowserAfterAccessRestart"),
                 let browser = browsers.first(where: { $0.id == id }) {
                 chooseBrowser(browser)
             }
         }
     }
-    private func chooseBrowser(_ browser: ImportBrowser, password: Data? = nil) {
+    private func chooseBrowser(_ browser: ImportBrowser, password: Data? = nil, authorizedFolder: URL? = nil) {
+        guard !busy else { return }
+        if selectedFolderURL != authorizedFolder {
+            releaseFolderAccess()
+            if let authorizedFolder, authorizedFolder.startAccessingSecurityScopedResource() {
+                selectedFolderURL = authorizedFolder
+            }
+        }
         selectedBrowser = browser
+        dataAccess = nil
+        advancedAccessHelp = false
         busy = true; error = nil
+        transition(to: 0)
         Task {
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
@@ -311,9 +465,10 @@ struct ProfileImportView: View {
                 acceptPreviews(result)
                 UserDefaults.standard.removeObject(forKey: "importBrowserAfterAccessRestart")
             } catch {
-                self.error = error.localizedDescription
+                let message = error.localizedDescription
                 let access = await Task.detached(priority: .userInitiated) { BrowserImportDiscovery.requestDataAccess(browser) }.value
-                if access == .denied { dataAccess = access; requestingAccess = true }
+                dataAccess = access
+                self.error = message
             }
             busy = false
         }
@@ -325,13 +480,14 @@ struct ProfileImportView: View {
                 let password = try await Task.detached(priority: .userInitiated) {
                     try BrowserImportDiscovery.cookiePassword(browser)
                 }.value
-                chooseBrowser(browser, password: password)
+                busy = false
+                chooseBrowser(browser, password: password, authorizedFolder: selectedFolderURL)
             } catch { self.error = error.localizedDescription; busy = false }
         }
     }
     private func acceptPreviews(_ result: [ProfileImportPreview]) {
         previews = result; selected = 0; importAll = false
-        name = result[0].name; cookies = false
+        name = result[0].name; cookies = false; tabs = false
         history = !result[0].history.isEmpty; bookmarks = !result[0].bookmarks.isEmpty
         transition(to: 1)
     }
@@ -341,8 +497,28 @@ struct ProfileImportView: View {
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
         panel.message = "choose a profile folder or browsing-data export"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        presentSourcePanel(panel) { url in
+            guard let url else { return }
+            readSource(url)
+        }
+    }
+    private func readSource(_ url: URL) {
+        if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            let path = url.standardizedFileURL.path
+            let matches = browsers.filter { browser in
+                browser.roots.contains { root in
+                    let source = root.standardizedFileURL.path
+                    return source == path || source.hasPrefix(path + "/") || path.hasPrefix(source + "/")
+                }
+            }
+            if matches.count == 1, let browser = matches.first {
+                chooseBrowser(browser.selectingFolder(url), authorizedFolder: url)
+                return
+            }
+        }
+        releaseFolderAccess()
         selectedBrowser = nil
+        dataAccess = nil
         busy = true
         error = nil
         Task {
@@ -370,7 +546,7 @@ struct ProfileImportView: View {
                 }
                 for source in sources {
                     try await store.importProfile(source, name: importAll ? source.name : name,
-                        newProfile: importAll || newProfile, history: history, bookmarks: bookmarks, cookies: cookies)
+                        newProfile: importAll || newProfile, history: history, bookmarks: bookmarks, cookies: cookies, tabs: tabs)
                 }
                 transition(to: 2)
             } catch { self.error = error.localizedDescription }

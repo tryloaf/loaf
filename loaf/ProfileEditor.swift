@@ -91,7 +91,7 @@ struct GolzheimPicker: View {
                 Picker("category", selection: $category) { ForEach(categories, id: \.self) { Text($0).tag($0) } }
                     .labelsHidden().frame(width: 160)
             }
-            ScrollView {
+            FocusRingSafeScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 40, maximum: 48))], spacing: 8) {
                     ForEach(filtered) { icon in
                         Button {
@@ -120,6 +120,9 @@ struct ProfileEditor: View {
     @State private var strength = 0.06
     @State private var transparency = 0.0
     @State private var customTint: ProfileColor?
+    @State private var confirmDeletion = false
+    @State private var deleting = false
+    @State private var deletionError: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -127,7 +130,7 @@ struct ProfileEditor: View {
                 TextField("profile name", text: $name).font(.system(size: 24)).textFieldStyle(.plain)
                 Spacer()
             }
-            ScrollView {
+            FocusRingSafeScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     ProfileThemeControls(
                         tint: $tint, customTint: $customTint, strength: $strength, transparency: $transparency)
@@ -136,7 +139,17 @@ struct ProfileEditor: View {
                     GolzheimPicker(selection: $icon)
                 }
             }.frame(maxHeight: 580)
+            if let deletionError { Text(deletionError).font(.callout).foregroundStyle(.red) }
             HStack {
+                if !store.profileFor(profileID).privateMode {
+                    Button("delete profile…", role: .destructive) { confirmDeletion = true }
+                        .disabled(!store.application.canDeleteProfile(profileID))
+                        .help(store.application.canDeleteProfile(profileID)
+                              ? "delete this profile and its local browsing data" : "keep at least one regular profile")
+
+                        .tint(.red)
+                }
+                if deleting { ProgressView().controlSize(.small) }
                 Button("cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("save") {
@@ -153,7 +166,27 @@ struct ProfileEditor: View {
                 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(
                     name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-        }.padding(24).frame(width: 520).onAppear {
+        }.disabled(deleting).padding(24).frame(width: 520).interactiveDismissDisabled(deleting)
+            .confirmationDialog("delete \(name)?", isPresented: $confirmDeletion, titleVisibility: .visible) {
+                Button("delete profile", role: .destructive) {
+                    deleting = true
+                    Task {
+                        do { try await store.application.deleteProfile(profileID); dismiss() }
+                        catch {
+                            if store.application.profiles.contains(where: { $0.id == profileID }) {
+                                deletionError = error.localizedDescription
+                            } else {
+                                store.error = "The profile was deleted, but some data cleanup is pending: \(error.localizedDescription)"
+                                dismiss()
+                            }
+                        }
+                        deleting = false
+                    }
+                }
+                Button("cancel", role: .cancel) {}
+            } message: {
+                Text("This deletes this profile’s tabs, history, bookmarks, cookies, saved passwords, and extensions from this Mac. It cannot be undone. Downloaded files stay where they are.")
+            }.onAppear {
             let profile = store.profileFor(profileID)
             name = profile.name
             icon = profile.emoji

@@ -186,8 +186,8 @@ struct SidebarView: View {
         let start = extensionProgress
         let target: CGFloat = open ? 1 : 0
         guard !reduceMotion else { extensionProgress = target; return }
-        // Advance the entire layout together. An implicit container animation
-        // interpolates SwiftUI rows independently of their native scroll host.
+
+
         extensionTask = Task { @MainActor in
             let began = ProcessInfo.processInfo.systemUptime
             while !Task.isCancelled {

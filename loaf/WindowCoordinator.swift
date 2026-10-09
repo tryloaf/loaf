@@ -83,6 +83,18 @@ import WebKit
                 application.profiles.contains { !$0.privateMode && record.saved.workspaces[$0.id] != nil }
             }
     }
+    func forgetProfile(_ id: UUID) {
+        closedWindows = closedWindows.compactMap { record in
+            var saved = record.saved
+            let forgotten = Set(saved.workspaces[id]?.tabs.map(\.id) ?? [])
+            saved.workspaces.removeValue(forKey: id)
+            guard !saved.workspaces.isEmpty else { return nil }
+            if saved.selectedProfile == id {
+                saved.selectedProfile = saved.workspaces.keys.sorted { $0.uuidString < $1.uuidString }.first!
+            }
+            return ClosedWindow(saved: saved, interactionStates: record.interactionStates.filter { !forgotten.contains($0.key) })
+        }
+    }
     private var auxiliaryCloseObserver: NSObjectProtocol?
     private var positioningOnboarding = false
     private var hiddenForOnboarding: [NSWindow] = []
@@ -162,6 +174,10 @@ import WebKit
         ) { [weak self] note in
             MainActor.assumeIsolated {
                 guard let self, let window = note.object as? NSWindow else { return }
+
+
+
+                guard !(window is NSSavePanel), !window.isSheet else { return }
                 let contentWindow = window === self.settingsWindow || self.native.values.contains { $0 === window }
                 if !contentWindow, let previous = self.updateReturnWindow, previous !== window {
                     self.auxiliaryReturnWindows[ObjectIdentifier(window)] = WindowReference(previous)
@@ -179,6 +195,7 @@ import WebKit
             forName: NSWindow.willCloseNotification, object: nil, queue: .main
         ) { [weak self] note in
             guard let window = note.object as? NSWindow else { return }
+            guard !(window is NSSavePanel), !window.isSheet else { return }
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let owned =
@@ -245,6 +262,22 @@ import WebKit
         application.persistSoon()
         return state
     }
+    func openReceivedURLs(_ urls: [URL]) {
+        let urls = urls.filter { ["http", "https"].contains($0.scheme?.lowercased() ?? "") }
+        guard let first = urls.first else { return }
+        let state: BrowserWindowState
+        if let existing = commandState {
+            state = existing
+            for url in urls { state.openReceivedURL(url) }
+        } else {
+            state = newWindow(url: first)
+            state.dismissOmnibar()
+            for url in urls.dropFirst() { state.openReceivedURL(url) }
+        }
+        show(state)
+        state.focusPage()
+    }
+
     @discardableResult func newPrivateWindow() -> BrowserWindowState {
         if application.onboardingVisible, let owner = application.windows.first {
             show(owner)

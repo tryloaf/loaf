@@ -228,7 +228,7 @@ struct OnboardingView: View {
                         }
                     }.accessibilityElement(children: .ignore).accessibilityLabel("step \(step + 1) of 5")
                 }.padding(.horizontal, 38).padding(.top, 60).padding(.bottom, 16)
-                ScrollView {
+                FocusRingSafeScrollView {
                     VStack(alignment: .leading, spacing: step == 2 ? 20 : 24) {
                         if step == 0 {
                             Image("loaf-lockup").resizable().scaledToFit().frame(width: 240, height: 88)

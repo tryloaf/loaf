@@ -23,6 +23,27 @@ import WebKit
     private var pendingURLs: [URL] = []
     private var inputMonitor: Any?
     private var quitWarningVisible = false
+    @objc private func handleQuitEvent(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+
+        NSApp.terminate(self)
+    }
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        guard LegalAcceptance.shared.isAccepted else { return nil }
+        return menus?.dockMenu()
+    }
+    private func presentQuitAlert(
+        _ alert: NSAlert, for sender: NSApplication,
+        completion: @escaping (NSApplication.ModalResponse) -> Void
+    ) {
+        let window = sender.keyWindow ?? sender.mainWindow ?? coordinator?.commandState?.nativeWindow
+        sender.activate()
+        if let window, window.attachedSheet == nil, !window.isMiniaturized {
+            window.makeKeyAndOrderFront(nil)
+            alert.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            DispatchQueue.main.async { completion(alert.runModal()) }
+        }
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if UpdateInstallationState.shared.isInstalling {
             coordinator?.terminating = true
@@ -58,11 +79,7 @@ import WebKit
                     if response == .alertFirstButtonReturn { sender.hide(nil) }
                 }
             }
-            if let window = sender.keyWindow, window.attachedSheet == nil {
-                alert.beginSheetModal(for: window, completionHandler: finish)
-            } else {
-                DispatchQueue.main.async { finish(alert.runModal()) }
-            }
+            presentQuitAlert(alert, for: sender, completion: finish)
             return .terminateLater
         }
         guard coordinator?.application.preferences.warnBeforeQuitting == true else {
@@ -97,11 +114,7 @@ import WebKit
             }
             sender.reply(toApplicationShouldTerminate: confirmed)
         }
-        if let window = sender.keyWindow, window.attachedSheet == nil {
-            alert.beginSheetModal(for: window, completionHandler: finish)
-        } else {
-            DispatchQueue.main.async { finish(alert.runModal()) }
-        }
+        presentQuitAlert(alert, for: sender, completion: finish)
         return .terminateLater
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -118,10 +131,14 @@ import WebKit
             pendingURLs.append(contentsOf: urls)
             return
         }
-        let state = coordinator?.commandState ?? coordinator?.newWindow()
-        for url in urls where ["http", "https"].contains(url.scheme) { _ = state?.newTab(url: url, showOmnibar: false) }
+        coordinator?.openReceivedURLs(urls)
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
+
+        _ = NSScriptSuiteRegistry.shared()
+        NSAppleEventManager.shared().setEventHandler(
+            self, andSelector: #selector(handleQuitEvent(_:withReplyEvent:)),
+            forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEQuitApplication))
         LowercaseMenus.install()
         if let coordinator {
             let menus = LoafMainMenus(coordinator: coordinator)

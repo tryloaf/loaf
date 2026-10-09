@@ -61,12 +61,14 @@ nonisolated enum ProfileImport {
             func attempt(_ label: String, _ operation: () throws -> Void) {
                 do { try operation() } catch { item.warnings.append(label + ": " + error.localizedDescription) }
             }
-            for name in ["History", "History.db"] {
+
+
+
+            let filenames = Set(try FileManager.default.contentsOfDirectory(atPath: source.path))
+            for name in ["History", "History.db", "history"] where filenames.contains(name) {
                 let file = source.appendingPathComponent(name)
-                if FileManager.default.fileExists(atPath: file.path) {
-                    attempt("history") { item.history = try databaseHistory(file) }
-                    break
-                }
+                attempt("history") { item.history = try databaseHistory(file) }
+                break
             }
             let places = source.appendingPathComponent("places.sqlite")
             if FileManager.default.fileExists(atPath: places.path) {
@@ -89,6 +91,10 @@ nonisolated enum ProfileImport {
                     safariBookmarkTree(object, into: &item, folder: nil, depth: 0)
                 }
             }
+            let orionBookmarks = source.appendingPathComponent("favourites.plist")
+            if FileManager.default.fileExists(atPath: orionBookmarks.path) {
+                attempt("Orion bookmarks") { try orionBookmarkTree(orionBookmarks, into: &item) }
+            }
             let firefoxCookies = source.appendingPathComponent("cookies.sqlite")
             if FileManager.default.fileExists(atPath: firefoxCookies.path) {
                 attempt("Firefox cookies") { item.cookies = try firefoxCookieRows(firefoxCookies) }
@@ -106,7 +112,7 @@ nonisolated enum ProfileImport {
             } else {
                 for name in ["Cookies", "Network/Cookies"] {
                     let file = source.appendingPathComponent(name)
-                    if FileManager.default.fileExists(atPath: file.path) {
+                    if (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
                         attempt("Chromium cookies") {
                             let result = try databaseCookies(file, password: cookiePassword)
                             item.cookies += result.cookies
@@ -213,20 +219,79 @@ nonisolated enum ProfileImport {
             for child in children { collectBookmarks(child, into: &item, folder: target, depth: depth + 1) }
         }
     }
+    private static func orionBookmarkTree(_ file: URL, into item: inout ProfileImportPreview) throws {
+        guard let entries = try PropertyListSerialization.propertyList(from: read(file), options: [], format: nil)
+            as? [String: [String: Any]], entries.count <= 25_000 else {
+            throw Failure(message: "This Orion bookmarks file has an unsupported format.")
+        }
+        var folders: [String: UUID] = [:]
+        let ordered = entries.sorted {
+            let left = $0.value["index"] as? Int ?? 0, right = $1.value["index"] as? Int ?? 0
+            return left == right ? $0.key < $1.key : left < right
+        }
+        for (id, entry) in ordered where entry["type"] as? String == "folder" && id != "0" {
+            guard item.folders.count < 1_000 else { break }
+            let folder = BookmarkFolder(name: String((entry["title"] as? String ?? "folder").prefix(80)))
+            folders[id] = folder.id
+            item.folders.append(folder)
+        }
+        for (_, entry) in ordered where entry["type"] as? String == "bookmark" {
+            guard item.bookmarks.count < 20_000 else { break }
+            guard let address = entry["url"] as? String, validURL(address) else { continue }
+            item.bookmarks.append(.init(title: String((entry["title"] as? String ?? address).prefix(500)), address: address,
+                folderID: (entry["parentId"] as? String).flatMap { folders[$0] }))
+        }
+    }
     private static func query(_ file: URL, sql: String) throws -> [[String]] {
         let values = try file.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey])
         guard values.isRegularFile == true, values.isSymbolicLink != true, (values.fileSize ?? Int.max) <= 500_000_000
         else { throw Failure(message: "Choose an original history or cookies database smaller than 500 MB.") }
+
+
+        let fm = FileManager.default
+        let temporary = fm.temporaryDirectory.appendingPathComponent("loaf-import-" + UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? fm.removeItem(at: temporary) }
+        let snapshot = temporary.appendingPathComponent("database")
+        func signature(_ url: URL) throws -> [AnyHashable] {
+            let attributes = try fm.attributesOfItem(atPath: url.path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular,
+                let size = attributes[.size] as? NSNumber, size.int64Value <= 500_000_000
+            else { throw Failure(message: "Choose an original database smaller than 500 MB.") }
+            return [size, attributes[.modificationDate] as? Date ?? .distantPast,
+                attributes[.systemFileNumber] as? NSNumber ?? 0]
+        }
+        let before = try signature(file)
+        let wal = URL(fileURLWithPath: file.path + "-wal")
+        let walBefore: [AnyHashable]?
+        do { walBefore = try signature(wal) }
+        catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
+            walBefore = nil
+        }
+        try fm.copyItem(at: file, to: snapshot)
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: snapshot.path)
+        if let walBefore {
+            let snapshotWAL = URL(fileURLWithPath: snapshot.path + "-wal")
+            try fm.copyItem(at: wal, to: snapshotWAL)
+            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: snapshotWAL.path)
+            guard try signature(wal) == walBefore else {
+                throw Failure(message: "The source browser is changing its data. Close it and try again.")
+            }
+        } else if fm.fileExists(atPath: wal.path) {
+            throw Failure(message: "The source browser is changing its data. Close it and try again.")
+        }
+        guard try signature(file) == before else {
+            throw Failure(message: "The source browser is changing its data. Close it and try again.")
+        }
         var database: OpaquePointer?
-        guard sqlite3_open_v2(file.path, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK else {
+        let openStatus = sqlite3_open_v2(snapshot.path, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil)
+        guard openStatus == SQLITE_OK else {
             if let database { sqlite3_close(database) }
-            throw Failure(
-                message:
-                    "The selected database can’t be read. Close the source app and, if macOS blocks access, enable loaf in Full Disk Access in System Settings, then quit and reopen loaf before importing."
-            )
+            throw Failure(message: "This database couldn’t be opened. Close the source browser and choose its profile folder, or import a bookmarks export.")
         }
         defer { sqlite3_close(database) }
         sqlite3_busy_timeout(database, 1_000)
+        sqlite3_exec(database, "PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;", nil, nil, nil)
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
             throw Failure(message: "This database has an unsupported format.")
@@ -250,7 +315,15 @@ nonisolated enum ProfileImport {
         let rows: [[String]]
         let epoch: Double
         let divisor: Double
-        if file.lastPathComponent == "History.db" {
+        let tables = Set(try query(file, sql:
+            "SELECT lower(name) FROM sqlite_master WHERE type='table' AND lower(name) IN ('urls','history_items','history_visits','visits')")
+            .compactMap(\.first))
+        if tables.contains("urls") {
+            rows = try query(file, sql:
+                "SELECT url, title, last_visit_time, visit_count FROM urls ORDER BY last_visit_time DESC LIMIT 20000")
+            epoch = -11_644_473_600
+            divisor = 1_000_000
+        } else if tables.isSuperset(of: ["history_items", "history_visits"]) {
             rows = try query(
                 file,
                 sql:
@@ -258,15 +331,12 @@ nonisolated enum ProfileImport {
             )
             epoch = 978_307_200
             divisor = 1
-        } else {
-            rows = try query(
-                file,
-                sql:
-                    "SELECT url, title, last_visit_time, visit_count FROM urls ORDER BY last_visit_time DESC LIMIT 20000"
-            )
-            epoch = -11_644_473_600
-            divisor = 1_000_000
-        }
+        } else if tables.isSuperset(of: ["history_items", "visits"]) {
+            rows = try query(file, sql:
+                "SELECT h.url, h.title, strftime('%s',v.visit_time), h.visit_count FROM history_items h JOIN visits v ON v.history_item_id=h.id ORDER BY v.visit_time DESC LIMIT 20000")
+            epoch = 0
+            divisor = 1
+        } else { throw Failure(message: "This history database has an unsupported format.") }
         return rows.compactMap { row in
             guard row.count == 4, validURL(row[0]), let time = Double(row[2]), time.isFinite else { return nil }
             return Visit(
@@ -276,11 +346,14 @@ nonisolated enum ProfileImport {
         }
     }
     private static func databaseCookies(_ file: URL, password: Data?) throws -> (cookies: [CookieTransfer], encrypted: Int) {
-        let rows = try query(
-            file,
-            sql:
-                "SELECT name, value, host_key, path, is_secure, is_httponly, expires_utc, hex(encrypted_value) FROM cookies LIMIT 10000"
-        )
+        let columns = Set(try query(file, sql: "PRAGMA table_info(cookies)").compactMap { $0.count > 1 ? $0[1] : nil })
+        var conditions: [String] = []
+
+        if columns.contains("top_frame_site_key") { conditions.append("top_frame_site_key=''") }
+        if columns.contains("is_partitioned") { conditions.append("is_partitioned=0") }
+        let filter = conditions.isEmpty ? "" : " WHERE " + conditions.joined(separator: " AND ")
+        let rows = try query(file,
+            sql: "SELECT name, value, host_key, path, is_secure, is_httponly, expires_utc, hex(encrypted_value) FROM cookies" + filter + " LIMIT 10000")
         let metadata = try? query(file, sql: "SELECT value FROM meta WHERE key='version'")
         let requiresHostHash = (metadata?.first?.first.flatMap(Int.init) ?? 24) >= 24
         var cookies: [CookieTransfer] = []
@@ -362,7 +435,7 @@ nonisolated enum ProfileImport {
         let status = CCCrypt(CCOperation(kCCDecrypt), CCAlgorithm(kCCAlgorithmAES), CCOptions(kCCOptionPKCS7Padding), key, key.count, iv, ciphertext, ciphertext.count, &decoded, capacity, &count)
         guard status == kCCSuccess else { return nil }
         var result = Data(decoded.prefix(count))
-        // Cookie DB version 24+ prepends a SHA-256 hash of host_key. Never strip an arbitrary prefix.
+
         let hash = Data(SHA256.hash(data: Data(domain.utf8)))
         if requiresHostHash {
             guard result.starts(with: hash) else { return nil }
@@ -437,7 +510,8 @@ nonisolated enum ProfileImport {
 
 extension BrowserWindowState {
     func importProfile(
-        _ source: ProfileImportPreview, name: String, newProfile: Bool, history: Bool, bookmarks: Bool, cookies: Bool
+        _ source: ProfileImportPreview, name: String, newProfile: Bool, history: Bool, bookmarks: Bool, cookies: Bool,
+        tabs: Bool = false
     ) async throws {
         guard !profile.privateMode, !newProfile || profiles.count < 8 else {
             throw ProfileImport.Failure(
@@ -484,7 +558,7 @@ extension BrowserWindowState {
             for item in preview.cookies { if let cookie = item.cookie() { await jar.setCookie(cookie) } }
         }
         if newProfile { switchProfile(destination) }
-        for saved in preview.tabs {
+        for saved in tabs ? preview.tabs : [] {
             if let address = saved.address, let url = URL(string: address) {
                 let tab = newTab(url: url, profileID: destination, showOmnibar: false, activate: false)
                 tab.customTitle = saved.title

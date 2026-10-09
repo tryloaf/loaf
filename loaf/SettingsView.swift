@@ -342,6 +342,8 @@ struct SettingsView: View {
             Section("everyday browsing") {
                 Button("show welcome to loaf…") { store.application.onboardingVisible = true }
                 Toggle("warn before quitting", isOn: optional(\.warnBeforeQuitting, fallback: false)).id("quit-warning")
+                Toggle("show link preview on hover", isOn: optional(\.showLinkPreview, fallback: true))
+                    .id("link-preview")
                 Toggle("trackpad haptics", isOn: optional(\.haptics, fallback: true)).id("haptics")
                 Button("make loaf the default browser…") {
                     Task {
@@ -507,7 +509,7 @@ struct SettingsView: View {
             }
             if store.preferences.searchEngine == .custom {
                 TextField("HTTPS search URL with {query}", text: optional(\.customSearchTemplate, fallback: ""))
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.roundedBorder).focusRingPadding()
                 if store.searchAddress("loaf") == nil {
                     Text("include one {query} placeholder in the path or query of an HTTPS URL").font(.caption)
                         .foregroundStyle(.secondary)
@@ -552,7 +554,7 @@ struct SettingsView: View {
             }.settingDisabled(!(store.preferences.alternateSearch ?? SearchRedirect()).enabled)
             if store.preferences.alternateSearch?.provider == .custom {
                 TextField("HTTPS URL with {query}", text: redirectBinding(\.customTemplate)).textFieldStyle(
-                    .roundedBorder)
+                    .roundedBorder).focusRingPadding()
                 if !(store.preferences.alternateSearch ?? SearchRedirect()).valid {
                     Text("use an https url with one {query} placeholder in its path or query").font(.caption)
                         .foregroundStyle(.secondary)
@@ -802,7 +804,7 @@ struct SettingsView: View {
                 }.id("identity")
                 if store.preferences.userAgentMode == .custom {
                     TextField("custom user agent", text: optional(\.customUserAgent, fallback: ""))
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(.roundedBorder).focusRingPadding()
                 }
                 Text(
                     Golzheim.available

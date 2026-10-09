@@ -37,7 +37,9 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     let passwordSuggestions = PasswordSuggestionState()
     private(set) var existingWebView: WKWebView?
     weak var webViewHost: WebViewHost.HostView?
-    private var disposedWebView: WKWebView?
+
+
+    private weak var disposedWebView: WKWebView?
     private var pendingConfiguration: WKWebViewConfiguration?
     private(set) var isDisposed = false
     private var requestedURL: URL?
@@ -91,6 +93,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     @Published var canGoForward = false
     @Published var secure = false
     @Published var favicon: NSImage?
+    @Published private(set) var hoveredLink: String?
+    private var hoveredLinkFrame: String?
     @Published var chromePrefersDark: Bool?
     @Published var chromeColor: NSColor?
     @Published var navigationError: String?
@@ -135,6 +139,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     private var appliedRules: [WKContentRuleList] = []
     private var extensionThemeObservation: AnyCancellable?
     private var faviconTask: Task<Void, Never>?
+    private var faviconOrigin: String?
+    private var faviconLinks: [URL] = []
     var saved: SavedTab {
         SavedTab(
             id: id, title: title, address: url?.user == nil ? url?.absoluteString : nil, pinned: pinned, page: page,
@@ -207,6 +213,12 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 source: StorePageIntegration.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true,
                 in: .defaultClient))
         config.userContentController.addUserScript(
+            WKUserScript(source: PageScripts.linkPreview, injectionTime: .atDocumentStart, forMainFrameOnly: false,
+                in: .defaultClient))
+        config.userContentController.addUserScript(
+            WKUserScript(source: PageScripts.favicon, injectionTime: .atDocumentStart, forMainFrameOnly: true,
+                in: .defaultClient))
+        config.userContentController.addUserScript(
             WKUserScript(
                 source: PageScripts.media, injectionTime: .atDocumentEnd, forMainFrameOnly: false, in: .defaultClient))
         if !store.profileFor(profileID).privateMode
@@ -227,6 +239,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsMagnification = true
         WebKitAdapter.setInspectionEnabled(webView, store.preferences.developerMenu == true)
+        config.userContentController.add(WeakScriptHandler(self), contentWorld: .defaultClient, name: "loafLinkPreview")
+        config.userContentController.add(WeakScriptHandler(self), contentWorld: .defaultClient, name: "loafFavicon")
         config.userContentController.add(WeakScriptHandler(self), contentWorld: .defaultClient, name: "loafMedia")
         config.userContentController.add(WeakScriptHandler(self), contentWorld: .defaultClient, name: "loafStore")
         config.userContentController.add(WeakScriptHandler(self), contentWorld: .defaultClient, name: "loafShortcut")
@@ -332,7 +346,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         existingChatGPTSearch?.clear()
         existingChatGPTSearch = nil
         navigationID = UUID()
-        prepareFavicon(for: url)
+        clearHoveredLink()
+        prepareFavicon(for: url, fetch: true)
         if store?.selectedTab?.id == id || store?.passwordFillOffer?.tabID == id { store?.cancelPasswordFill() }
         loaded = true
         sleeping = false
@@ -424,6 +439,12 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 source: StorePageIntegration.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true,
                 in: .defaultClient))
         controller.addUserScript(
+            WKUserScript(source: PageScripts.linkPreview, injectionTime: .atDocumentStart, forMainFrameOnly: false,
+                in: .defaultClient))
+        controller.addUserScript(
+            WKUserScript(source: PageScripts.favicon, injectionTime: .atDocumentStart, forMainFrameOnly: true,
+                in: .defaultClient))
+        controller.addUserScript(
             WKUserScript(
                 source: PageScripts.media, injectionTime: .atDocumentEnd, forMainFrameOnly: false, in: .defaultClient))
         if (store.preferences.savePasswords || store.preferences.autofillPasswords != false)
@@ -462,6 +483,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
 
     func releaseWebView() {
+        clearHoveredLink()
         faviconTask?.cancel()
         observations.removeAll()
         chromeColorObservation?.invalidate()
@@ -475,6 +497,10 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
+        webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: "loafLinkPreview", contentWorld: .defaultClient)
+        webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: "loafFavicon", contentWorld: .defaultClient)
         webView.configuration.userContentController.removeScriptMessageHandler(
             forName: "loafMedia", contentWorld: .defaultClient)
         webView.configuration.userContentController.removeScriptMessageHandler(
@@ -549,7 +575,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 (action.request.httpMethod ?? "GET") == "GET" && ["http", "https"].contains(scheme)
             if pendingLoginUsername?.origin != BrowserAddress.origin(target) { pendingLoginUsername = nil }
 
-            if url != target { prepareFavicon(for: target) }
+            if url != target { prepareFavicon(for: target, fetch: true) }
             url = target
             updateBlocker()
             applySiteSettings(target)
@@ -603,6 +629,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         guard existingWebView === webView, page == .web else { return }
         if requestedURL != nil, let activeNavigation, let navigation, activeNavigation !== navigation { return }
         activeNavigation = navigation
+        clearHoveredLink()
         if readerDocument != nil { exitReader() }
         restoreCapturedCursor()
         if store?.pointerLockOffer?.tabID == id { store?.cancelPointerLock() }
@@ -616,7 +643,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         readerDocument = nil
         media = []
         dismissedMedia = []
-        if let url { prepareFavicon(for: url) }
+        faviconLinks = []
+        if let url { prepareFavicon(for: url, fetch: true) }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard existingWebView === webView, page == .web else { return }
@@ -660,6 +688,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         requestedURL = nil
         if let committed = webView.url {
             url = committed
+            if faviconOrigin != BrowserAddress.websiteOrigin(committed) { prepareFavicon(for: committed, fetch: true) }
             store?.tabChanged(self)
         }
     }
@@ -864,6 +893,23 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let liveView = existingWebView, message.webView === liveView, page == .web else { return }
         guard let body = message.body as? [String: Any] else { return }
+        if message.name == "loafLinkPreview" {
+            guard let frame = body["frame"] as? String, frame.count <= 64,
+                let address = body["address"] as? String, address.count <= 8192 else { return }
+            updateHoveredLink(address, frame: frame)
+            return
+        }
+        if message.name == "loafFavicon" {
+            guard message.frameInfo.isMainFrame, let address = body["url"] as? String,
+                address.count <= 8192, let source = URL(string: address), source == liveView.url, source == url,
+                let links = body["links"] as? [String], links.count <= 16 else { return }
+            updateFavicon(for: source, declared: links.compactMap {
+                guard $0.count <= 4096, let link = URL(string: $0), link.scheme == "https",
+                    link.user == nil, link.password == nil else { return nil }
+                return link
+            })
+            return
+        }
         if message.name == "loafShortcut", let key = body["key"] as? String {
             (store?.nativeWindow as? LoafBrowserWindow)?.siteClaimedShortcut(key, tabID: id, claimed: body["claimed"] as? Bool ?? true)
             return
@@ -1064,44 +1110,103 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         }
     }
 
-    private func prepareFavicon(for destination: URL) {
+    func clearHoveredLink() {
+        hoveredLinkFrame = nil
+        if hoveredLink != nil { hoveredLink = nil }
+    }
+    func updateHoveredLink(_ address: String, frame: String) {
+        guard !isDisposed, page == .web, store?.preferences.showLinkPreview != false else {
+            clearHoveredLink(); return
+        }
+        if address.isEmpty {
+            if hoveredLinkFrame == frame { clearHoveredLink() }
+            return
+        }
+        guard let display = Self.linkPreviewAddress(address) else { clearHoveredLink(); return }
+        hoveredLinkFrame = frame
+        if hoveredLink != display { hoveredLink = display }
+    }
+    nonisolated static func linkPreviewAddress(_ address: String) -> String? {
+        guard !address.isEmpty, address.count <= 8192,
+            !address.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0)
+                || [0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069].contains($0.value) }),
+            var components = URLComponents(string: address), let scheme = components.scheme,
+            ["http", "https", "mailto", "tel", "ftp"].contains(scheme.lowercased()) else { return nil }
+        components.user = nil
+        components.password = nil
+        return components.string
+    }
+
+    private func prepareFavicon(for destination: URL, fetch: Bool = false) {
         faviconTask?.cancel()
-        guard let store else { return }
+        guard let store, let origin = BrowserAddress.websiteOrigin(destination) else {
+            favicon = nil; faviconOrigin = nil; faviconLinks = []
+            return
+        }
         let privateID = store.profileFor(profileID).privateMode ? profileID : nil
-        let sameOrigin = url.flatMap(BrowserAddress.websiteOrigin) == BrowserAddress.websiteOrigin(destination)
-        favicon =
-            store.application.favicons.cachedImage(for: destination, privateID: privateID)
+        let sameOrigin = faviconOrigin == origin && url.flatMap(BrowserAddress.websiteOrigin) == origin
+        favicon = store.application.favicons.cachedImage(for: destination, privateID: privateID)
             ?? (sameOrigin ? favicon : nil)
+        faviconOrigin = origin
+        if !sameOrigin { faviconLinks = [] }
         faviconTask = Task { [weak self] in
-            let image = await store.application.favicons.storedImage(for: destination, privateID: privateID)
+            let cached = await store.application.favicons.storedImage(for: destination, privateID: privateID)
             guard let self, !Task.isCancelled, !isDisposed,
-                url.flatMap(BrowserAddress.websiteOrigin) == BrowserAddress.websiteOrigin(destination), let image
-            else { return }
-            favicon = image
+                url.flatMap(BrowserAddress.websiteOrigin) == origin else { return }
+            if let cached { favicon = cached }
+            guard fetch, favicon == nil else { return }
+            let image = await store.application.favicons.image(for: destination, privateID: privateID,
+                quick: true, discoverPage: false)
+            guard !Task.isCancelled, !isDisposed, url.flatMap(BrowserAddress.websiteOrigin) == origin else { return }
+            if let image { favicon = image }
+        }
+    }
+    private func updateFavicon(for source: URL, declared: [URL]) {
+        guard let store, !declared.isEmpty, declared != faviconLinks else { return }
+        faviconLinks = declared
+        faviconTask?.cancel()
+        let token = navigationID
+        let view = existingWebView
+        let privateID = store.profileFor(profileID).privateMode ? profileID : nil
+        faviconTask = Task { [weak self] in
+            let image = await store.application.favicons.image(for: source, privateID: privateID,
+                declared: declared, refresh: true, discoverPage: false)
+            guard let self, !Task.isCancelled, !isDisposed, navigationID == token,
+                url == source, existingWebView === view, view?.url == source else { return }
+            if let image { favicon = image }
         }
     }
     private func loadFavicon() {
-        guard let url, let store else { return }
-        faviconTask?.cancel()
+        guard let source = url, let view = existingWebView else { return }
         let token = navigationID
-        faviconTask = Task { [weak self] in
-            guard let self else { return }
-            let privateID = store.profileFor(profileID).privateMode ? profileID : nil
-            if let cached = await store.application.favicons.storedImage(for: url, privateID: privateID),
-                !Task.isCancelled, navigationID == token, self.url == url
-            {
-                favicon = cached
+
+        Task { [weak self, weak view] in
+            guard let view else { return }
+
+            let result = try? await view.evaluateJavaScript(
+                PageScripts.faviconLinks
+            )
+
+            let links = result as? [String] ?? []
+
+            guard let self,
+                  !isDisposed,
+                  navigationID == token,
+                  url == source,
+                  existingWebView === view else {
+                return
             }
-            guard !Task.isCancelled, navigationID == token else { return }
-            let links =
-                (try? await webView.evaluateJavaScript(
-                    "Array.from(document.querySelectorAll('link[rel~=icon],link[rel~=apple-touch-icon],link[rel~=apple-touch-icon-precomposed]')).filter(i=>!i.media||matchMedia(i.media).matches).sort((a,b)=>(b.sizes?.value.includes('32')?1:0)-(a.sizes?.value.includes('32')?1:0)).map(i=>i.href)"
-                )) as? [String] ?? []
-            let image = await store.application.favicons.image(
-                for: url, privateID: privateID,
-                declared: links.compactMap { URL(string: $0, relativeTo: url)?.absoluteURL }, refresh: true)
-            guard !Task.isCancelled, navigationID == token, self.url == url, webView.url == url else { return }
-            if let image { favicon = image }
+
+            updateFavicon(for: source, declared: links.compactMap {
+                guard $0.count <= 4096,
+                      let link = URL(string: $0),
+                      link.scheme == "https",
+                      link.user == nil,
+                      link.password == nil else {
+                    return nil
+                }
+                return link
+            })
         }
     }
 

@@ -123,8 +123,8 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
     static func extractHTML(_ html: String, queryURL: URL) async throws -> String {
         let webView = makeWebView()
         defer { webView.stopLoading() }
-        // Parse already fetched HTML without running its scripts, loading assets,
-        // or sharing the user's website cookies with the search retriever.
+
+
         webView.loadHTMLString("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'none'\">" + html, baseURL: queryURL)
         for _ in 0..<50 {
             try await Task.sleep(for: .milliseconds(20))

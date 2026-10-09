@@ -32,6 +32,7 @@ import WebKit
     private let sessionWriter = SessionWriter()
     private var sleepingTask: Task<Void, Never>?
     private var restoredWindows: [SavedWindow] = []
+    private var pendingProfileDeletions = Set<UUID>()
     private var observers = Set<AnyCancellable>()
     func setAIFeaturesEnabled(_ enabled: Bool) {
         preferences.aiFeaturesEnabled = enabled
@@ -41,16 +42,21 @@ import WebKit
         persistSoon()
     }
 
-    init(directory override: URL? = nil, prepareServices: Bool = true, chatGPTAccount: ChatGPTAccount? = nil) {
+    init(directory override: URL? = nil, prepareServices: Bool = true, chatGPTAccount: ChatGPTAccount? = nil,
+        faviconService: FaviconService? = nil) {
         suppliedChatGPTAccount = chatGPTAccount
         directory =
             override
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(BrowserBrand.supportDirectory, isDirectory: true)
-        favicons = FaviconService(directory: directory.appendingPathComponent("Favicons"))
+        favicons = faviconService ?? FaviconService(directory: directory.appendingPathComponent("Favicons"))
         do {
             try FileManager.default.createDirectory(
                 at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let deletions = directory.appendingPathComponent("pending-profile-deletions.json")
+            if FileManager.default.fileExists(atPath: deletions.path) {
+                pendingProfileDeletions = try JSONDecoder().decode(Set<UUID>.self, from: Data(contentsOf: deletions))
+            }
             let file = directory.appendingPathComponent("session.json")
             onboardingVisible = override == nil && !FileManager.default.fileExists(atPath: file.path)
             if FileManager.default.fileExists(atPath: file.path) {
@@ -88,6 +94,16 @@ import WebKit
                 at: file, to: directory.appendingPathComponent("session-unreadable-\(UUID().uuidString).json"))
             self.error = "The session couldn’t be restored. A backup was retained: \(error.localizedDescription)"
         }
+        profiles.removeAll { pendingProfileDeletions.contains($0.id) }
+        restoredWindows = restoredWindows.compactMap { record in
+            var record = record
+            record.workspaces = record.workspaces.filter { !pendingProfileDeletions.contains($0.key) }
+            guard !record.workspaces.isEmpty else { return nil }
+            if pendingProfileDeletions.contains(record.selectedProfile) {
+                record.selectedProfile = record.workspaces.keys.sorted { $0.uuidString < $1.uuidString }.first!
+            }
+            return record
+        }
         if profiles.isEmpty {
             profiles = [Profile(name: "personal", emoji: "🌱"), Profile(name: "school", emoji: "📝", tint: 1)]
         }
@@ -116,6 +132,12 @@ import WebKit
         }
         Task {
             if prepareServices, !(await LegalAcceptance.shared.waitUntilAccepted()) { return }
+            if !pendingProfileDeletions.isEmpty {
+                do {
+                    try persistProfileDeletion()
+                    for id in pendingProfileDeletions { try await finishProfileDeletion(id) }
+                } catch { self.error = "Profile data cleanup is pending: \(error.localizedDescription)" }
+            }
             if prepareServices { await blocker.prepare() }
             ready = true
             for window in windows { window.restoreTabs(for: window.selectedProfileID) }
@@ -224,6 +246,106 @@ import WebKit
         runtimes.removeValue(forKey: id)
         profiles.removeAll { $0.id == id }
         persistSoon()
+    }
+    func canDeleteProfile(_ id: UUID) -> Bool {
+        profiles.contains { $0.id == id && !$0.privateMode }
+            && profiles.filter { !$0.privateMode }.count > 1 && !pendingProfileDeletions.contains(id)
+    }
+    func deleteProfile(_ id: UUID) async throws {
+        guard canDeleteProfile(id) else {
+            throw ProfileImport.Failure(message: "Keep at least one regular profile in loaf.")
+        }
+
+
+        var pending = pendingProfileDeletions
+        pending.insert(id)
+        try writeProfileDeletions(pending)
+        pendingProfileDeletions = pending
+        runtimes[id]?.extensionRestoration?.cancel()
+        runtimes[id]?.extensions.shutDown()
+        for window in windows { window.forgetProfile(id) }
+        coordinator?.forgetProfile(id)
+        downloads.forgetProfile(id)
+        notifications.forgetProfile(id)
+        tabPreviews.forgetProfile(id)
+        runtimes.removeValue(forKey: id)
+        profiles.removeAll { $0.id == id }
+        restoredWindows = restoredWindows.compactMap { record in
+            var record = record
+            record.workspaces.removeValue(forKey: id)
+            guard !record.workspaces.isEmpty else { return nil }
+            if record.selectedProfile == id { record.selectedProfile = record.workspaces.keys.first! }
+            return record
+        }
+        try persistProfileDeletion()
+        await Task.yield()
+        try await finishProfileDeletion(id)
+    }
+    private func persistProfileDeletion() throws {
+        saveTask?.cancel()
+        saveTask = nil
+        guard var snapshot = sessionSnapshot() else { throw CocoaError(.fileWriteUnknown) }
+        if windows.isEmpty { snapshot.windows = restoredWindows }
+        let revision = sessionWriter.reserve()
+        try sessionWriter.commit(try SessionWrite(snapshot: snapshot).encoded(),
+            to: directory.appendingPathComponent("session.json"), revision: revision)
+    }
+    private func writeProfileDeletions(_ ids: Set<UUID>) throws {
+        let file = directory.appendingPathComponent("pending-profile-deletions.json")
+        try JSONEncoder().encode(ids).write(to: file, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
+    private func finishProfileDeletion(_ id: UUID) async throws {
+        try PasswordVault.deleteAll(profileID: id)
+        await clearDeletedProfileWebsiteData(id)
+
+
+        for file in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            where file.lastPathComponent.hasPrefix("session-v1-backup-") || file.lastPathComponent.hasPrefix("session-unreadable-") {
+            let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true,
+                var backup = try? JSONDecoder().decode(BrowserSnapshot.self, from: Data(contentsOf: file)),
+                backup.profiles.contains(where: { $0.id == id }) else { continue }
+            backup.profiles.removeAll { $0.id == id }
+            if backup.profiles.isEmpty { try FileManager.default.removeItem(at: file); continue }
+            if backup.selectedProfile == id { backup.selectedProfile = backup.profiles[0].id }
+            backup.windows = backup.windows?.compactMap { record in
+                var record = record
+                record.workspaces.removeValue(forKey: id)
+                guard !record.workspaces.isEmpty else { return nil }
+                if record.selectedProfile == id { record.selectedProfile = record.workspaces.keys.first! }
+                return record
+            }
+            try JSONEncoder().encode(backup).write(to: file, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        }
+        let configuration = WKWebExtensionController.Configuration(identifier: id)
+        let controller = WKWebExtensionController(configuration: configuration)
+        let types = WKWebExtensionController.allExtensionDataTypes
+        let records = await controller.dataRecords(ofTypes: types)
+        await controller.removeData(ofTypes: types, from: records)
+        if let error = records.flatMap(\.errors).first { throw error }
+        let extensions = directory.appendingPathComponent("Extensions/\(id.uuidString)")
+        if FileManager.default.fileExists(atPath: extensions.path) { try FileManager.default.removeItem(at: extensions) }
+
+
+        for attempt in 0..<4 {
+            do {
+                try await WKWebsiteDataStore.remove(forIdentifier: id)
+                break
+            } catch {
+                guard attempt < 3 else { throw error }
+                try await Task.sleep(for: .milliseconds([100, 300, 1_000][attempt]))
+            }
+        }
+        var pending = pendingProfileDeletions
+        pending.remove(id)
+        try writeProfileDeletions(pending)
+        pendingProfileDeletions = pending
+    }
+    private func clearDeletedProfileWebsiteData(_ id: UUID) async {
+        let store = WKWebsiteDataStore(forIdentifier: id)
+        await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
     }
     func persistSoon() {
 

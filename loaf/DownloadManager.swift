@@ -509,6 +509,8 @@ struct DownloadRecord: Codable {
     }
     func forgetPrivate(_ id: UUID) {
         for item in items where item.profileID == id {
+
+            item.privateMode = true
             cancel(item)
             if item.download == nil, let transfer = item.transfer { try? FileManager.default.removeItem(at: transfer) }
         }
@@ -531,5 +533,9 @@ struct DownloadRecord: Codable {
             }
         }
         items.removeAll { $0.profileID == id }
+    }
+    func forgetProfile(_ id: UUID) {
+        forgetPrivate(id)
+        persist()
     }
 }

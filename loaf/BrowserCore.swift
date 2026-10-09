@@ -319,6 +319,7 @@ nonisolated struct BrowserPreferences: Codable, Sendable {
     var googleSuggestions = false
     var savePasswords = true
     var haptics: Bool?
+    var showLinkPreview: Bool?
     var autofillPasswords: Bool?
     var allowsPointerCapture: Bool?
     var weatherCity = ""

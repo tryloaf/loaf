@@ -321,7 +321,11 @@ struct ContentView: View {
             Text(store.error ?? "")
         }
         .onOpenURL { url in
-            if ["https", "http"].contains(url.scheme) { _ = store.newTab(url: url, showOmnibar: false) }
+            if let coordinator = store.application.coordinator {
+                coordinator.openReceivedURLs([url])
+            } else {
+                store.openReceivedURL(url)
+            }
         }
     }
     private func pageError(_ error: String, tab: BrowserTab) -> some View {

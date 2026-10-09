@@ -1,6 +1,21 @@
 import AppKit
 import SwiftUI
 
+
+
+
+struct FocusRingSafeScrollView<Content: View>: View {
+    private let content: Content
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+    var body: some View {
+        ScrollView { content.padding(4) }.padding(-4)
+    }
+}
+
+extension View {
+    func focusRingPadding() -> some View { padding(4) }
+}
+
 struct SiteIcon: View {
     @ObservedObject var tab: BrowserTab
     var size: CGFloat = 14

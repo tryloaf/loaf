@@ -14,8 +14,8 @@ nonisolated struct BrowserSplit: Equatable {
 }
 
 extension BrowserWindowState {
-    /// The idle interval starts when a page leaves the viewport, not when it
-    /// was first selected (which may have been hours ago).
+
+
     func markVisibleTabsActive(at now: Date = .now) {
         selectedTab?.lastActivated = now
         if let split = visibleSplit {
@@ -81,6 +81,18 @@ extension BrowserWindowState {
 
 @MainActor final class LoafWebView: WKWebView {
     weak var browserTab: BrowserTab?
+    private var linkPreviewTracking: NSTrackingArea?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let linkPreviewTracking { removeTrackingArea(linkPreviewTracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        linkPreviewTracking = area
+    }
+    override func mouseExited(with event: NSEvent) {
+        browserTab?.clearHoveredLink()
+        super.mouseExited(with: event)
+    }
     override func hitTest(_ point: NSPoint) -> NSView? {
         if let host = superview as? WebViewHost.HostView {
             let local = convert(point, from: superview)
@@ -150,8 +162,34 @@ struct BrowserWebSurface: View {
                     ).allowsHitTesting(false)
                 }
             }
+            .overlay(alignment: .bottomLeading) {
+                LinkPreviewToast(store: store, tab: page, maximumWidth: max(0, min(420, viewport.width - 16)))
+                    .padding(8)
+            }
             .accessibilityElement(children: .contain).accessibilityLabel(page.sidebarTitle)
             .id(page.id)
+    }
+}
+
+struct LinkPreviewToast: View {
+    @ObservedObject var store: BrowserStore
+    @ObservedObject var tab: BrowserTab
+    let maximumWidth: CGFloat
+    var body: some View {
+        Group {
+            if store.preferences.showLinkPreview != false, !store.omnibarVisible,
+                tab.fullscreenState == .notInFullscreen, let address = tab.hoveredLink {
+                Text(address).font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
+                    .padding(.horizontal, 9).padding(.vertical, 5)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.primary.opacity(0.12), lineWidth: 0.5))
+                    .frame(maxWidth: maximumWidth, alignment: .leading)
+                    .accessibilityLabel("link destination: " + address)
+            }
+        }.allowsHitTesting(false)
+            .onChange(of: store.preferences.showLinkPreview) { _, enabled in
+                if enabled == false { tab.clearHoveredLink() }
+            }
     }
 }
 

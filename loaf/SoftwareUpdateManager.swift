@@ -103,8 +103,8 @@ final class UpdateInstallationState: @unchecked Sendable {
     extension SoftwareUpdateManager: SPUUpdaterDelegate {
         nonisolated func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
             UpdateInstallationState.shared.begin()
-            // Sparkle's external quit Apple event can be delayed by sandbox/event routing.
-            // Its installer connection is resumed before this next-main-loop termination.
+
+
             DispatchQueue.main.async { NSApp.terminate(nil) }
         }
         nonisolated func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {

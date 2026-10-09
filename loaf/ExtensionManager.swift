@@ -14,6 +14,7 @@ import WebKit
     var window: ExtensionWindow { store!.extensionWindow(for: profileID) }
     @Published var contexts: [UUID: WKWebExtensionContext] = [:]
     @Published var installing = false
+    private var isDisposed = false
     private weak var actionOwner: BrowserStore?
     private var popupPanel: ExtensionPopupPanel?
     private var popupRecordID: UUID?
@@ -38,8 +39,9 @@ import WebKit
     }
 
     func restore() async {
-        guard let store else { return }
+        guard !isDisposed, let store else { return }
         for record in store.profileFor(profileID).extensions where record.enabled {
+            guard !isDisposed, !Task.isCancelled else { return }
             guard store.profileFor(profileID).extensions.contains(where: { $0.id == record.id && $0.enabled }) else {
                 continue
             }
@@ -131,11 +133,12 @@ import WebKit
     func installFolder(
         _ source: URL, package: Data? = nil, storeID: String? = nil, confirm: Bool, owner: BrowserStore? = nil
     ) async throws {
-        guard let application, let profile = application.profiles.first(where: { $0.id == profileID }),
+        guard !isDisposed, let application, let profile = application.profiles.first(where: { $0.id == profileID }),
             !profile.privateMode
         else { throw PackageError(reason: "Extensions cannot be installed in a private profile.") }
         try validateFolder(source)
         let ext = try await WKWebExtension(resourceBaseURL: source)
+        guard !isDisposed else { throw CancellationError() }
         let raw = ext.manifest
         let rawPermissions = raw["permissions"] as? [String] ?? []
         let permissions = Array(
@@ -164,6 +167,7 @@ import WebKit
             }
             guard response == .alertFirstButtonReturn else { return }
         }
+        guard !isDisposed, application.profiles.contains(where: { $0.id == profileID }) else { throw CancellationError() }
         guard storeID == nil || !profile.extensions.contains(where: { $0.storeID == storeID }) else {
             throw PackageError(reason: "This extension is already installed in this profile.")
         }
@@ -193,6 +197,7 @@ import WebKit
             record.diagnostics = (record.diagnostics ?? []) + [error.localizedDescription]
             record.status = "installed · incompatible · disabled"
         }
+        guard !isDisposed else { throw CancellationError() }
         application.updateProfile(profileID) { $0.extensions.append(record) }
         application.persistSoon()
     }
@@ -212,6 +217,7 @@ import WebKit
     }
 
     private func load(_ record: InstalledExtension) async throws {
+        guard !isDisposed else { throw CancellationError() }
         guard contexts[record.id] == nil else { return }
         let revision = loadRevisions[record.id]
         let root = folder.appendingPathComponent(record.id.uuidString)
@@ -263,7 +269,7 @@ import WebKit
             if loadRevisions[record.id] != revision { throw CancellationError() }
             throw error
         }
-        guard loadRevisions[record.id] == revision else { throw CancellationError() }
+        guard !isDisposed, loadRevisions[record.id] == revision else { throw CancellationError() }
 
         guard contexts[record.id] == nil else { return }
         let context = WKWebExtensionContext(for: ext)
@@ -283,6 +289,16 @@ import WebKit
         try controller.load(context)
         contexts[record.id] = context
         store?.objectWillChange.send()
+    }
+    func shutDown() {
+        isDisposed = true
+        popupPanel?.close()
+        popupPanel = nil
+        popupRecordID = nil
+        actionOwner = nil
+        controller.delegate = nil
+        for context in contexts.values { try? controller.unload(context) }
+        contexts.removeAll()
     }
 
     func setEnabled(_ record: InstalledExtension, _ enabled: Bool) async {

@@ -2,6 +2,64 @@ import Foundation
 import WebKit
 
 enum PageScripts {
+    static let linkPreview = #"""
+        (() => {
+          const frame = [...crypto.getRandomValues(new Uint32Array(4))].map(n => n.toString(16)).join('-');
+          let current = null;
+          const link = target => target?.closest?.('a[href],area[href]') || null;
+          const send = address => window.webkit.messageHandlers.loafLinkPreview.postMessage({frame, address});
+          document.addEventListener('pointerover', event => {
+            if (!event.isTrusted || event.pointerType === 'touch') return;
+            const next = event.composedPath().map(link).find(Boolean) || null;
+            if (next === current) return;
+            current = next;
+            send(next ? String(next.href).slice(0,8192) : '');
+          }, true);
+          document.addEventListener('pointerout', event => {
+            if (!event.isTrusted || !current || current.contains(event.relatedTarget)) return;
+            current = null; send('');
+          }, true);
+          const clear = () => { if (current) { current = null; send(''); } };
+          window.addEventListener('blur', clear);
+          window.addEventListener('pagehide', clear);
+          document.addEventListener('visibilitychange', () => { if (document.hidden) clear(); });
+        })();
+        """#
+    static let faviconLinks = #"""
+        Array.from(document.head?.querySelectorAll('link[rel~=icon],link[rel~=apple-touch-icon],link[rel~=apple-touch-icon-precomposed]') || [])
+          .filter(i => !i.media || matchMedia(i.media).matches)
+          .sort((a,b) => (b.sizes?.value.includes('32') ? 1 : 0) - (a.sizes?.value.includes('32') ? 1 : 0))
+          .slice(0,16).map(i => i.href).filter(h => h.length <= 4096)
+        """#
+    static let favicon = """
+        (() => {
+          if (globalThis.loafReportFavicon) return;
+          let previous = '', timer = null, head = null;
+          const report = () => {
+            timer = null;
+            const links = \(faviconLinks);
+            const key = JSON.stringify([location.href, links]);
+            if (!links.length || key === previous) return;
+            previous = key;
+            window.webkit.messageHandlers.loafFavicon.postMessage({url:location.href, links});
+          };
+          const schedule = () => { if (timer === null) timer = setTimeout(report, 30); };
+          const headObserver = new MutationObserver(schedule);
+          const attach = () => {
+            if (!document.head || document.head === head) return;
+            head = document.head;
+            headObserver.disconnect();
+            headObserver.observe(head, {childList:true, subtree:true, attributes:true,
+              attributeFilter:['href','rel','sizes','media']});
+            schedule();
+          };
+          const rootObserver = new MutationObserver(() => { attach(); if (head) rootObserver.disconnect(); });
+          rootObserver.observe(document.documentElement, {childList:true});
+          attach();
+          document.addEventListener('DOMContentLoaded', () => { attach(); schedule(); }, {once:true});
+          globalThis.loafReportFavicon = report;
+        })();
+        """
     static let passwordWorld: WKContentWorld = {
         if #available(macOS 27.0, *) {
             let configuration = WKContentWorld.Configuration()
