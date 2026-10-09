@@ -44,7 +44,7 @@ struct ChatGPTConnectionView: View {
                 if !account.connected { Link("manage usage", destination: ChatGPTProtocol.usageURL).font(.caption) }
             }
             Text(
-                "queries and follow-ups go to OpenAI when submitted. if built-in web search is unavailable, loaf fetches Google results for your question and sends those excerpts to OpenAI. Plus usage is shared with Codex and other connected apps. answers stay in memory on this Mac."
+                "queries and follow-ups go to OpenAI when submitted. if built-in web search is unavailable, loaf fetches web results from Google, or DuckDuckGo if Google is unavailable, and sends those excerpts to OpenAI. Plus usage is shared with Codex and other connected apps. answers stay in memory on this Mac."
             )
             .font(.caption).foregroundStyle(.secondary)
         }
@@ -69,6 +69,7 @@ struct ChatGPTSearchView: View {
     @State private var expandedSources = Set<UUID>()
     @State private var editingTurnID: UUID?
     @State private var editedQuery = ""
+    @State private var copiedTurnID: UUID?
     @FocusState private var editingFocused: Bool
 
     private var surface: Color { scheme == .dark ? Color(white: 0.09) : Color(white: 0.985) }
@@ -108,12 +109,14 @@ struct ChatGPTSearchView: View {
                         .frame(maxWidth: .infinity, alignment: .top)
                     }
                     .scrollBounceBehavior(.basedOnSize)
-                    .onChange(of: search.activeTurnID) { _, id in
-                        if let id { proxy.scrollTo(id, anchor: .top) }
-                    }
                     .onChange(of: search.turns.last?.id) { _, id in
-                        if let id { proxy.scrollTo(id, anchor: .top) }
+                        if let id {
+                            withAnimation(reduceMotion ? nil : .smooth(duration: 0.24)) {
+                                proxy.scrollTo(id, anchor: .top)
+                            }
+                        }
                     }
+
                 }
                 composer.frame(maxWidth: 680).padding(.horizontal, 32)
                     .padding(.top, 10).padding(.bottom, 14).frame(maxWidth: .infinity)
@@ -299,22 +302,42 @@ struct ChatGPTSearchView: View {
             }.foregroundStyle(.secondary)
             if !turn.text.isEmpty {
                 ChatGPTAnswerBody(turn: turn, store: store)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 6)))
             }
             if search.searching && turn.id == search.activeTurnID {
-                LiveAnswerProgress(turn: turn, tint: profileTint(store.profile))
+                LiveAnswerProgress(turn: turn, tint: profileTint(store.profile)).transition(.opacity)
             }
             if turn.provider == .chatgpt && turn.externalSources {
                 Text(
                     turn.complete && turn.citations.isEmpty
-                        ? "web results from Google · no source citations returned" : "web results from Google"
+                        ? "web sources · no source citations returned" : "web sources retrieved by loaf"
                 )
                 .font(.system(size: 10)).foregroundStyle(.secondary)
             }
-            if turn.provider != .chatgpt {
-                Text("generated on this Mac · sources from Google")
+            if turn.provider != .chatgpt && !turn.sources.isEmpty {
+                Text("generated on this Mac · web sources")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             }
-            if !turn.citations.isEmpty { sources(turn) }
+            if !turn.citations.isEmpty { sources(turn).transition(.opacity) }
+            if turn.complete && !turn.text.isEmpty {
+                HStack(spacing: 16) {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(ChatGPTAnswerContent.copyText(turn), forType: .string)
+                        copiedTurnID = turn.id
+                        store.feedback.show(.copied, icon: .check, text: "answer copied")
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .seconds(2))
+                            if copiedTurnID == turn.id { copiedTurnID = nil }
+                        }
+                    } label: {
+                        Label(
+                            copiedTurnID == turn.id ? "copied" : "copy answer",
+                            systemImage: copiedTurnID == turn.id ? "checkmark" : "doc.on.doc")
+                    }.accessibilityLabel("copy answer")
+                }.font(.system(size: 11)).foregroundStyle(.secondary)
+                    .buttonStyle(AnswerControlStyle()).transition(.opacity)
+            }
             if let error = turn.error {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(error).foregroundStyle(.secondary).textSelection(.enabled)
@@ -324,8 +347,8 @@ struct ChatGPTSearchView: View {
                         }
                         .disabled(!search.canRetry(turn.id))
                         if turn.provider == .chatgpt { Link("manage usage", destination: ChatGPTProtocol.usageURL) }
-                        if let url = SearchEngine.google.url(for: turn.query) {
-                            Button("search in Google") { openSource(url) }
+                        if let url = store.resolveAddress(turn.query) {
+                            Button("open in search engine") { openSource(url) }
                         }
                     }
                 }.font(.system(size: 12)).padding(16)
@@ -333,6 +356,9 @@ struct ChatGPTSearchView: View {
                     .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: turn.text.isEmpty)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: turn.complete)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: expandedSources.contains(turn.id))
     }
 
     private func sources(_ turn: ChatGPTSearchTurn) -> some View {
@@ -343,14 +369,6 @@ struct ChatGPTSearchView: View {
             HStack {
                 Text("sources").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                 Spacer()
-                if turn.complete {
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(ChatGPTAnswerContent.copyText(turn), forType: .string)
-                    } label: {
-                        Label("copy answer", systemImage: "doc.on.doc").font(.system(size: 11))
-                    }.buttonStyle(.plain).foregroundStyle(.secondary).help("copy this answer")
-                }
                 if all.count > 4 {
                     Button(expandedSources.contains(turn.id) ? "show fewer" : "show all \(all.count)") {
                         if expandedSources.contains(turn.id) {
@@ -381,7 +399,7 @@ struct ChatGPTSearchView: View {
                         .background(fieldSurface, in: RoundedRectangle(cornerRadius: 10))
                         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.07)))
                         .contentShape(RoundedRectangle(cornerRadius: 10))
-                    }.buttonStyle(.plain).help(citation.url.absoluteString)
+                    }.buttonStyle(AnswerControlStyle(cornerRadius: 10)).help(citation.url.absoluteString)
                         .accessibilityLabel("source \(index + 1): \(citation.title)")
                 }
             }
@@ -396,7 +414,7 @@ struct ChatGPTSearchView: View {
                 )
                 .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...5)
                 .focused($focused).onSubmit { search.submit() }
-                .disabled(search.searching || editingTurnID != nil).padding(.vertical, 4)
+                .disabled(editingTurnID != nil).padding(.vertical, 4)
                 .accessibilityLabel(search.turns.isEmpty ? "search the web" : "ask a follow-up")
                 Button {
                     if search.searching {
@@ -407,20 +425,27 @@ struct ChatGPTSearchView: View {
                     }
                 } label: {
                     Image(systemName: search.searching ? "stop.fill" : "arrow.up")
+                        .contentTransition(.symbolEffect(.replace))
                         .font(.system(size: search.searching ? 10 : 14, weight: .medium))
                         .frame(width: 28, height: 28)
                         .foregroundStyle(search.searching || canSubmit ? surface : Color.secondary.opacity(0.6))
                         .background(
                             search.searching || canSubmit ? Color.primary : Color.primary.opacity(0.06),
                             in: RoundedRectangle(cornerRadius: 8))
-                }.buttonStyle(.plain).disabled(!search.searching && !canSubmit)
+                }.buttonStyle(AnswerControlStyle(cornerRadius: 8)).disabled(!search.searching && !canSubmit)
                     .help(search.searching ? "stop search" : "search")
                     .accessibilityLabel(search.searching ? "stop search" : "search")
             }
             .padding(.horizontal, 12).padding(.vertical, 7).background(
                 fieldSurface, in: RoundedRectangle(cornerRadius: 12)
             )
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(focused ? 0.22 : 0.1)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12).strokeBorder(
+                    focused ? profileTint(store.profile).opacity(0.5) : Color.primary.opacity(0.1),
+                    lineWidth: focused ? 1.5 : 1)
+            )
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: focused)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: canSubmit)
             HStack {
                 Text(
                     search.draft.utf8.count > 8_000
@@ -442,5 +467,20 @@ struct ChatGPTSearchView: View {
     }
     static func citedText(_ turn: ChatGPTSearchTurn) -> AttributedString {
         ChatGPTAnswerContent.attributed(turn.text, start: 0, citations: turn.citations)
+    }
+}
+
+private struct AnswerControlStyle: ButtonStyle {
+    var cornerRadius: CGFloat = 6
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovered = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(Color.primary.opacity(hovered ? 0.04 : 0), in: RoundedRectangle(cornerRadius: cornerRadius))
+            .opacity(configuration.isPressed ? 0.72 : 1)
+            .scaleEffect(reduceMotion || !configuration.isPressed ? 1 : 0.98)
+            .onHover { hovered = $0 }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }

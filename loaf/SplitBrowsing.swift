@@ -15,7 +15,6 @@ nonisolated struct BrowserSplit: Equatable {
 
 extension BrowserWindowState {
 
-
     func markVisibleTabsActive(at now: Date = .now) {
         selectedTab?.lastActivated = now
         if let split = visibleSplit {
@@ -84,8 +83,11 @@ extension BrowserWindowState {
     private var linkPreviewTracking: NSTrackingArea?
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let linkPreviewTracking { removeTrackingArea(linkPreviewTracking) }
-        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self)
+
+
+        if let linkPreviewTracking, trackingAreas.contains(linkPreviewTracking) { return }
+        let area = NSTrackingArea(
+            rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self)
         addTrackingArea(area)
         linkPreviewTracking = area
     }
@@ -178,7 +180,8 @@ struct LinkPreviewToast: View {
     var body: some View {
         Group {
             if store.preferences.showLinkPreview != false, !store.omnibarVisible,
-                tab.fullscreenState == .notInFullscreen, let address = tab.hoveredLink {
+                tab.fullscreenState == .notInFullscreen, let address = tab.hoveredLink
+            {
                 Text(address).font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
                     .padding(.horizontal, 9).padding(.vertical, 5)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))

@@ -35,7 +35,7 @@ nonisolated struct ChatGPTSearchTurn: Identifiable {
     private var generation = UUID()
     let account: ChatGPTAccount
     let selectedProvider: () -> AIProvider
-    let webSearch: (String) async throws -> [WebSearchResult]
+    let webSearch: ((String) async throws -> [WebSearchResult])?
     let enabled: () -> Bool
     private var providerOverride: AIProvider?
     var provider: AIProvider { providerOverride ?? selectedProvider() }
@@ -47,7 +47,7 @@ nonisolated struct ChatGPTSearchTurn: Identifiable {
     init(
         account: ChatGPTAccount, provider: @escaping () -> AIProvider = { .chatgpt },
         enabled: @escaping () -> Bool = { true },
-        webSearch: @escaping (String) async throws -> [WebSearchResult] = { try await WebSearchService.search($0) }
+        webSearch: ((String) async throws -> [WebSearchResult])? = nil
     ) {
         self.account = account
         self.selectedProvider = provider
@@ -178,7 +178,8 @@ nonisolated struct ChatGPTSearchTurn: Identifiable {
                         $0.phase = .searching
                         $0.searchQuery = query
                     }
-                    let sources = try await webSearch(WebSearchService.searchQuery(query, preceding: preceding.map(\.query)))
+                    let sources = try await retrieve(
+                        query, preceding: preceding.map(\.query), turnID: turnID, current: current)
                     try Task.checkCancellation()
                     guard generation == current else { return }
                     update(turnID) {
@@ -219,7 +220,11 @@ nonisolated struct ChatGPTSearchTurn: Identifiable {
                         try await externalAnswer(
                             query: query, input: input, model: model, token: token, turnID: turnID, current: current)
                         guard generation == current else { return }
-                        account.useExternalWebSearch = true
+                        if case .remote(_, let code, _, _) = failure,
+                            code == "subscription_sharing_unsupported_capability"
+                        {
+                            account.useExternalWebSearch = true
+                        }
                     }
                 }
 
@@ -240,12 +245,12 @@ nonisolated struct ChatGPTSearchTurn: Identifiable {
             $0.citations = []
             $0.sources = []
             $0.complete = false
-            $0.externalSources = true
+            $0.externalSources = !WebSearchService.isAssistantQuestion(query)
             $0.phase = .searching
             $0.searchQuery = query
         }
         let preceding = input.dropLast().compactMap { $0["role"] as? String == "user" ? $0["content"] as? String : nil }
-        let sources = try await webSearch(WebSearchService.searchQuery(query, preceding: preceding))
+        let sources = try await retrieve(query, preceding: preceding, turnID: turnID, current: current)
         try Task.checkCancellation()
         guard generation == current else { return }
         update(turnID) {
@@ -254,6 +259,22 @@ nonisolated struct ChatGPTSearchTurn: Identifiable {
         }
         try await stream(input: input, model: model, token: token, sources: sources, turnID: turnID, current: current)
     }
+    private func retrieve(_ query: String, preceding: [String], turnID: UUID, current: UUID) async throws
+        -> [WebSearchResult]
+    {
+        guard !WebSearchService.isAssistantQuestion(query) else { return [] }
+        let query = WebSearchService.searchQuery(query, preceding: preceding)
+        update(turnID) { $0.searchQuery = query }
+        if let webSearch { return try await webSearch(query) }
+        return try await WebSearchService.search(query) { [weak self] sources in
+            guard let self, self.generation == current else { return }
+            self.update(turnID) {
+                $0.phase = .reading
+                $0.sources = sources.map { .init(url: $0.url, title: $0.title) }
+            }
+        }
+    }
+
     private func stream(
         input: [[String: Any]], model: String, token: String, sources: [WebSearchResult]? = nil, turnID: UUID,
         current: UUID
@@ -284,7 +305,7 @@ nonisolated struct ChatGPTSearchTurn: Identifiable {
             throw ChatGPTFailure.interrupted
         }
         do {
-            try await ChatGPTStream.consume(bytes, requiresWebSearch: sources == nil) { [weak self] snapshot in
+            try await ChatGPTStream.consume(bytes, requiresWebSearch: false) { [weak self] snapshot in
                 await self?.receive(snapshot, turnID: turnID, generation: current, sources: sources)
             }
         } catch let failure as ChatGPTFailure {

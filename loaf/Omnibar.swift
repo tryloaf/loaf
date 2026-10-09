@@ -377,8 +377,8 @@ struct Suggestion: Identifiable {
             }
             if let domainPrefix, !store.profile.privateMode, store.preferences.remoteSites == true {
 
-
-                for (key, cached) in cache where key.profile == store.selectedProfileID && key.sites
+                for (key, cached) in cache
+                where key.profile == store.selectedProfileID && key.sites
                     && key.provider == (store.preferences.suggestionProvider ?? .google)
                     && Date().timeIntervalSince(cached.date) < 300
                 {
@@ -787,9 +787,9 @@ struct OmnibarView: View {
                     store.omnibarVisible = false
                 } label: {
                     ZStack {
-                        ShortcutKey(text: "esc").opacity(closeHovered ? 0 : 1)
+                        Text("escape").font(.system(size: 10)).foregroundStyle(.secondary).opacity(closeHovered ? 0 : 1)
                         GolzheimIcon(icon: .close, size: 12).opacity(closeHovered ? 1 : 0)
-                    }.frame(width: 30, height: 24).contentShape(Rectangle())
+                    }.frame(width: 38, height: 24).contentShape(Rectangle())
                 }.buttonStyle(.plain).onHover { closeHovered = $0 }
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: closeHovered)
                     .accessibilityLabel("close wonderbar")
@@ -843,16 +843,16 @@ struct OmnibarView: View {
                 EmojiIcon(glyph: store.profile.emoji, size: 12)
                 Text(store.profile.name)
                 Spacer(minLength: 8)
-                ShortcutKey(text: "⇥")
+                Text("⇥")
                 Text("complete")
-                ShortcutKey(text: "⇧↵")
+                Text("⇧↵")
                 Text("new tab")
                 if (store.preferences.alternateSearch ?? SearchRedirect()).enabled
                     && (store.preferences.aiFeaturesEnabled != false
                         || ![SearchRedirect.Provider.chatgpt, .appleIntelligence].contains(
                             (store.preferences.alternateSearch ?? SearchRedirect()).provider))
                 {
-                    ShortcutKey(text: (store.preferences.alternateSearch ?? SearchRedirect()).shortcut.rawValue)
+                    Text((store.preferences.alternateSearch ?? SearchRedirect()).shortcut.rawValue)
                     Text((store.preferences.alternateSearch ?? SearchRedirect()).title)
                 }
             }.font(.system(size: 10)).lineLimit(1).foregroundStyle(.secondary).padding(.horizontal, 16).padding(

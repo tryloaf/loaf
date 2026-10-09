@@ -57,7 +57,7 @@ struct SidebarDockHost: NSViewRepresentable {
         view.hostedSidebar.rootView = .init(store: store, scheme: scheme, floating: view.floating)
         view.configure(
             width: store.preferences.sidebarWidth, shown: shown,
-            duration: store.sidebarPresented ? 0.26 : 0.22, reduceMotion: reduceMotion)
+            duration: store.hoveredSidebar ? 0.22 : 0.26, reduceMotion: reduceMotion)
     }
     static func dismantleNSView(_ view: ContainerView, coordinator: ()) { view.stopMotion() }
 

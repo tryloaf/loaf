@@ -38,7 +38,6 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     private(set) var existingWebView: WKWebView?
     weak var webViewHost: WebViewHost.HostView?
 
-
     private weak var disposedWebView: WKWebView?
     private var pendingConfiguration: WKWebViewConfiguration?
     private(set) var isDisposed = false
@@ -213,10 +212,12 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 source: StorePageIntegration.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true,
                 in: .defaultClient))
         config.userContentController.addUserScript(
-            WKUserScript(source: PageScripts.linkPreview, injectionTime: .atDocumentStart, forMainFrameOnly: false,
+            WKUserScript(
+                source: PageScripts.linkPreview, injectionTime: .atDocumentStart, forMainFrameOnly: false,
                 in: .defaultClient))
         config.userContentController.addUserScript(
-            WKUserScript(source: PageScripts.favicon, injectionTime: .atDocumentStart, forMainFrameOnly: true,
+            WKUserScript(
+                source: PageScripts.favicon, injectionTime: .atDocumentStart, forMainFrameOnly: true,
                 in: .defaultClient))
         config.userContentController.addUserScript(
             WKUserScript(
@@ -388,7 +389,9 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         guard let store, let webView = existingWebView, let origin = BrowserAddress.websiteOrigin(url) else { return }
         let settings =
             store.profileFor(profileID).siteSettings?[origin]
-            ?? SiteSettings(userAgent: store.preferences.userAgentMode ?? .desktop, customUserAgent: store.preferences.customUserAgent)
+            ?? SiteSettings(
+                userAgent: store.preferences.userAgentMode ?? .automatic,
+                customUserAgent: store.preferences.customUserAgent)
         if webView.pageZoom != settings.zoom { webView.pageZoom = settings.zoom }
         let userAgent = DesktopIdentity.userAgent(
             mode: settings.userAgent,
@@ -439,10 +442,12 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 source: StorePageIntegration.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true,
                 in: .defaultClient))
         controller.addUserScript(
-            WKUserScript(source: PageScripts.linkPreview, injectionTime: .atDocumentStart, forMainFrameOnly: false,
+            WKUserScript(
+                source: PageScripts.linkPreview, injectionTime: .atDocumentStart, forMainFrameOnly: false,
                 in: .defaultClient))
         controller.addUserScript(
-            WKUserScript(source: PageScripts.favicon, injectionTime: .atDocumentStart, forMainFrameOnly: true,
+            WKUserScript(
+                source: PageScripts.favicon, injectionTime: .atDocumentStart, forMainFrameOnly: true,
                 in: .defaultClient))
         controller.addUserScript(
             WKUserScript(
@@ -895,23 +900,29 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         guard let body = message.body as? [String: Any] else { return }
         if message.name == "loafLinkPreview" {
             guard let frame = body["frame"] as? String, frame.count <= 64,
-                let address = body["address"] as? String, address.count <= 8192 else { return }
+                let address = body["address"] as? String, address.count <= 8192
+            else { return }
             updateHoveredLink(address, frame: frame)
             return
         }
         if message.name == "loafFavicon" {
             guard message.frameInfo.isMainFrame, let address = body["url"] as? String,
                 address.count <= 8192, let source = URL(string: address), source == liveView.url, source == url,
-                let links = body["links"] as? [String], links.count <= 16 else { return }
-            updateFavicon(for: source, declared: links.compactMap {
-                guard $0.count <= 4096, let link = URL(string: $0), link.scheme == "https",
-                    link.user == nil, link.password == nil else { return nil }
-                return link
-            })
+                let links = body["links"] as? [String], links.count <= 16
+            else { return }
+            updateFavicon(
+                for: source,
+                declared: links.compactMap {
+                    guard $0.count <= 4096, let link = URL(string: $0), link.scheme == "https",
+                        link.user == nil, link.password == nil
+                    else { return nil }
+                    return link
+                })
             return
         }
         if message.name == "loafShortcut", let key = body["key"] as? String {
-            (store?.nativeWindow as? LoafBrowserWindow)?.siteClaimedShortcut(key, tabID: id, claimed: body["claimed"] as? Bool ?? true)
+            (store?.nativeWindow as? LoafBrowserWindow)?.siteClaimedShortcut(
+                key, tabID: id, claimed: body["claimed"] as? Bool ?? true)
             return
         }
         if message.name == "loafStore" {
@@ -928,7 +939,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             if store?.selectedTab?.id == id, let store {
                 store.feedback.show(
                     .pointer, icon: .pointer,
-                    text: locked ? "pointer captured · double esc releases" : "pointer released")
+                    text: locked ? "your cursor is hidden. press escape twice to show it" : "mouse released")
             }
         }
         if message.name == "loafMedia", let frameID = body["frame"] as? String, frameID.count <= 64,
@@ -1116,22 +1127,29 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
     func updateHoveredLink(_ address: String, frame: String) {
         guard !isDisposed, page == .web, store?.preferences.showLinkPreview != false else {
-            clearHoveredLink(); return
+            clearHoveredLink()
+            return
         }
         if address.isEmpty {
             if hoveredLinkFrame == frame { clearHoveredLink() }
             return
         }
-        guard let display = Self.linkPreviewAddress(address) else { clearHoveredLink(); return }
+        guard let display = Self.linkPreviewAddress(address) else {
+            clearHoveredLink()
+            return
+        }
         hoveredLinkFrame = frame
         if hoveredLink != display { hoveredLink = display }
     }
     nonisolated static func linkPreviewAddress(_ address: String) -> String? {
         guard !address.isEmpty, address.count <= 8192,
-            !address.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0)
-                || [0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069].contains($0.value) }),
+            !address.unicodeScalars.contains(where: {
+                CharacterSet.controlCharacters.contains($0)
+                    || [0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069].contains($0.value)
+            }),
             var components = URLComponents(string: address), let scheme = components.scheme,
-            ["http", "https", "mailto", "tel", "ftp"].contains(scheme.lowercased()) else { return nil }
+            ["http", "https", "mailto", "tel", "ftp"].contains(scheme.lowercased())
+        else { return nil }
         components.user = nil
         components.password = nil
         return components.string
@@ -1140,22 +1158,27 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     private func prepareFavicon(for destination: URL, fetch: Bool = false) {
         faviconTask?.cancel()
         guard let store, let origin = BrowserAddress.websiteOrigin(destination) else {
-            favicon = nil; faviconOrigin = nil; faviconLinks = []
+            favicon = nil
+            faviconOrigin = nil
+            faviconLinks = []
             return
         }
         let privateID = store.profileFor(profileID).privateMode ? profileID : nil
         let sameOrigin = faviconOrigin == origin && url.flatMap(BrowserAddress.websiteOrigin) == origin
-        favicon = store.application.favicons.cachedImage(for: destination, privateID: privateID)
+        favicon =
+            store.application.favicons.cachedImage(for: destination, privateID: privateID)
             ?? (sameOrigin ? favicon : nil)
         faviconOrigin = origin
         if !sameOrigin { faviconLinks = [] }
         faviconTask = Task { [weak self] in
             let cached = await store.application.favicons.storedImage(for: destination, privateID: privateID)
             guard let self, !Task.isCancelled, !isDisposed,
-                url.flatMap(BrowserAddress.websiteOrigin) == origin else { return }
+                url.flatMap(BrowserAddress.websiteOrigin) == origin
+            else { return }
             if let cached { favicon = cached }
             guard fetch, favicon == nil else { return }
-            let image = await store.application.favicons.image(for: destination, privateID: privateID,
+            let image = await store.application.favicons.image(
+                for: destination, privateID: privateID,
                 quick: true, discoverPage: false)
             guard !Task.isCancelled, !isDisposed, url.flatMap(BrowserAddress.websiteOrigin) == origin else { return }
             if let image { favicon = image }
@@ -1169,10 +1192,12 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         let view = existingWebView
         let privateID = store.profileFor(profileID).privateMode ? profileID : nil
         faviconTask = Task { [weak self] in
-            let image = await store.application.favicons.image(for: source, privateID: privateID,
+            let image = await store.application.favicons.image(
+                for: source, privateID: privateID,
                 declared: declared, refresh: true, discoverPage: false)
             guard let self, !Task.isCancelled, !isDisposed, navigationID == token,
-                url == source, existingWebView === view, view?.url == source else { return }
+                url == source, existingWebView === view, view?.url == source
+            else { return }
             if let image { favicon = image }
         }
     }
@@ -1190,23 +1215,27 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             let links = result as? [String] ?? []
 
             guard let self,
-                  !isDisposed,
-                  navigationID == token,
-                  url == source,
-                  existingWebView === view else {
+                !isDisposed,
+                navigationID == token,
+                url == source,
+                existingWebView === view
+            else {
                 return
             }
 
-            updateFavicon(for: source, declared: links.compactMap {
-                guard $0.count <= 4096,
-                      let link = URL(string: $0),
-                      link.scheme == "https",
-                      link.user == nil,
-                      link.password == nil else {
-                    return nil
-                }
-                return link
-            })
+            updateFavicon(
+                for: source,
+                declared: links.compactMap {
+                    guard $0.count <= 4096,
+                        let link = URL(string: $0),
+                        link.scheme == "https",
+                        link.user == nil,
+                        link.password == nil
+                    else {
+                        return nil
+                    }
+                    return link
+                })
         }
     }
 

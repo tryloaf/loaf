@@ -112,139 +112,152 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
-                ZStack(alignment: .top) {
-                    Color(
-                        nsColor: store.selectedTab?.existingWebView?.underPageBackgroundColor ?? .windowBackgroundColor)
-                    if store.ready, let tab = store.selectedTab {
-                        VStack(spacing: 0) {
-                            if store.findVisible {
-                                PageFindBar(store: store, finder: tab.finder).id(tab.id).padding(
-                                    .top, store.compactToolbarHeight)
-                            }
-                            Group {
-                                switch tab.page {
-                                case .history: HistoryView(store: store)
-                                case .downloads: DownloadsView(store: store)
-                                case .favorites: FavoritesView(store: store)
-                                case .cookies: CookiePage(store: store)
-                                case .settings: SettingsView(store: store)
-                                case .extensions: SettingsView(store: store, initialSection: "extensions")
-                                case .profiles: SettingsView(store: store, initialSection: "profiles")
-                                case .about: AboutPage(store: store)
-                                case .ask:
-                                    if store.preferences.aiFeaturesEnabled != false {
-                                        ChatGPTSearchView(
-                                            store: store, search: tab.chatGPTSearch,
-                                            account: store.application.chatGPTAccount
-                                        ).id(tab.id)
-                                    } else {
-                                        VStack(spacing: 12) {
-                                            Text("AI features are off").font(.headline)
-                                            Button("search settings") {
-                                                store.application.coordinator?.showSettings(for: store)
+                PageViewport(
+                    leading: store.pageLeadingInset, edge: store.pageEdgeInset,
+                    cornerRadius: store.pageCornerRadius, sidebarPresented: store.sidebarPresented,
+                    reduceMotion: reduceMotion
+                ) {
+                    ZStack(alignment: .top) {
+                        Color(
+                            nsColor: store.selectedTab?.existingWebView?.underPageBackgroundColor
+                                ?? .windowBackgroundColor)
+                        if store.ready, let tab = store.selectedTab {
+                            VStack(spacing: 0) {
+                                if store.findVisible {
+                                    PageFindBar(store: store, finder: tab.finder).id(tab.id).padding(
+                                        .top, store.compactToolbarHeight)
+                                }
+                                Group {
+                                    switch tab.page {
+                                    case .history: HistoryView(store: store)
+                                    case .downloads: DownloadsView(store: store)
+                                    case .favorites: FavoritesView(store: store)
+                                    case .cookies: CookiePage(store: store)
+                                    case .settings: SettingsView(store: store)
+                                    case .extensions: SettingsView(store: store, initialSection: "extensions")
+                                    case .profiles: SettingsView(store: store, initialSection: "profiles")
+                                    case .about: AboutPage(store: store)
+                                    case .ask:
+                                        if store.preferences.aiFeaturesEnabled != false {
+                                            ChatGPTSearchView(
+                                                store: store, search: tab.chatGPTSearch,
+                                                account: store.application.chatGPTAccount
+                                            ).id(tab.id)
+                                        } else {
+                                            VStack(spacing: 12) {
+                                                Text("AI features are off").font(.headline)
+                                                Button("search settings") {
+                                                    store.application.coordinator?.showSettings(for: store)
+                                                }
+                                            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                                        }
+                                    case .web:
+                                        if tab.url == nil {
+                                            StartPage(store: store)
+                                        } else {
+                                            ZStack(alignment: .top) {
+                                                if let article = tab.readerArticle {
+                                                    ReaderView(tab: tab, article: article)
+                                                } else {
+                                                    BrowserWebSurface(
+                                                        store: store, tab: tab,
+                                                        topInset: store.findVisible ? 0 : store.compactToolbarHeight,
+                                                        viewport: CGSize(
+                                                            width: max(
+                                                                0,
+                                                                geometry.size.width - store.pageLeadingInset
+                                                                    - store.pageEdgeInset),
+                                                            height: max(
+                                                                0,
+                                                                geometry.size.height - 2 * store.pageEdgeInset
+                                                                    - (store.findVisible
+                                                                        ? PageFindBar.height
+                                                                            + store.compactToolbarHeight
+                                                                        : 0)))
+                                                    )
+                                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                                    .id(
+                                                        store.visibleSplit.map { "split:\($0.left):\($0.right)" }
+                                                            ?? "tab:\(tab.id)")
+                                                }
+                                                if tab.loading {
+                                                    GeometryReader { proxy in
+                                                        Rectangle().fill(Color.accentColor).frame(
+                                                            width: max(4, proxy.size.width * tab.progress), height: 2
+                                                        ).animation(
+                                                            reduceMotion ? nil : .easeOut(duration: 0.2),
+                                                            value: tab.progress)
+                                                    }.frame(height: 2)
+                                                }
+                                                if let error = tab.navigationError { pageError(error, tab: tab) }
                                             }
-                                        }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                                    }
-                                case .web:
-                                    if tab.url == nil {
-                                        StartPage(store: store)
-                                    } else {
-                                        ZStack(alignment: .top) {
-                                            if let article = tab.readerArticle {
-                                                ReaderView(tab: tab, article: article)
-                                            } else {
-                                                BrowserWebSurface(
-                                                    store: store, tab: tab,
-                                                    topInset: store.findVisible ? 0 : store.compactToolbarHeight,
-                                                    viewport: CGSize(
-                                                        width: max(
-                                                            0,
-                                                            geometry.size.width - store.pageLeadingInset
-                                                                - store.pageEdgeInset),
-                                                        height: max(
-                                                            0,
-                                                            geometry.size.height - 2 * store.pageEdgeInset
-                                                                - (store.findVisible
-                                                                    ? PageFindBar.height + store.compactToolbarHeight
-                                                                    : 0)))
-                                                )
-                                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                                .id(store.visibleSplit.map { "split:\($0.left):\($0.right)" } ?? "tab:\(tab.id)")
-                                            }
-                                            if tab.loading {
-                                                GeometryReader { proxy in
-                                                    Rectangle().fill(Color.accentColor).frame(
-                                                        width: max(4, proxy.size.width * tab.progress), height: 2
-                                                    ).animation(
-                                                        reduceMotion ? nil : .easeOut(duration: 0.2),
-                                                        value: tab.progress)
-                                                }.frame(height: 2)
-                                            }
-                                            if let error = tab.navigationError { pageError(error, tab: tab) }
                                         }
                                     }
-                                }
-                            }.padding(
-                                .top,
-                                !store.sidebarPresented && !store.findVisible
-                                    && (tab.page != .web || tab.url == nil || tab.readerArticle != nil)
-                                    ? store.compactToolbarHeight : 0)
-                        }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        BrowserLoadingView()
-                    }
-                    if store.compactToolbarHeight > 0 { BrowserToolbar(store: store).zIndex(1) }
-                    if store.omnibarVisible {
-                        Color.black.opacity(0.06).contentShape(Rectangle()).onTapGesture {
-                            store.omnibarVisible = false
-                        }.ignoresSafeArea().transition(.opacity)
-                        GeometryReader { geometry in
-                            let layout = OmnibarMetrics.layout(in: geometry.size.height)
-                            VStack(spacing: 0) {
-                                OmnibarView(
-                                    store: store, suggestionHeight: layout.suggestions,
-                                    width: OmnibarMetrics.width(in: geometry.size.width))
-                                Spacer(minLength: 0)
-                            }.frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.top, layout.top)
-                        }.transition(.opacity).zIndex(3)
-                    }
-                    TabSwitcherView(switcher: store.tabSwitcher, previews: store.application.tabPreviews).frame(
-                        maxWidth: .infinity, maxHeight: .infinity
-                    ).allowsHitTesting(false).zIndex(6)
-                    if let offer = store.pointerLockOffer {
-                        VStack {
-                            HStack(spacing: 12) {
-                                GolzheimIcon(icon: .info, size: 20)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("allow \(offer.host) to capture the pointer?").font(
-                                        .system(size: 13, weight: .medium))
-                                    Text("press escape twice to release it").font(.system(size: 12)).foregroundStyle(
-                                        .secondary)
-                                }
-                                Button("not now") { store.cancelPointerLock() }.focusable(false)
-                                Button("allow") {
-                                    store.pointerLockOffer = nil
-                                    offer.finish(true)
-                                }.focusable(false)
-                            }.padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)).shadow(
-                                color: .black.opacity(0.12), radius: 16, y: 4
-                            ).padding(.horizontal, 24).padding(.top, 48)
-                            Spacer()
-                        }.zIndex(5)
-                    }
-                    if let offer = store.passwordOffer { passwordPrompt(offer) }
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    .clipShape(
-                        RoundedRectangle(cornerRadius: store.pageCornerRadius, style: .continuous)
-                            .inset(
-                                by: store.pageEdgeInset > 0 || store.isFullscreen
-                                    ? 0 : -1 / (store.nativeWindow?.backingScaleFactor ?? 2))
-                    )
-                    .padding(.leading, store.pageLeadingInset)
-                    .padding([.top, .trailing, .bottom], store.pageEdgeInset)
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.26), value: store.sidebarPresented)
+                                }.padding(
+                                    .top,
+                                    !store.sidebarPresented && !store.findVisible
+                                        && (tab.page != .web || tab.url == nil || tab.readerArticle != nil)
+                                        ? store.compactToolbarHeight : 0)
+                            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            BrowserLoadingView()
+                        }
+                        if store.compactToolbarHeight > 0 { BrowserToolbar(store: store).zIndex(1) }
+                        if store.omnibarVisible {
+                            Color.black.opacity(0.06).contentShape(Rectangle()).onTapGesture {
+                                store.omnibarVisible = false
+                            }.ignoresSafeArea().transition(.opacity)
+                            GeometryReader { geometry in
+                                let layout = OmnibarMetrics.layout(in: geometry.size.height)
+                                VStack(spacing: 0) {
+                                    OmnibarView(
+                                        store: store, suggestionHeight: layout.suggestions,
+                                        width: OmnibarMetrics.width(in: geometry.size.width))
+                                    Spacer(minLength: 0)
+                                }.frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.top, layout.top)
+                            }.transition(.opacity).zIndex(3)
+                        }
+                        TabSwitcherView(switcher: store.tabSwitcher, previews: store.application.tabPreviews).frame(
+                            maxWidth: .infinity, maxHeight: .infinity
+                        ).allowsHitTesting(false).zIndex(6)
+                        if let offer = store.pointerLockOffer {
+                            VStack {
+                                HStack(spacing: 12) {
+                                    GolzheimIcon(icon: .info, size: 20)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("allow \(offer.host) to capture the pointer?").font(
+                                            .system(size: 13, weight: .medium))
+                                        Text("press escape twice to release the mouse").font(
+                                            .system(size: 12)
+                                        )
+                                        .foregroundStyle(
+                                            .secondary)
+                                    }
+                                    Button("not now") { store.cancelPointerLock() }.focusable(false)
+                                    Button("allow") {
+                                        store.pointerLockOffer = nil
+                                        offer.finish(true)
+                                    }.focusable(false)
+                                }.padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                                    .shadow(
+                                        color: .black.opacity(0.12), radius: 16, y: 4
+                                    ).padding(.horizontal, 24).padding(.top, 48)
+                                Spacer()
+                            }.zIndex(5)
+                        }
+                        if let offer = store.passwordOffer { passwordPrompt(offer) }
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.omnibarVisible)
+                        .transaction { $0.animation = nil }
+                }
                 SidebarDock(store: store).zIndex(2)
+                BrowserNotificationToast(
+                    feedback: store.feedback,
+                    enabled: !store.sidebarPresented && !store.hoveredSidebar && store.compactToolbarHeight == 0,
+                    transparency: store.profile.personalization?.windowTransparency ?? 0,
+                    topInset: store.pageEdgeInset + 12, trailingInset: store.pageEdgeInset + 12
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity).zIndex(8)
                 if !store.sidebarPresented && !store.hoveredSidebar {
                     Color.clear.frame(width: 8).contentShape(Rectangle()).onHover {
                         if $0 { store.revealSidebarFromEdge() }

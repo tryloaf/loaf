@@ -449,7 +449,7 @@ nonisolated struct SiteSettings: Codable, Sendable {
     var microphone = "ask"
     var location: String?
     var notifications: String?
-    var userAgent: UserAgentMode = .desktop
+    var userAgent: UserAgentMode = .automatic
     var customUserAgent: String?
 }
 nonisolated struct Personalization: Codable, Sendable {

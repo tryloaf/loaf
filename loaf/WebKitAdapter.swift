@@ -588,7 +588,12 @@ struct PointerCapturePosition {
         if let media, ["https", "http"].contains(media.scheme) {
             add("open media in new tab") { _ = tab.store?.newTab(url: media, showOmnibar: false) }
         }
-        if let media, !menu.items.contains(where: { $0.title.lowercased().contains("picture in picture") || $0.title.lowercased().contains("picture-in-picture") }) {
+        if let media,
+            !menu.items.contains(where: {
+                $0.title.lowercased().contains("picture in picture")
+                    || $0.title.lowercased().contains("picture-in-picture")
+            })
+        {
             let frame = object(hit, "frameInfo") as? WKFrameInfo
             add("picture in picture") {
                 tab.webView.callAsyncJavaScript(
@@ -616,15 +621,19 @@ struct PointerCapturePosition {
                 ) { result in
                     if (try? result.get()) as? Bool != true {
                         tab.store?.feedback.show(
-                            .info, icon: .play, text: "picture in picture unavailable for this video")
+                            .info, icon: .play, text: "couldn’t open picture in picture")
                     }
                 }
             }
         }
         if link == nil && !selected {
-            if !menu.items.contains(where: { $0.title.lowercased().contains("full screen") || $0.title.lowercased().contains("fullscreen") }) {
-            add(tab.webView.window?.styleMask.contains(.fullScreen) == true ? "exit full screen" : "enter full screen")
-            { tab.webView.window?.toggleFullScreen(nil) }
+            if !menu.items.contains(where: {
+                $0.title.lowercased().contains("full screen") || $0.title.lowercased().contains("fullscreen")
+            }) {
+                add(
+                    tab.webView.window?.styleMask.contains(.fullScreen) == true
+                        ? "exit full screen" : "enter full screen"
+                ) { tab.webView.window?.toggleFullScreen(nil) }
             }
             add("back", enabled: tab.canGoBack) { tab.webView.goBack() }
             add("forward", enabled: tab.canGoForward) { tab.webView.goForward() }
@@ -811,9 +820,9 @@ extension BrowserTab {
 extension BrowserWindowState {
     var currentUserAgentMode: UserAgentMode {
         guard let url = selectedTab?.url, let origin = BrowserAddress.websiteOrigin(url) else {
-            return preferences.userAgentMode ?? .desktop
+            return preferences.userAgentMode ?? .automatic
         }
-        return profile.siteSettings?[origin]?.userAgent ?? preferences.userAgentMode ?? .desktop
+        return profile.siteSettings?[origin]?.userAgent ?? preferences.userAgentMode ?? .automatic
     }
     func setUserAgent(_ mode: UserAgentMode, custom: String? = nil) {
         guard !application.onboardingVisible, let tab = selectedTab, let url = tab.url,
@@ -866,8 +875,7 @@ extension BrowserWindowState {
         return value.unicodeScalars.allSatisfy { $0.isASCII && !CharacterSet.controlCharacters.contains($0) }
     }
     static func userAgent(mode: UserAgentMode, defaultUA: String, custom: String?) -> String? {
-        if mode == .automatic { return nil }
-        if mode == .desktop { return userAgent(defaultUA: defaultUA) }
+        if mode == .automatic || mode == .desktop { return userAgent(defaultUA: defaultUA) }
         if mode == .custom { return validCustom(custom) ? custom?.trimmingCharacters(in: .whitespaces) : nil }
         let windows = [UserAgentMode.chromeWindows, .edgeWindows, .firefoxWindows].contains(mode)
         let android = [UserAgentMode.chromeAndroid, .edgeAndroid, .firefoxAndroid].contains(mode)

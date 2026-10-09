@@ -42,8 +42,10 @@ import WebKit
         persistSoon()
     }
 
-    init(directory override: URL? = nil, prepareServices: Bool = true, chatGPTAccount: ChatGPTAccount? = nil,
-        faviconService: FaviconService? = nil) {
+    init(
+        directory override: URL? = nil, prepareServices: Bool = true, chatGPTAccount: ChatGPTAccount? = nil,
+        faviconService: FaviconService? = nil
+    ) {
         suppliedChatGPTAccount = chatGPTAccount
         directory =
             override
@@ -122,7 +124,9 @@ import WebKit
             preferences.alternateSearch?.enabled = false
         }
         if preferences.searchEngine == .googleAIOverview { preferences.searchEngine = .google }
-        if preferences.alternateSearch?.provider == .googleAIOverview { preferences.alternateSearch?.provider = .google }
+        if preferences.alternateSearch?.provider == .googleAIOverview {
+            preferences.alternateSearch?.provider = .google
+        }
         downloads.configure(directory: directory)
         for publisher in [
             blocker.objectWillChange, downloads.objectWillChange, weather.objectWillChange, sites.objectWillChange,
@@ -241,12 +245,12 @@ import WebKit
         guard id != targetID, let source = profiles.firstIndex(where: { $0.id == id }),
             profiles.contains(where: { $0.id == targetID })
         else { return }
-        let profile = profiles.remove(at: source)
-        guard let target = profiles.firstIndex(where: { $0.id == targetID }) else {
-            profiles.insert(profile, at: source)
-            return
-        }
-        profiles.insert(profile, at: min(target + (after ? 1 : 0), profiles.count))
+        var reordered = profiles
+        let profile = reordered.remove(at: source)
+        guard let target = reordered.firstIndex(where: { $0.id == targetID }) else { return }
+        reordered.insert(profile, at: min(target + (after ? 1 : 0), reordered.count))
+        guard reordered.map(\.id) != profiles.map(\.id) else { return }
+        profiles = reordered
         persistSoon()
     }
     func endPrivateProfile(_ id: UUID) {
@@ -267,7 +271,6 @@ import WebKit
         guard canDeleteProfile(id) else {
             throw ProfileImport.Failure(message: "Keep at least one regular profile in loaf.")
         }
-
 
         var pending = pendingProfileDeletions
         pending.insert(id)
@@ -299,7 +302,8 @@ import WebKit
         guard var snapshot = sessionSnapshot() else { throw CocoaError(.fileWriteUnknown) }
         if windows.isEmpty { snapshot.windows = restoredWindows }
         let revision = sessionWriter.reserve()
-        try sessionWriter.commit(try SessionWrite(snapshot: snapshot).encoded(),
+        try sessionWriter.commit(
+            try SessionWrite(snapshot: snapshot).encoded(),
             to: directory.appendingPathComponent("session.json"), revision: revision)
     }
     private func writeProfileDeletions(_ ids: Set<UUID>) throws {
@@ -311,15 +315,21 @@ import WebKit
         try PasswordVault.deleteAll(profileID: id)
         await clearDeletedProfileWebsiteData(id)
 
-
-        for file in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-            where file.lastPathComponent.hasPrefix("session-v1-backup-") || file.lastPathComponent.hasPrefix("session-unreadable-") {
+        for file in try FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        where file.lastPathComponent.hasPrefix("session-v1-backup-")
+            || file.lastPathComponent.hasPrefix("session-unreadable-")
+        {
             let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
             guard values.isRegularFile == true, values.isSymbolicLink != true,
                 var backup = try? JSONDecoder().decode(BrowserSnapshot.self, from: Data(contentsOf: file)),
-                backup.profiles.contains(where: { $0.id == id }) else { continue }
+                backup.profiles.contains(where: { $0.id == id })
+            else { continue }
             backup.profiles.removeAll { $0.id == id }
-            if backup.profiles.isEmpty { try FileManager.default.removeItem(at: file); continue }
+            if backup.profiles.isEmpty {
+                try FileManager.default.removeItem(at: file)
+                continue
+            }
             if backup.selectedProfile == id { backup.selectedProfile = backup.profiles[0].id }
             backup.windows = backup.windows?.compactMap { record in
                 var record = record
@@ -338,8 +348,9 @@ import WebKit
         await controller.removeData(ofTypes: types, from: records)
         if let error = records.flatMap(\.errors).first { throw error }
         let extensions = directory.appendingPathComponent("Extensions/\(id.uuidString)")
-        if FileManager.default.fileExists(atPath: extensions.path) { try FileManager.default.removeItem(at: extensions) }
-
+        if FileManager.default.fileExists(atPath: extensions.path) {
+            try FileManager.default.removeItem(at: extensions)
+        }
 
         for attempt in 0..<4 {
             do {

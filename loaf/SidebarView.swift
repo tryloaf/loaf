@@ -101,7 +101,10 @@ struct SidebarView: View {
         }
         .onAppear { extensionProgress = store.extensionsVisible ? 1 : 0 }
         .onChange(of: store.extensionsVisible) { _, open in animateExtensions(open) }
-        .onDisappear { cancelRebound(); extensionTask?.cancel() }
+        .onDisappear {
+            cancelRebound()
+            extensionTask?.cancel()
+        }
         .onChange(of: store.draggedTabID) { _, value in if value == nil { drop = nil } }
         .onChange(of: store.draggedFolderID) { _, value in if value == nil { drop = nil } }
     }
@@ -187,8 +190,10 @@ struct SidebarView: View {
         extensionTask?.cancel()
         let start = extensionProgress
         let target: CGFloat = open ? 1 : 0
-        guard !reduceMotion else { extensionProgress = target; return }
-
+        guard !reduceMotion else {
+            extensionProgress = target
+            return
+        }
 
         extensionTask = Task { @MainActor in
             let began = ProcessInfo.processInfo.systemUptime
@@ -348,34 +353,23 @@ struct SidebarView: View {
             }.buttonStyle(LoafButtonStyle()).help("switch profile").popover(isPresented: $profilePicker) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(store.profiles) { profile in
-                        Button {
-                            store.switchProfile(profile.id)
-                            profilePicker = false
-                        } label: {
-                            HStack(spacing: 8) {
-                                EmojiIcon(glyph: profile.emoji, size: 20)
-                                Text(profile.name)
-                                Spacer()
-                                if profile.id == store.selectedProfileID { GolzheimIcon(icon: .check) }
-                            }.padding(8).frame(width: 208)
-                        }.buttonStyle(LoafButtonStyle())
-                            .overlay(alignment: profileDropPosition?.target == profile.id
-                                ? (profileDropPosition?.after == true ? .bottom : .top) : .center) {
-                                if profileDropPosition?.target == profile.id {
-                                    Rectangle().fill(Color.accentColor).frame(height: 2)
-                                }
-                            }
-                            .onDrag {
-                                draggedProfileID = profile.id
-                                return NSItemProvider(object: profile.id.uuidString as NSString)
-                            }
-                            .onDrop(
-                                of: [.text],
-                                delegate: ProfileDropDelegate(
-                                    targetID: profile.id, draggedID: $draggedProfileID, position: $profileDropPosition,
-                                    move: { id, target, after in
-                                        store.application.moveProfile(id, relativeTo: target, after: after)
-                                    }))
+                        ProfileReorderRow(
+                            profile: profile, application: store.application,
+                            draggedID: $draggedProfileID, position: $profileDropPosition
+                        ) {
+                            Button {
+                                store.switchProfile(profile.id)
+                                profilePicker = false
+                            } label: {
+                                HStack(spacing: 8) {
+                                    EmojiIcon(glyph: profile.emoji, size: 20)
+                                    Text(profile.name)
+                                    Spacer()
+                                    if profile.id == store.selectedProfileID { GolzheimIcon(icon: .check) }
+                                }.padding(8).frame(width: 184)
+                            }.buttonStyle(LoafButtonStyle())
+                        }
+
                     }
                     Divider()
                     Button("edit profile…") {

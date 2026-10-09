@@ -357,7 +357,7 @@ struct OnboardingView: View {
         HStack {
             Text(text).font(.system(size: 13))
             Spacer()
-            ShortcutKey(text: key)
+            Text(key).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
         }
     }
 }

@@ -9,17 +9,18 @@ enum PageScripts {
           const link = target => target?.closest?.('a[href],area[href]') || null;
           const send = address => window.webkit.messageHandlers.loafLinkPreview.postMessage({frame, address});
           document.addEventListener('pointerover', event => {
-            if (!event.isTrusted || event.pointerType === 'touch') return;
+            if (!event.isTrusted || event.pointerType === 'touch' || document.pointerLockElement) return;
             const next = event.composedPath().map(link).find(Boolean) || null;
             if (next === current) return;
             current = next;
             send(next ? String(next.href).slice(0,8192) : '');
           }, true);
           document.addEventListener('pointerout', event => {
-            if (!event.isTrusted || !current || current.contains(event.relatedTarget)) return;
+            if (!event.isTrusted || document.pointerLockElement || !current || current.contains(event.relatedTarget)) return;
             current = null; send('');
           }, true);
           const clear = () => { if (current) { current = null; send(''); } };
+          document.addEventListener('pointerlockchange', () => { if (document.pointerLockElement) clear(); });
           window.addEventListener('blur', clear);
           window.addEventListener('pagehide', clear);
           document.addEventListener('visibilitychange', () => { if (document.hidden) clear(); });

@@ -4,50 +4,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
-struct ProfileDropDelegate: DropDelegate {
-    let targetID: UUID
-    @Binding var draggedID: UUID?
-    @Binding var position: ProfileDropPosition?
-    let move: (UUID, UUID, Bool) -> Void
-
-    func dropEntered(info: DropInfo) {
-        update(info)
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        update(info)
-        return DropProposal(operation: .move)
-    }
-
-    private func update(_ info: DropInfo) {
-        guard let draggedID, draggedID != targetID else {
-            position = nil
-            return
-        }
-        let after = info.location.y > 28
-        let next = ProfileDropPosition(target: targetID, after: after)
-        position = next
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        if let draggedID, let position, position.target == targetID {
-            move(draggedID, targetID, position.after)
-        }
-        draggedID = nil
-        position = nil
-        return true
-    }
-
-    func dropExited(info: DropInfo) {
-        if position?.target == targetID { position = nil }
-    }
-}
-
-struct ProfileDropPosition: Equatable {
-    let target: UUID
-    let after: Bool
-}
-
 struct SettingsView: View {
     @ObservedObject var store: BrowserStore
     @State private var section: String
@@ -601,7 +557,8 @@ struct SettingsView: View {
             }.settingDisabled(!(store.preferences.alternateSearch ?? SearchRedirect()).enabled)
             if store.preferences.alternateSearch?.provider == .custom {
                 TextField("HTTPS URL with {query}", text: redirectBinding(\.customTemplate)).textFieldStyle(
-                    .roundedBorder).focusRingPadding()
+                    .roundedBorder
+                ).focusRingPadding()
                 if !(store.preferences.alternateSearch ?? SearchRedirect()).valid {
                     Text("use an https url with one {query} placeholder in its path or query").font(.caption)
                         .foregroundStyle(.secondary)
@@ -630,7 +587,7 @@ struct SettingsView: View {
                 Text(reason).font(.caption).foregroundStyle(.secondary)
             }
             Text(
-                "this provider answers questions inside loaf. the alternate search shortcut uses its own provider above. Apple Intelligence retrieves Google results and summarizes them on this Mac. ChatGPT searches through OpenAI. Queries are sent only when submitted."
+                "this provider answers questions inside loaf. the alternate search shortcut uses its own provider above. Apple Intelligence retrieves web sources and summarizes them on this Mac. ChatGPT searches through OpenAI. Queries are sent only when submitted."
             ).font(.caption).foregroundStyle(.secondary)
         }
         if store.preferences.aiFeaturesEnabled != false
@@ -646,39 +603,25 @@ struct SettingsView: View {
     private var profiles: some View {
         Section("profiles") {
             ForEach(store.profiles) { profile in
-                HStack(spacing: 12) {
-                    Image(systemName: "line.3.horizontal")
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                    EmojiIcon(glyph: profile.emoji, size: 24)
-                    VStack(alignment: .leading) {
-                        Text(profile.name)
-                        Text(
-                            profile.privateMode
-                                ? "temporary" : "cookies, favorites, extensions and passwords are isolated"
-                        ).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("edit") { editing = profile.id }
-                    Button("new window") { store.application.coordinator?.newWindow(profileID: profile.id) }
-                }.contentShape(Rectangle())
-                    .overlay(alignment: profileDropPosition?.target == profile.id
-                        ? (profileDropPosition?.after == true ? .bottom : .top) : .center) {
-                        if profileDropPosition?.target == profile.id {
-                            Rectangle().fill(Color.accentColor).frame(height: 2)
+                ProfileReorderRow(
+                    profile: profile, application: store.application,
+                    draggedID: $draggedProfileID, position: $profileDropPosition
+                ) {
+                    HStack(spacing: 12) {
+                        EmojiIcon(glyph: profile.emoji, size: 24)
+                        VStack(alignment: .leading) {
+                            Text(profile.name)
+                            Text(
+                                profile.privateMode
+                                    ? "temporary" : "cookies, favorites, extensions and passwords are isolated"
+                            ).font(.caption).foregroundStyle(.secondary)
                         }
+                        Spacer()
+                        Button("edit") { editing = profile.id }
+                        Button("new window") { store.application.coordinator?.newWindow(profileID: profile.id) }
                     }
-                    .onDrag {
-                        draggedProfileID = profile.id
-                        return NSItemProvider(object: profile.id.uuidString as NSString)
-                    }
-                    .onDrop(
-                        of: [.text],
-                        delegate: ProfileDropDelegate(
-                            targetID: profile.id, draggedID: $draggedProfileID, position: $profileDropPosition,
-                            move: { id, target, after in
-                                store.application.moveProfile(id, relativeTo: target, after: after)
-                            }))
+                }
+
             }
             Button("add profile…") {
                 store.addProfile(name: "untitled", emoji: "🌱")
@@ -741,14 +684,20 @@ struct SettingsView: View {
                             Button("reset") { store.updateCurrent { $0.siteSettings?.removeValue(forKey: origin) } }
                                 .controlSize(.small)
                         }
-                        Toggle("downloads", isOn: Binding(
-                            get: { store.profile.siteSettings?[origin]?.downloads != false },
-                            set: { allowed in store.updateCurrent { $0.siteSettings?[origin]?.downloads = allowed } }
-                        )).toggleStyle(.switch).controlSize(.small)
+                        Toggle(
+                            "downloads",
+                            isOn: Binding(
+                                get: { store.profile.siteSettings?[origin]?.downloads != false },
+                                set: { allowed in store.updateCurrent { $0.siteSettings?[origin]?.downloads = allowed }
+                                }
+                            )
+                        ).toggleStyle(.switch).controlSize(.small)
                         if let settings = store.profile.siteSettings?[origin] {
-                            Text("JavaScript \(settings.javascript ? "on" : "off") · zoom \(Int(settings.zoom * 100))% · \(settings.userAgent.title)")
-                                .font(.caption).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                            Text(
+                                "JavaScript \(settings.javascript ? "on" : "off") · zoom \(Int(settings.zoom * 100))% · \(settings.userAgent.title)"
+                            )
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                         }
                     }.padding(.vertical, 4)
 
@@ -805,7 +754,10 @@ struct SettingsView: View {
                 Text("choose whether sites can save cookies in this profile. remove existing cookies below.").font(
                     .caption
                 ).foregroundStyle(.secondary)
-                Button("manage cookies…") { store.showPage(.cookies); store.application.coordinator?.activateBrowser() }.id("cookies")
+                Button("manage cookies…") {
+                    store.showPage(.cookies)
+                    store.application.coordinator?.activateBrowser()
+                }.id("cookies")
             }
             Section("clear data") { ClearingView(store: store).id("clear") }
 
@@ -867,7 +819,7 @@ struct SettingsView: View {
                     Text("inline").tag(InspectorMode.inline)
                 }.settingDisabled(store.preferences.developerMenu != true).id("inspector-mode")
                 Text("choose where the inspector opens.").font(.caption).foregroundStyle(.secondary)
-                Picker("default browser identity", selection: optional(\.userAgentMode, fallback: .desktop)) {
+                Picker("default browser identity", selection: optional(\.userAgentMode, fallback: .automatic)) {
                     ForEach(UserAgentMode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }.id("identity")
                 if store.preferences.userAgentMode == .custom {

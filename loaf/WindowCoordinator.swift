@@ -92,7 +92,8 @@ import WebKit
             if saved.selectedProfile == id {
                 saved.selectedProfile = saved.workspaces.keys.sorted { $0.uuidString < $1.uuidString }.first!
             }
-            return ClosedWindow(saved: saved, interactionStates: record.interactionStates.filter { !forgotten.contains($0.key) })
+            return ClosedWindow(
+                saved: saved, interactionStates: record.interactionStates.filter { !forgotten.contains($0.key) })
         }
     }
     private var auxiliaryCloseObserver: NSObjectProtocol?
@@ -174,8 +175,6 @@ import WebKit
         ) { [weak self] note in
             MainActor.assumeIsolated {
                 guard let self, let window = note.object as? NSWindow else { return }
-
-
 
                 guard !(window is NSSavePanel), !window.isSheet else { return }
                 let contentWindow = window === self.settingsWindow || self.native.values.contains { $0 === window }
@@ -676,6 +675,13 @@ import WebKit
     private let pageKeyboard = CapturedPageKeyboard()
     private let forwardedPageCommands = NSHashTable<NSEvent>(options: [.weakMemory, .objectPointerPersonality])
     var armedSiteShortcut: (key: String, tabID: UUID, time: TimeInterval)?
+    struct PendingSiteShortcut {
+        let id = UUID()
+        let key: String
+        let tabID: UUID
+        let event: NSEvent
+    }
+    var pendingSiteShortcuts: [PendingSiteShortcut] = []
     @discardableResult func handlePageEscape(_ event: NSEvent) -> Bool {
         guard event.type == .keyDown, event.keyCode == 53, attachedSheet == nil,
             let store, !store.omnibarVisible, !store.findVisible, !store.application.onboardingVisible,
@@ -684,7 +690,8 @@ import WebKit
             !forwardedPageCommands.contains(event)
         else { return false }
         forwardedPageCommands.add(event)
-        responder.keyDown(with: event)
+        view.keyDown(with: event)
+        if let up = CapturedPageKeyboard.keyUp(event) { view.keyUp(with: up) }
         return true
     }
     @discardableResult func handlePageKeyboard(_ event: NSEvent) -> Bool {
@@ -695,22 +702,47 @@ import WebKit
                 view.map { responder === $0 || responder.isDescendant(of: $0) } ?? false
             } ?? false
         pageKeyboard.observe(event, webView: focused && attachedSheet == nil ? view : nil)
-        guard focused, attachedSheet == nil, event.type == .keyDown, event.modifierFlags.contains(.command), let view
+        guard focused, attachedSheet == nil, store?.omnibarVisible != true, store?.findVisible != true,
+            event.type == .keyDown, event.modifierFlags.contains(.command), let view
         else { return false }
 
-        guard !forwardedPageCommands.contains(event) else { return false }
+
+
+        guard !forwardedPageCommands.contains(event) else {
+            return ["a", "s", "f", "l", "r"].contains(event.charactersIgnoringModifiers?.lowercased() ?? "")
+        }
         let editing =
             ["a", "c", "x", "v", "z"].contains(event.charactersIgnoringModifiers?.lowercased() ?? "")
             && !event.modifierFlags.contains(.control)
 
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-        let siteFirst =
-            ["s", "f", "l", "r"].contains(key)
-            && event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        let editingShortcut = key == "a" && modifiers == .command
+        let siteFirst = (["s", "f", "l", "r"].contains(key) && modifiers == .command) || editingShortcut
         if siteFirst {
             guard !event.isARepeat else { return true }
-            if NSApp.mainMenu?.performKeyEquivalent(with: event) != true {
-                performBrowserShortcut(key)
+            if let armed = armedSiteShortcut, armed.key == key, armed.tabID == store?.selectedTab?.id,
+                ProcessInfo.processInfo.systemUptime - armed.time <= 2
+            {
+                armedSiteShortcut = nil
+                resolveBrowserShortcut(key, event: event)
+                return true
+            }
+            armedSiteShortcut = nil
+            guard let tab = store?.selectedTab else { return false }
+            let pending = PendingSiteShortcut(key: key, tabID: tab.id, event: event)
+            pendingSiteShortcuts.append(pending)
+            forwardedPageCommands.add(event)
+            view.keyDown(with: event)
+            if let up = CapturedPageKeyboard.keyUp(event) { view.keyUp(with: up) }
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(350))
+                guard let self, let index = self.pendingSiteShortcuts.firstIndex(where: { $0.id == pending.id }) else {
+                    return
+                }
+                self.pendingSiteShortcuts.remove(at: index)
+                guard self.store?.selectedTab?.id == pending.tabID, self.isKeyWindow else { return }
+                self.resolveBrowserShortcut(key, event: pending.event)
             }
             return true
         }
@@ -761,7 +793,7 @@ import WebKit
             escapePage = tab
             WebKitAdapter.capturedEscape(tab, type: "keydown", modifiers: event.modifierFlags)
             store?.feedback.show(
-                .pointer, icon: .pointer, text: "press esc again to release pointer", duration: .seconds(1))
+                .pointer, icon: .pointer, text: "press escape again to release the mouse", duration: .seconds(1))
         }
         return true
     }
@@ -813,6 +845,11 @@ import WebKit
         return false
     }
     override func keyDown(with event: NSEvent) {
+        if forwardedPageCommands.contains(event),
+            ["a", "s", "f", "l", "r"].contains(event.charactersIgnoringModifiers?.lowercased() ?? "")
+        {
+            return
+        }
         if [36, 76].contains(event.keyCode), event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
             let view = store?.selectedTab?.existingWebView, let responder = firstResponder as? NSView,
             responder === view || responder.isDescendant(of: view)
@@ -828,6 +865,8 @@ import WebKit
     }
     override func keyUp(with event: NSEvent) { if !handlePointerEscape(event) { super.keyUp(with: event) } }
     override func resignKey() {
+        armedSiteShortcut = nil
+        pendingSiteShortcuts.removeAll()
         pageKeyboard.release()
         if let page = escapePage { WebKitAdapter.capturedEscape(page, type: "keyup") }
         escapePage = nil
@@ -868,7 +907,9 @@ import WebKit
         }
         if frames.count == types.count, frames.allSatisfy({ $0.width > 0 && (4...32).contains($0.minY) }),
             zip(frames, frames.dropFirst()).allSatisfy({ $0.minX < $1.minX })
-        { trafficLightFrames = frames }
+        {
+            trafficLightFrames = frames
+        }
     }
     func restoreTitlebar() {
         styleMask.formUnion(windowedStyleMask)

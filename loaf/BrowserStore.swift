@@ -271,7 +271,8 @@ import WebKit
     }
     func forgetProfile(_ profileID: UUID) {
         if selectedProfileID == profileID,
-            let fallback = application.profiles.first(where: { $0.id != profileID && !$0.privateMode }) {
+            let fallback = application.profiles.first(where: { $0.id != profileID && !$0.privateMode })
+        {
             switchProfile(fallback.id)
         }
         if editingProfileID == profileID { editingProfileID = nil }
