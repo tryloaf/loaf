@@ -1,7 +1,52 @@
 import AuthenticationServices
 import LocalAuthentication
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
+
+struct ProfileDropDelegate: DropDelegate {
+    let targetID: UUID
+    @Binding var draggedID: UUID?
+    @Binding var position: ProfileDropPosition?
+    let move: (UUID, UUID, Bool) -> Void
+
+    func dropEntered(info: DropInfo) {
+        update(info)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        update(info)
+        return DropProposal(operation: .move)
+    }
+
+    private func update(_ info: DropInfo) {
+        guard let draggedID, draggedID != targetID else {
+            position = nil
+            return
+        }
+        let after = info.location.y > 28
+        let next = ProfileDropPosition(target: targetID, after: after)
+        position = next
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        if let draggedID, let position, position.target == targetID {
+            move(draggedID, targetID, position.after)
+        }
+        draggedID = nil
+        position = nil
+        return true
+    }
+
+    func dropExited(info: DropInfo) {
+        if position?.target == targetID { position = nil }
+    }
+}
+
+struct ProfileDropPosition: Equatable {
+    let target: UUID
+    let after: Bool
+}
 
 struct SettingsView: View {
     @ObservedObject var store: BrowserStore
@@ -18,6 +63,8 @@ struct SettingsView: View {
     @State private var city = ""
     @State private var importVisible = false
     @State private var editing: UUID?
+    @State private var draggedProfileID: UUID?
+    @State private var profileDropPosition: ProfileDropPosition?
     @State private var extensionAddress = ""
     @State private var appearanceDemo: AppearancePreviewOption?
     @AppStorage("loaf.appearance") private var appearance = "system"
@@ -600,6 +647,9 @@ struct SettingsView: View {
         Section("profiles") {
             ForEach(store.profiles) { profile in
                 HStack(spacing: 12) {
+                    Image(systemName: "line.3.horizontal")
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                     EmojiIcon(glyph: profile.emoji, size: 24)
                     VStack(alignment: .leading) {
                         Text(profile.name)
@@ -611,7 +661,24 @@ struct SettingsView: View {
                     Spacer()
                     Button("edit") { editing = profile.id }
                     Button("new window") { store.application.coordinator?.newWindow(profileID: profile.id) }
-                }
+                }.contentShape(Rectangle())
+                    .overlay(alignment: profileDropPosition?.target == profile.id
+                        ? (profileDropPosition?.after == true ? .bottom : .top) : .center) {
+                        if profileDropPosition?.target == profile.id {
+                            Rectangle().fill(Color.accentColor).frame(height: 2)
+                        }
+                    }
+                    .onDrag {
+                        draggedProfileID = profile.id
+                        return NSItemProvider(object: profile.id.uuidString as NSString)
+                    }
+                    .onDrop(
+                        of: [.text],
+                        delegate: ProfileDropDelegate(
+                            targetID: profile.id, draggedID: $draggedProfileID, position: $profileDropPosition,
+                            move: { id, target, after in
+                                store.application.moveProfile(id, relativeTo: target, after: after)
+                            }))
             }
             Button("add profile…") {
                 store.addProfile(name: "untitled", emoji: "🌱")
@@ -623,6 +690,7 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
         }
     }
+
     private var websites: some View {
         Group {
             Section("website interaction") {

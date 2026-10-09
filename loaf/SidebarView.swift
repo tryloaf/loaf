@@ -19,6 +19,8 @@ struct SidebarView: View {
     var floating = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var profilePicker = false
+    @State private var draggedProfileID: UUID?
+    @State private var profileDropPosition: ProfileDropPosition?
     @State private var traySection: TraySection?
     @State private var trayProgress: CGFloat = 0
     @State private var traySettleTask: Task<Void, Never>?
@@ -357,6 +359,23 @@ struct SidebarView: View {
                                 if profile.id == store.selectedProfileID { GolzheimIcon(icon: .check) }
                             }.padding(8).frame(width: 208)
                         }.buttonStyle(LoafButtonStyle())
+                            .overlay(alignment: profileDropPosition?.target == profile.id
+                                ? (profileDropPosition?.after == true ? .bottom : .top) : .center) {
+                                if profileDropPosition?.target == profile.id {
+                                    Rectangle().fill(Color.accentColor).frame(height: 2)
+                                }
+                            }
+                            .onDrag {
+                                draggedProfileID = profile.id
+                                return NSItemProvider(object: profile.id.uuidString as NSString)
+                            }
+                            .onDrop(
+                                of: [.text],
+                                delegate: ProfileDropDelegate(
+                                    targetID: profile.id, draggedID: $draggedProfileID, position: $profileDropPosition,
+                                    move: { id, target, after in
+                                        store.application.moveProfile(id, relativeTo: target, after: after)
+                                    }))
                     }
                     Divider()
                     Button("edit profile…") {

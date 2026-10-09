@@ -707,12 +707,11 @@ import WebKit
         let siteFirst =
             ["s", "f", "l", "r"].contains(key)
             && event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command
-        if siteFirst, event.isARepeat, key == "s" { return true }
-        if siteFirst, !event.isARepeat, let armed = armedSiteShortcut, armed.key == key,
-            armed.tabID == store?.selectedTab?.id, ProcessInfo.processInfo.systemUptime - armed.time <= 2
-        {
-            armedSiteShortcut = nil
-            performBrowserShortcut(key)
+        if siteFirst {
+            guard !event.isARepeat else { return true }
+            if NSApp.mainMenu?.performKeyEquivalent(with: event) != true {
+                performBrowserShortcut(key)
+            }
             return true
         }
         if !editing && !siteFirst, NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return true }

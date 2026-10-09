@@ -237,6 +237,18 @@ import WebKit
         profiles[index] = profile
         persistSoon()
     }
+    func moveProfile(_ id: UUID, relativeTo targetID: UUID, after: Bool) {
+        guard id != targetID, let source = profiles.firstIndex(where: { $0.id == id }),
+            profiles.contains(where: { $0.id == targetID })
+        else { return }
+        let profile = profiles.remove(at: source)
+        guard let target = profiles.firstIndex(where: { $0.id == targetID }) else {
+            profiles.insert(profile, at: source)
+            return
+        }
+        profiles.insert(profile, at: min(target + (after ? 1 : 0), profiles.count))
+        persistSoon()
+    }
     func endPrivateProfile(_ id: UUID) {
         guard profiles.first(where: { $0.id == id })?.privateMode == true else { return }
         for window in windows { window.forgetProfile(id) }
