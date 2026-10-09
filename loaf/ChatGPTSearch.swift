@@ -178,7 +178,7 @@ nonisolated struct ChatGPTSearchTurn: Identifiable {
                         $0.phase = .searching
                         $0.searchQuery = query
                     }
-                    let sources = try await webSearch(query)
+                    let sources = try await webSearch(WebSearchService.searchQuery(query, preceding: preceding.map(\.query)))
                     try Task.checkCancellation()
                     guard generation == current else { return }
                     update(turnID) {
@@ -199,11 +199,6 @@ nonisolated struct ChatGPTSearchTurn: Identifiable {
                     update(turnID) {
                         $0.complete = true
                         $0.phase = .complete
-                        if $0.citations.isEmpty {
-                            $0.citations = sources.map {
-                                ChatGPTCitation(url: $0.url, title: $0.title, start: 0, end: 0)
-                            }
-                        }
                     }
                     return
                 }
@@ -249,7 +244,8 @@ nonisolated struct ChatGPTSearchTurn: Identifiable {
             $0.phase = .searching
             $0.searchQuery = query
         }
-        let sources = try await webSearch(query)
+        let preceding = input.dropLast().compactMap { $0["role"] as? String == "user" ? $0["content"] as? String : nil }
+        let sources = try await webSearch(WebSearchService.searchQuery(query, preceding: preceding))
         try Task.checkCancellation()
         guard generation == current else { return }
         update(turnID) {

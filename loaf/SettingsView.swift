@@ -298,8 +298,8 @@ struct SettingsView: View {
         Group {
             Section("tabs & startup") {
                 Picker("pinned tabs", selection: optional(\.pinnedLayout, fallback: "grid")) {
-                    Text("Grid").tag("grid")
-                    Text("List").tag("list")
+                    Text("grid").tag("grid")
+                    Text("list").tag("list")
                 }.id("pinned-layout")
                 Toggle("restore windows and tabs on launch", isOn: optional(\.restoreSession, fallback: true)).id(
                     "restore")
@@ -324,7 +324,7 @@ struct SettingsView: View {
                     of: store.preferences.powerSaver
                 ) { _, _ in store.application.resources.refreshBattery() }
                 Picker("enable on battery below", selection: optional(\.powerSaverThreshold, fallback: 0)) {
-                    Text("Never").tag(0)
+                    Text("never").tag(0)
                     ForEach([10, 20, 30, 50], id: \.self) { Text("\($0)%").tag($0) }
                 }.onChange(of: store.preferences.powerSaverThreshold) { _, _ in
                     store.application.resources.refreshBattery()
@@ -385,7 +385,7 @@ struct SettingsView: View {
                     Text("Celsius · °C").tag(false)
                 }.onChange(of: store.preferences.fahrenheit) { _, _ in refreshWeather() }
                 Picker("provider", selection: optional(\.weatherProvider, fallback: "automatic")) {
-                    Text("Automatic").tag("automatic")
+                    Text("automatic").tag("automatic")
                     Text("Open-Meteo").tag("open-meteo")
                 }.onChange(of: store.preferences.weatherProvider) { _, _ in refreshWeather() }
                 Text(
@@ -412,9 +412,9 @@ struct SettingsView: View {
         Group {
             Section("window") {
                 Picker("theme", selection: $appearance) {
-                    Text("System").tag("system")
-                    Text("Light").tag("light")
-                    Text("Dark").tag("dark")
+                    Text("system").tag("system")
+                    Text("light").tag("light")
+                    Text("dark").tag("dark")
                 }.pickerStyle(.segmented).id("appearance")
                 Toggle(
                     "sidebar-only titlebar",
@@ -793,8 +793,8 @@ struct SettingsView: View {
                         }
                     }
                 Picker("web inspector", selection: optional(\.inspectorMode, fallback: .inline)) {
-                    Text("Separate window").tag(InspectorMode.detached)
-                    Text("Inline").tag(InspectorMode.inline)
+                    Text("separate window").tag(InspectorMode.detached)
+                    Text("inline").tag(InspectorMode.inline)
                 }.settingDisabled(store.preferences.developerMenu != true).id("inspector-mode")
                 Text("choose where the inspector opens.").font(.caption).foregroundStyle(.secondary)
                 Picker("default browser identity", selection: optional(\.userAgentMode, fallback: .desktop)) {

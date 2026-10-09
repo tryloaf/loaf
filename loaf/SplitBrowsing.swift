@@ -14,6 +14,14 @@ nonisolated struct BrowserSplit: Equatable {
 }
 
 extension BrowserWindowState {
+    /// The idle interval starts when a page leaves the viewport, not when it
+    /// was first selected (which may have been hours ago).
+    func markVisibleTabsActive(at now: Date = .now) {
+        selectedTab?.lastActivated = now
+        if let split = visibleSplit {
+            for tab in tabs where split.contains(tab.id) { tab.lastActivated = now }
+        }
+    }
     var visibleSplit: BrowserSplit? {
         guard let split = browserSplit, let selected = selectedTab, split.contains(selected.id),
             tabs.contains(where: { $0.id == split.left && $0.page == .web }),
@@ -61,6 +69,7 @@ extension BrowserWindowState {
         sidebarEntryCache = nil
     }
     func endSplit() {
+        markVisibleTabsActive()
         browserSplit = nil
         sidebarEntryCache = nil
         if let size = splitOriginalMinimum {

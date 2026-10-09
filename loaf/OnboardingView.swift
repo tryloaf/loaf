@@ -80,8 +80,8 @@ struct OnboardingView: View {
     private var themePreviews: some View {
         VStack(alignment: .leading, spacing: 8) {
             Picker("preview", selection: $previewDark) {
-                Text("Light").tag(false)
-                Text("Dark").tag(true)
+                Text("light").tag(false)
+                Text("dark").tag(true)
             }.pickerStyle(.segmented).labelsHidden()
             ProfileThemePreview(
                 height: 154, color: profileTint(store.profile),
@@ -92,9 +92,9 @@ struct OnboardingView: View {
             .fixedSize(horizontal: false, vertical: true)
             Text("appearance").fontWeight(.medium)
             Picker("appearance", selection: $appearance) {
-                Text("System").tag("system")
-                Text("Light").tag("light")
-                Text("Dark").tag("dark")
+                Text("system").tag("system")
+                Text("light").tag("light")
+                Text("dark").tag("dark")
             }.pickerStyle(.segmented).labelsHidden()
             Divider()
             option("sidebar-only titlebar") {
@@ -192,7 +192,7 @@ struct OnboardingView: View {
                             store.persistSoon()
                         })
                 ) {
-                    Text("None").tag(Optional<AIProvider>.none)
+                    Text("none").tag(Optional<AIProvider>.none)
                     ForEach(AppleIntelligence.visibleProviders, id: \.self) { Text($0.title).tag(Optional($0)) }
                 }.frame(width: 200)
             }

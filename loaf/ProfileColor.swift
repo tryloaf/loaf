@@ -542,7 +542,11 @@ struct ProfileThemePreview: View {
                 Text("search the web").foregroundStyle(.secondary)
             }
         }.font(.system(size: 8)).padding(10).frame(maxWidth: 200)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
+            .background {
+                ProfileWindowSurface(
+                    color: Color(nsColor: .controlBackgroundColor), transparency: transparency, withinWindow: true
+                ).clipShape(RoundedRectangle(cornerRadius: 7))
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: 7).fill(color.opacity(resolved.tintWonderbar ? 0.08 : 0))
                     .allowsHitTesting(false)

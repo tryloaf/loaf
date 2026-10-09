@@ -19,6 +19,9 @@ struct ProfileImportView: View {
     @State private var history = true
     @State private var bookmarks = true
     @State private var cookies = false
+    @State private var requestingAccess = false
+    @State private var checkingAccess = false
+    @State private var dataAccess: BrowserImportDiscovery.DataAccess?
     init(store: BrowserStore, initialPreview: ProfileImportPreview? = nil) {
         self.store = store
         if let initialPreview {
@@ -97,11 +100,11 @@ struct ProfileImportView: View {
                             Text("no browsers found. you can still choose a profile folder or an export.")
                                 .font(.system(size: 12)).foregroundStyle(.secondary)
                         }
-                        Text("close the source browser first. for protected browsing data, allow loaf in Full Disk Access, then scan again.")
+                        Text("close the source browser first. protected data needs Full Disk Access. after enabling it, quit and reopen loaf before importing.")
                             .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         HStack {
                             Button("Full Disk Access…") {
-                                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!)
+                                requestAccess()
                             }.controlSize(.small)
                             Spacer()
                             Button("choose file or folder…") { chooseSource() }.controlSize(.small).disabled(busy)
@@ -165,6 +168,9 @@ struct ProfileImportView: View {
                         ForEach(preview.warnings, id: \.self) {
                             Text($0).font(.system(size: 11)).foregroundStyle(.secondary)
                         }
+                        if preview.warnings.contains(where: { $0.contains("permission") || $0.contains("Full Disk Access") }) {
+                            Button("allow access to protected data…") { requestAccess() }.controlSize(.small)
+                        }
                     }.disabled(busy)
                 } else if step == 2 {
                     Label("ready in \(store.profile.name)", systemImage: "checkmark.circle.fill").font(
@@ -200,7 +206,65 @@ struct ProfileImportView: View {
             .interactiveDismissDisabled(busy).onAppear { newProfile = store.profiles.count < 8; discover() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 if step == 0 { discover() }
+                if requestingAccess { checkAccess() }
             }
+            .sheet(isPresented: $requestingAccess) { accessRequest }
+    }
+    private var accessRequest: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 14) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundleURL.path))
+                    .resizable().scaledToFit().frame(width: 56, height: 56)
+                    .onDrag { NSItemProvider(object: Bundle.main.bundleURL as NSURL) }
+                Text("allow browser data access").font(.system(size: 22, weight: .semibold, design: .rounded))
+            }
+            Text("macOS protects Safari and other browser data. allow loaf to read it for this local import in System Settings.")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 12) {
+                Text("1. open Privacy & Security → Full Disk Access.")
+                Text("2. add loaf with the + button, or drag its icon above into the list. turn loaf on.")
+                Text("3. quit and reopen loaf, then return to importing.").fontWeight(.semibold)
+            }
+            Text("you must restart loaf after enabling access. scanning again without restarting won’t apply the permission.")
+                .font(.callout).foregroundStyle(.secondary)
+            if checkingAccess { ProgressView().controlSize(.small) }
+            else if dataAccess == .readable {
+                Label("the selected browser’s data is readable", systemImage: "checkmark.circle").font(.callout)
+            } else if dataAccess == .denied {
+                Text("macOS is currently blocking the selected browser’s data.").font(.callout).foregroundStyle(.secondary)
+            }
+            HStack {
+                Button("show loaf in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL]) }
+                Spacer()
+                Button("open System Settings") {
+                    if let selectedBrowser {
+                        UserDefaults.standard.set(selectedBrowser.id, forKey: "importBrowserAfterAccessRestart")
+                    }
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles")!)
+                }.buttonStyle(.borderedProminent)
+            }
+            Divider()
+            HStack {
+                Button("not now") { requestingAccess = false }
+                Spacer()
+                Button("check access") { checkAccess() }.disabled(checkingAccess)
+                Button("quit loaf") { NSApp.terminate(nil) }
+            }
+        }.font(.system(size: 13)).padding(28).frame(width: 510)
+            .onAppear { checkAccess() }
+    }
+    private func requestAccess() {
+        if selectedBrowser == nil { selectedBrowser = browsers.first { $0.id == "com.apple.Safari" } }
+        dataAccess = nil
+        requestingAccess = true
+    }
+    private func checkAccess() {
+        guard !checkingAccess, let browser = selectedBrowser else { return }
+        checkingAccess = true
+        Task {
+            dataAccess = await Task.detached(priority: .userInitiated) { BrowserImportDiscovery.requestDataAccess(browser) }.value
+            checkingAccess = false
+        }
     }
     private var canImport: Bool {
         guard let preview else { return false }
@@ -229,6 +293,11 @@ struct ProfileImportView: View {
         Task {
             browsers = await Task.detached(priority: .userInitiated) { BrowserImportDiscovery.installed() }.value
             scanning = false
+            if selectedBrowser == nil,
+                let id = UserDefaults.standard.string(forKey: "importBrowserAfterAccessRestart"),
+                let browser = browsers.first(where: { $0.id == id }) {
+                chooseBrowser(browser)
+            }
         }
     }
     private func chooseBrowser(_ browser: ImportBrowser, password: Data? = nil) {
@@ -240,7 +309,12 @@ struct ProfileImportView: View {
                     try BrowserImportDiscovery.preview(browser, cookiePassword: password)
                 }.value
                 acceptPreviews(result)
-            } catch { self.error = error.localizedDescription }
+                UserDefaults.standard.removeObject(forKey: "importBrowserAfterAccessRestart")
+            } catch {
+                self.error = error.localizedDescription
+                let access = await Task.detached(priority: .userInitiated) { BrowserImportDiscovery.requestDataAccess(browser) }.value
+                if access == .denied { dataAccess = access; requestingAccess = true }
+            }
             busy = false
         }
     }

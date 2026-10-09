@@ -28,6 +28,37 @@ import WebKit
     static func normalize(_ menu: NSMenu) {}
     static func normalize(_ item: NSMenuItem) {}
 
+    // Normalize the system-generated page actions at construction time only.
+    // Keep quoted selection text and product names as supplied by WebKit.
+    static func normalizeWebContext(_ menu: NSMenu) {
+        let verbs: Set<String> = ["open", "download", "copy", "look", "share", "save", "inspect", "enter", "exit",
+            "play", "pause", "mute", "unmute", "show", "hide", "loop", "back", "forward", "reload", "stop",
+            "print", "search", "add", "remove", "cut", "paste", "select", "translate", "view", "reading"]
+        for item in menu.items where !item.isSeparatorItem {
+            if let submenu = item.submenu { normalizeWebContext(submenu) }
+            let original = item.title
+            guard let first = original.lowercased().split(whereSeparator: { !$0.isLetter }).first,
+                verbs.contains(String(first)) else { continue }
+            let expression = try! NSRegularExpression(pattern: #"“[^”]*”|\"[^\"]*\"|\b(?:Google|Safari|AirPlay|JavaScript|WebKit|PDF|URL|HTML|macOS)\b"#)
+            let string = original as NSString
+            var title = "", position = 0
+            for match in expression.matches(in: original, range: NSRange(location: 0, length: string.length)) {
+                title += string.substring(with: NSRange(location: position, length: match.range.location - position)).lowercased(with: Locale.current)
+                title += string.substring(with: match.range)
+                position = NSMaxRange(match.range)
+            }
+            title += string.substring(from: position).lowercased(with: Locale.current)
+            if title != original {
+                item.title = title
+                if let attributed = item.attributedTitle {
+                    let updated = NSMutableAttributedString(attributedString: attributed)
+                    updated.mutableString.setString(title)
+                    item.attributedTitle = updated
+                }
+            }
+        }
+    }
+
 }
 
 extension NSMenuItem {
@@ -54,7 +85,7 @@ extension NSMenuItem {
     private var refreshPending = false
     private let bookmarks = NSMenu(title: "Bookmarks")
     private let profiles = NSMenu(title: "Profiles")
-    private let develop = NSMenu(title: "Develop")
+    private let develop = NSMenu(title: "develop")
     private let userAgents = NSMenu(title: "User Agent")
     private var store: BrowserStore? { coordinator.commandState }
 

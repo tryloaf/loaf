@@ -22,6 +22,8 @@ struct SidebarView: View {
     @State private var traySection: TraySection?
     @State private var trayProgress: CGFloat = 0
     @State private var traySettleTask: Task<Void, Never>?
+    @State private var extensionProgress: CGFloat = 0
+    @State private var extensionTask: Task<Void, Never>?
     @State private var drop: TabDropPosition?
     var body: some View {
         VStack(spacing: 0) {
@@ -68,6 +70,7 @@ struct SidebarView: View {
 
         }
         .animation(nil, value: store.extensionsVisible)
+        .animation(nil, value: extensionProgress)
         .animation(
             reduceMotion ? nil : .smooth(duration: 0.2), value: store.profile.personalization?.compactSidebarWeather
         )
@@ -94,7 +97,9 @@ struct SidebarView: View {
             traySection = nil
             trayProgress = 0
         }
-        .onDisappear { cancelRebound() }
+        .onAppear { extensionProgress = store.extensionsVisible ? 1 : 0 }
+        .onChange(of: store.extensionsVisible) { _, open in animateExtensions(open) }
+        .onDisappear { cancelRebound(); extensionTask?.cancel() }
         .onChange(of: store.draggedTabID) { _, value in if value == nil { drop = nil } }
         .onChange(of: store.draggedFolderID) { _, value in if value == nil { drop = nil } }
     }
@@ -176,6 +181,27 @@ struct SidebarView: View {
         traySettleTask?.cancel()
         traySettleTask = nil
     }
+    private func animateExtensions(_ open: Bool) {
+        extensionTask?.cancel()
+        let start = extensionProgress
+        let target: CGFloat = open ? 1 : 0
+        guard !reduceMotion else { extensionProgress = target; return }
+        // Advance the entire layout together. An implicit container animation
+        // interpolates SwiftUI rows independently of their native scroll host.
+        extensionTask = Task { @MainActor in
+            let began = ProcessInfo.processInfo.systemUptime
+            while !Task.isCancelled {
+                let t = min(1, (ProcessInfo.processInfo.systemUptime - began) / 0.2)
+                var transaction = Transaction()
+                transaction.animation = nil
+                withTransaction(transaction) {
+                    extensionProgress = start + (target - start) * CGFloat(1 - pow(1 - t, 3))
+                }
+                if t == 1 { break }
+                do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
+            }
+        }
+    }
     private func setTray(_ section: TraySection?, velocity: CGFloat = 0) {
         cancelRebound()
         if let section { traySection = section }
@@ -204,9 +230,10 @@ struct SidebarView: View {
             .frame(height: TrayMetrics.contentHeight).opacity(min(1, max(0, trayProgress)))
             .frame(height: max(0, TrayMetrics.contentHeight * trayProgress), alignment: .top).clipped()
             .allowsHitTesting(trayProgress > 0.95).accessibilityHidden(trayProgress < 0.95)
-            if store.extensionsVisible {
-                extensionStrip.transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
-            }
+            extensionStrip.opacity(extensionProgress)
+                .offset(y: 6 * (1 - extensionProgress))
+                .frame(height: 32 * extensionProgress, alignment: .top).clipped()
+                .allowsHitTesting(store.extensionsVisible).accessibilityHidden(!store.extensionsVisible)
             footer.zIndex(1)
         }
         .background {
@@ -247,45 +274,43 @@ struct SidebarView: View {
     }
     @ViewBuilder private var extensionStrip: some View {
         let enabled = store.profile.extensions.filter(\.enabled)
-        if store.extensionsVisible {
-            HStack(spacing: 4) {
-                if enabled.isEmpty { Text("no extensions yet").font(.system(size: 11)).foregroundStyle(.secondary) }
-                ForEach(Array(enabled.prefix(max(1, Int((store.preferences.sidebarWidth - 70) / 30))))) { record in
-                    Button {
-                        store.runtime.extensions.perform(record)
-                    } label: {
-                        Group {
-                            if let context = store.runtime.extensions.contexts[record.id],
-                                let image = context.webExtension.icon(for: CGSize(width: 18, height: 18))
-                            {
-                                Image(nsImage: image).resizable().scaledToFit().frame(width: 18, height: 18)
-                            } else {
-                                GolzheimIcon(icon: .extensionPuzzle, size: 16)
-                            }
-                        }.frame(width: 26, height: 28).contentShape(Rectangle())
-                    }.buttonStyle(LoafButtonStyle()).help(record.name).accessibilityLabel(record.name)
-                }
-                Spacer(minLength: 0)
-                if enabled.count > max(1, Int((store.preferences.sidebarWidth - 70) / 30)) {
-                    Menu {
-                        ForEach(Array(enabled.dropFirst(max(1, Int((store.preferences.sidebarWidth - 70) / 30))))) {
-                            record in Button(record.name) { store.runtime.extensions.perform(record) }
-                        }
-                    } label: {
-                        GolzheimIcon(icon: .more, size: 14)
-                    }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel(
-                        "more extensions")
-                }
+        HStack(spacing: 4) {
+            if enabled.isEmpty { Text("no extensions yet").font(.system(size: 11)).foregroundStyle(.secondary) }
+            ForEach(Array(enabled.prefix(max(1, Int((store.preferences.sidebarWidth - 70) / 30))))) { record in
                 Button {
-                    store.showPage(.extensions)
+                    store.runtime.extensions.perform(record)
                 } label: {
-                    GolzheimIcon(icon: .settings, size: 14).frame(width: 26, height: 28)
-                }
-                .buttonStyle(LoafButtonStyle()).help("manage extensions").accessibilityLabel("manage extensions")
-            }.padding(.leading, 8).padding(.trailing, 0).padding(.top, 3).padding(.bottom, 1)
-                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 6)).padding(.horizontal, 8)
-                .accessibilityElement(children: .contain).accessibilityLabel("extension tray")
-        }
+                    Group {
+                        if let context = store.runtime.extensions.contexts[record.id],
+                            let image = context.webExtension.icon(for: CGSize(width: 18, height: 18))
+                        {
+                            Image(nsImage: image).resizable().scaledToFit().frame(width: 18, height: 18)
+                        } else {
+                            GolzheimIcon(icon: .extensionPuzzle, size: 16)
+                        }
+                    }.frame(width: 26, height: 28).contentShape(Rectangle())
+                }.buttonStyle(LoafButtonStyle()).help(record.name).accessibilityLabel(record.name)
+            }
+            Spacer(minLength: 0)
+            if enabled.count > max(1, Int((store.preferences.sidebarWidth - 70) / 30)) {
+                Menu {
+                    ForEach(Array(enabled.dropFirst(max(1, Int((store.preferences.sidebarWidth - 70) / 30))))) {
+                        record in Button(record.name) { store.runtime.extensions.perform(record) }
+                    }
+                } label: {
+                    GolzheimIcon(icon: .more, size: 14)
+                }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel(
+                    "more extensions")
+            }
+            Button {
+                store.showPage(.extensions)
+            } label: {
+                GolzheimIcon(icon: .settings, size: 14).frame(width: 26, height: 28)
+            }
+            .buttonStyle(LoafButtonStyle()).help("manage extensions").accessibilityLabel("manage extensions")
+        }.padding(.leading, 8).padding(.trailing, 0).padding(.top, 3).padding(.bottom, 1)
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 6)).padding(.horizontal, 8)
+            .accessibilityElement(children: .contain).accessibilityLabel("extension tray")
     }
     private var footer: some View {
         HStack(spacing: 0) {
@@ -346,7 +371,7 @@ struct SidebarView: View {
             } label: {
                 GolzheimIcon(icon: .extensionPuzzle, size: 16).frame(width: 26, height: 26)
                     .background(
-                        Color.primary.opacity(store.extensionsVisible ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 6)
+                        Color.primary.opacity(0.08 * extensionProgress), in: RoundedRectangle(cornerRadius: 6)
                     )
             }.buttonStyle(LoafButtonStyle()).accessibilityLabel("extensions").accessibilityValue(
                 store.extensionsVisible ? "expanded" : "collapsed"

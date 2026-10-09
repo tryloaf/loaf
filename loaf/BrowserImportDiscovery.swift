@@ -56,6 +56,7 @@ nonisolated enum BrowserImportDiscovery {
                     "com.brave.Browser": ["BraveSoftware/Brave-Browser"], "com.operasoftware.Opera": ["com.operasoftware.Opera"],
                     "org.mozilla.firefox": ["Firefox/Profiles"], "org.mozilla.firefoxdeveloperedition": ["Firefox/Profiles"],
                     "app.zen-browser.zen": ["zen/Profiles"], "company.thebrowser.Browser": ["Arc", "Arc/User Data"],
+                    "company.thebrowser.dia": ["Dia/User Data", "Dia"],
                     "com.vivaldi.Vivaldi": ["Vivaldi"], "org.chromium.Chromium": ["Chromium"],
                 ]
                 let browserEntitlement = entitlements["com.apple.developer.web-browser"] as? Bool == true
@@ -90,12 +91,17 @@ nonisolated enum BrowserImportDiscovery {
         var result = Set<URL>()
         var visited = 0
         func walk(_ folder: URL, depth: Int) {
-            visited += 1
             guard depth <= 5, result.count < 100, visited < 5_000,
                 let values = try? folder.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]), values.isDirectory == true, values.isSymbolicLink != true else { return }
-            if markers.contains(where: { fm.fileExists(atPath: folder.appendingPathComponent($0).path) }) { result.insert(folder) }
+            visited += 1
+            let isProfile = markers.contains(where: { fm.fileExists(atPath: folder.appendingPathComponent($0).path) })
+            if isProfile { result.insert(folder) }
             guard let children = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else { return }
-            for child in children.prefix(300) {
+            for child in children.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+                guard (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+                // A profile can contain thousands of cache/database files. Only Safari's
+                // nested Profiles directory can contain more profiles beneath one.
+                if isProfile && child.lastPathComponent != "Profiles" { continue }
                 if ["Cache", "Code Cache", "GPUCache", "Service Worker", "Extensions", "Storage", "IndexedDB", "Local Storage", "Caches"].contains(child.lastPathComponent) { continue }
                 walk(child, depth: depth + 1)
             }
@@ -125,10 +131,44 @@ nonisolated enum BrowserImportDiscovery {
             }
         }
         guard !previews.isEmpty else {
-            throw ProfileImport.Failure(message: "No readable profiles found in \(browser.name). Close it, grant loaf Full Disk Access, then scan again. You can also choose its profile folder or a bookmarks export.")
+            let reason = requestDataAccess(browser) == .denied
+                ? "macOS is blocking access. Enable loaf in Full Disk Access, then quit and reopen loaf before importing."
+                : "Close the source browser and try again, or choose its profile folder or a bookmarks export."
+            throw ProfileImport.Failure(message: "No readable profiles found in \(browser.name). " + reason)
+        }
+        guard previews.contains(where: { !$0.isEmpty }) else {
+            throw ProfileImport.Failure(message: "\(browser.name)’s data couldn’t be read. \(failures.joined(separator: " ")) \(previews.flatMap(\.warnings).joined(separator: " "))")
         }
         if !failures.isEmpty { previews[0].warnings += failures }
         return previews
+    }
+    enum DataAccess: Sendable, Equatable { case readable, denied, noData }
+    /// Checks only the browser the person selected, after an explicit permission request.
+    /// This is not a global Full Disk Access status API (macOS has no supported one).
+    static func requestDataAccess(_ browser: ImportBrowser) -> DataAccess {
+        let fm = FileManager.default
+        var denied = false
+        var readable = false
+        for root in Set(browser.roots + profileFolders(browser)) {
+            do {
+                let files = try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+                for file in files where ["History", "History.db", "Bookmarks", "Bookmarks.plist", "places.sqlite"].contains(file.lastPathComponent) {
+                    do {
+                        let handle = try FileHandle(forReadingFrom: file)
+                        defer { try? handle.close() }
+                        _ = try handle.read(upToCount: 1)
+                        readable = true
+                    } catch { denied = denied || permissionDenied(error) }
+                }
+            } catch { denied = denied || permissionDenied(error) }
+        }
+        return denied ? .denied : readable ? .readable : .noData
+    }
+    private static func permissionDenied(_ error: Error) -> Bool {
+        let error = error as NSError
+        return error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoPermissionError
+            || error.domain == NSPOSIXErrorDomain && [Int(EACCES), Int(EPERM)].contains(error.code)
+            || (error.userInfo[NSUnderlyingErrorKey] as? NSError).map { permissionDenied($0) } == true
     }
     private static func profileName(_ folder: URL) -> String? {
         let file = folder.appendingPathComponent("Preferences")

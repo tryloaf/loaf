@@ -21,6 +21,15 @@ import WebKit
     }
     private var settingsWindow: NSWindow?
     private var aboutWindow: NSWindow?
+    private final class WindowReference {
+        weak var window: NSWindow?
+        init(_ window: NSWindow) { self.window = window }
+    }
+    private weak var lastKeyWindow: NSWindow?
+    private weak var updateReturnWindow: NSWindow?
+    private var auxiliaryReturnWindows: [ObjectIdentifier: WindowReference] = [:]
+    private var keyWindowObserver: NSObjectProtocol?
+    func prepareForUpdatePresentation() { updateReturnWindow = NSApp.keyWindow }
     private weak var settingsOwner: BrowserWindowState?
     private var observations = Set<AnyCancellable>()
     private var focusObservation: AnyCancellable?
@@ -147,6 +156,25 @@ import WebKit
                     }
                 })
         }
+        lastKeyWindow = NSApp?.keyWindow
+        keyWindowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let window = note.object as? NSWindow else { return }
+                let contentWindow = window === self.settingsWindow || self.native.values.contains { $0 === window }
+                if !contentWindow, let previous = self.updateReturnWindow, previous !== window {
+                    self.auxiliaryReturnWindows[ObjectIdentifier(window)] = WindowReference(previous)
+                    self.updateReturnWindow = nil
+                }
+                if !contentWindow, self.auxiliaryReturnWindows[ObjectIdentifier(window)] == nil,
+                    let previous = self.lastKeyWindow, previous !== window, previous.isVisible
+                {
+                    self.auxiliaryReturnWindows[ObjectIdentifier(window)] = WindowReference(previous)
+                }
+                self.lastKeyWindow = window
+            }
+        }
         auxiliaryCloseObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: nil, queue: .main
         ) { [weak self] note in
@@ -156,12 +184,21 @@ import WebKit
                 let owned =
                     self.auxiliary.contains { $0 === window } || window === self.settingsWindow
                     || window === self.aboutWindow
+                let returnWindow = self.auxiliaryReturnWindows.removeValue(forKey: ObjectIdentifier(window))?.window
+                let wasKey = window.isKeyWindow || self.lastKeyWindow === window
                 self.auxiliary.removeAll { $0 === window }
-                guard owned, NSApp.isActive else { return }
+                guard (owned || returnWindow != nil), wasKey, NSApp.isActive else { return }
                 DispatchQueue.main.async { [weak self] in
-                    guard NSApp.isActive, NSApp.keyWindow == nil,
-                        let browser = self?.focused?.nativeWindow, browser.isVisible, browser.isOnActiveSpace,
-                        self?.application.windows.contains(where: { state in
+                    guard let self, NSApp.isActive else { return }
+                    if let returnWindow, returnWindow.isVisible, returnWindow.isOnActiveSpace,
+                        NSApp.keyWindow == nil || self.native.values.contains(where: { $0 === NSApp.keyWindow })
+                    {
+                        returnWindow.makeKeyAndOrderFront(nil)
+                        return
+                    }
+                    guard NSApp.keyWindow == nil,
+                        let browser = self.focused?.nativeWindow, browser.isVisible, browser.isOnActiveSpace,
+                        self.application.windows.contains(where: { state in
                             state.tabs.contains {
                                 $0.existingWebView?.fullscreenState != nil
                                     && $0.existingWebView?.fullscreenState != .notInFullscreen
@@ -181,6 +218,7 @@ import WebKit
         return state
     }
     deinit {
+        if let keyWindowObserver { NotificationCenter.default.removeObserver(keyWindowObserver) }
         if let auxiliaryCloseObserver { NotificationCenter.default.removeObserver(auxiliaryCloseObserver) }
         for observer in menuTrackingObservers { NotificationCenter.default.removeObserver(observer) }
     }

@@ -52,7 +52,7 @@ struct ChatGPTConnectionView: View {
             Button("got it") { account.dismissWelcome() }
         } message: {
             Text(
-                "eligible searches in Loaf use your ChatGPT plan or available credits. manage access and limits in ChatGPT settings."
+                "eligible searches in loaf use your ChatGPT plan or available credits. manage access and limits in ChatGPT settings."
             )
         }
     }

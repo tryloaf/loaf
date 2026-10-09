@@ -415,8 +415,10 @@ struct PointerCapturePosition {
         if #available(macOS 26.0, *) {
 
             var insets = webView.obscuredContentInsets
-            insets.top = height
-            webView.obscuredContentInsets = insets
+            if insets.top != height {
+                insets.top = height
+                webView.obscuredContentInsets = insets
+            }
             return true
         }
         let inset = NSSelectorFromString("_setTopContentInset:immediate:")
@@ -514,6 +516,7 @@ struct PointerCapturePosition {
     }
     static func menu(_ proposed: NSMenu, element: NSObject, tab: BrowserTab, selectedText: String? = nil) -> NSMenu {
         let menu = proposed.copy() as? NSMenu ?? NSMenu()
+        LowercaseMenus.normalizeWebContext(menu)
         let hit = object(element, "hitTestResult") as? NSObject
         let link = object(hit, "absoluteLinkURL") as? URL
         let image = object(hit, "absoluteImageURL") as? URL
@@ -568,7 +571,7 @@ struct PointerCapturePosition {
             }
         }
         if selected && !text.isEmpty {
-            add("search with google") { _ = tab.store?.newTab(url: BrowserAddress.search(text), showOmnibar: false) }
+            add("search with Google") { _ = tab.store?.newTab(url: BrowserAddress.search(text), showOmnibar: false) }
             add("translate selection…") { tab.store?.translationText = text }
 
         }

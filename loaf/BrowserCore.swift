@@ -418,7 +418,7 @@ nonisolated enum UserAgentMode: String, Codable, CaseIterable, Sendable {
         chromeAndroid, chromeOS, firefoxMac, firefoxWindows, firefoxAndroid, custom
     var title: String {
         switch self {
-        case .automatic: "Automatic"
+        case .automatic: "automatic"
         case .desktop: "Safari · macOS"
         case .safariIPhone: "Safari · iPhone"
         case .safariIPad: "Safari · iPad"
@@ -432,7 +432,7 @@ nonisolated enum UserAgentMode: String, Codable, CaseIterable, Sendable {
         case .firefoxMac: "Firefox · macOS"
         case .firefoxWindows: "Firefox · Windows"
         case .firefoxAndroid: "Firefox · Android"
-        case .custom: "Custom…"
+        case .custom: "custom…"
         }
     }
 }

@@ -78,7 +78,8 @@ final class UpdateInstallationState: @unchecked Sendable {
     func checkForUpdates() {
         #if canImport(Sparkle)
             guard enabled, canCheckForUpdates else { return }
-            NSApp.activate()
+            BrowserScripting.coordinator?.prepareForUpdatePresentation()
+            if !NSApp.isActive { NSApp.activate() }
             controller?.checkForUpdates(nil)
         #endif
     }
@@ -93,7 +94,8 @@ final class UpdateInstallationState: @unchecked Sendable {
             let userInitiated = state.userInitiated
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                NSApp.activate()
+                if !userInitiated { BrowserScripting.coordinator?.prepareForUpdatePresentation() }
+                if !NSApp.isActive { NSApp.activate() }
                 if !userInitiated { self.controller?.checkForUpdates(nil) }
             }
         }

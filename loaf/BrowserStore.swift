@@ -439,6 +439,7 @@ import WebKit
             cancelPasswordFill()
         }
         let previous = profileFor(tab.profileID).selectedTab.flatMap { runtime(for: tab.profileID).tabs[$0] }
+        if previous?.id != tab.id { markVisibleTabsActive() }
         if let previous, previous.id != tab.id { application.tabPreviews.capture(previous) }
         recentTabIDs[tab.profileID, default: []].removeAll { $0 == tab.id }
         recentTabIDs[tab.profileID, default: []].append(tab.id)
@@ -698,6 +699,7 @@ import WebKit
     }
 
     func switchProfile(_ id: UUID) {
+        markVisibleTabsActive()
         if id != selectedProfileID { endSplit() }
         guard profiles.contains(where: { $0.id == id }), id != selectedProfileID else { return }
         for tab in tabs { tab.existingChatGPTSearch?.clear() }

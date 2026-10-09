@@ -336,7 +336,8 @@ struct WebViewHost: NSViewRepresentable {
         }
         private func apply(_ frame: NSRect) {
             guard let webView = hostedWebView, webView.fullscreenState == .notInFullscreen,
-                webView.superview === self, !WebKitAdapter.inspectorIsDocked(webView), webView.frame != frame
+                webView.superview === self, !WebKitAdapter.inspectorIsDocked(webView), webView.frame != frame,
+                frame.width > 0, frame.height > 0
             else { return }
 
             CATransaction.begin()
@@ -471,7 +472,9 @@ struct WebViewHost: NSViewRepresentable {
         let view = tab.webView
         view.removeFromSuperview()
         view.translatesAutoresizingMaskIntoConstraints = true
-        view.frame = host.bounds
+        // A newly constructed SwiftUI host often has zero bounds until layout.
+        // Collapsing a live viewport can advance scroll-snap pages (YouTube Shorts).
+        if host.bounds.width > 0, host.bounds.height > 0 { view.frame = host.bounds }
         view.autoresizingMask = []
         host.addSubview(view)
         host.hostedWebView = view

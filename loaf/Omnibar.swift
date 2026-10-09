@@ -375,6 +375,23 @@ struct Suggestion: Identifiable {
                             destination: site.address, kind: .site), score: score - 12)
                 }
             }
+            if let domainPrefix, !store.profile.privateMode, store.preferences.remoteSites == true {
+                // A navigation result learned while typing "macrumors" remains
+                // available for "macrumors." without sending partial URLs again.
+                for (key, cached) in cache where key.profile == store.selectedProfileID && key.sites
+                    && key.provider == (store.preferences.suggestionProvider ?? .google)
+                    && Date().timeIntervalSince(cached.date) < 300
+                {
+                    for site in cached.values where site.kind == .site {
+                        guard let url = site.siteURL, BrowserAddress.isSuggestedWebsite(url),
+                            let host = url.host?.lowercased()
+                        else { continue }
+                        let hostKey = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+                        guard hostKey.hasPrefix(domainPrefix) else { continue }
+                        consider(site, score: 120)
+                    }
+                }
+            }
             let displayKey =
                 !text.contains("://") && !text.contains(where: { $0.isWhitespace })
                 ? URL(string: "https://" + text).flatMap {
@@ -650,7 +667,7 @@ struct SuggestionIcon: View {
     @State private var image: NSImage?
     @State private var imageIdentity: String?
     private var identity: String {
-        "\(store.selectedProfileID):\(faviconURL.flatMap(BrowserAddress.websiteOrigin) ?? ""):\(cachedOnly || suggestion.id == "input")"
+        "\(store.selectedProfileID):\(faviconURL.flatMap(BrowserAddress.websiteOrigin) ?? ""):\(cachedOnly)"
     }
     private var faviconURL: URL? { suggestion.defaultSearchQuery == nil ? suggestion.siteURL : nil }
     var body: some View {
@@ -674,11 +691,11 @@ struct SuggestionIcon: View {
                     imageIdentity = requestedIdentity
                     return
                 }
-                guard !cachedOnly, suggestion.id != "input" else { return }
-                do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
+                guard !cachedOnly else { return }
+                do { try await Task.sleep(for: .milliseconds(45)) } catch { return }
                 guard !Task.isCancelled else { return }
                 let fetched = await store.application.favicons.image(
-                    for: url, privateID: store.profile.privateMode ? store.selectedProfileID : nil)
+                    for: url, privateID: store.profile.privateMode ? store.selectedProfileID : nil, quick: true)
                 guard !Task.isCancelled else { return }
                 image = fetched
                 imageIdentity = requestedIdentity
@@ -710,7 +727,7 @@ struct OmnibarView: View {
             HStack(spacing: 12) {
                 Group {
                     if let selectedAction {
-                        SuggestionIcon(suggestion: selectedAction, store: store, size: 20, cachedOnly: true)
+                        SuggestionIcon(suggestion: selectedAction, store: store, size: 20)
                     } else {
                         GolzheimIcon(icon: .search, size: 20).foregroundStyle(.secondary)
                     }
@@ -841,10 +858,12 @@ struct OmnibarView: View {
             }.font(.system(size: 10)).lineLimit(1).foregroundStyle(.secondary).padding(.horizontal, 16).padding(
                 .vertical, 8)
 
-        }.frame(width: width, alignment: .top).clipped().background(
-            store.profile.privateMode ? PrivateChrome.surface : Color(nsColor: .controlBackgroundColor),
-            in: RoundedRectangle(cornerRadius: 16)
-        )
+        }.frame(width: width, alignment: .top).clipped().background {
+            ProfileWindowSurface(
+                color: store.profile.privateMode ? PrivateChrome.surface : Color(nsColor: .controlBackgroundColor),
+                transparency: store.profile.personalization?.windowTransparency ?? 0, withinWindow: true
+            ).clipShape(RoundedRectangle(cornerRadius: 16))
+        }
         .overlay {
             RoundedRectangle(cornerRadius: 16).fill(
                 profileTint(store.profile).opacity(

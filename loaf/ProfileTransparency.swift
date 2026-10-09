@@ -103,27 +103,30 @@ struct ProfileTransparencyControl: View {
 struct ProfileWindowSurface: View {
     var color: Color
     var transparency: Double
+    var withinWindow = false
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     var body: some View {
         let opacity = ProfileTransparency.opacity(transparency, reduceTransparency: reduceTransparency)
         ZStack {
-            if opacity < 1 { WindowBackdrop() }
+            if opacity < 1 { WindowBackdrop(withinWindow: withinWindow) }
             color.opacity(opacity)
         }.allowsHitTesting(false).accessibilityHidden(true)
     }
 }
 
 struct WindowBackdrop: NSViewRepresentable {
+    var withinWindow = false
     func makeNSView(context: Context) -> BackdropView {
         let view = BackdropView()
         view.material = .sidebar
-        view.blendingMode = .behindWindow
+        view.blendingMode = withinWindow ? .withinWindow : .behindWindow
         view.state = .active
         view.identifier = .init("loaf.window.backdrop")
         view.setAccessibilityElement(false)
         return view
     }
     func updateNSView(_ view: BackdropView, context: Context) {
+        view.blendingMode = withinWindow ? .withinWindow : .behindWindow
         view.appearance = NSAppearance(named: context.environment.colorScheme == .dark ? .darkAqua : .aqua)
     }
     final class BackdropView: NSVisualEffectView {

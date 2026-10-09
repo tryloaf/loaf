@@ -47,7 +47,7 @@ nonisolated struct SearchRedirect: Codable, Sendable {
             : provider == .chatgpt
                 ? "ChatGPT"
                 : provider == .custom
-                    ? "Custom…"
+                    ? "custom…"
                     : [
                         Provider.perplexity: "Perplexity", .duckduckgo: "DuckDuckGo", .google: "Google",
                         .googleAIOverview: "Google AI Overview", .bing: "Bing", .kagi: "Kagi", .wikipedia: "Wikipedia",

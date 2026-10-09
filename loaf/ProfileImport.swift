@@ -222,7 +222,7 @@ nonisolated enum ProfileImport {
             if let database { sqlite3_close(database) }
             throw Failure(
                 message:
-                    "The selected database can’t be read. Close the source app and, if macOS blocks access, grant loaf Full Disk Access in System Settings."
+                    "The selected database can’t be read. Close the source app and, if macOS blocks access, enable loaf in Full Disk Access in System Settings, then quit and reopen loaf before importing."
             )
         }
         defer { sqlite3_close(database) }

@@ -80,7 +80,7 @@ enum AssetRequest {
         remember(image, key: "normal" + origin)
         return image
     }
-    func image(for url: URL, privateID: UUID? = nil, declared: [URL] = [], refresh: Bool = false) async -> NSImage? {
+    func image(for url: URL, privateID: UUID? = nil, declared: [URL] = [], refresh: Bool = false, quick: Bool = false) async -> NSImage? {
         guard let origin = BrowserAddress.websiteOrigin(url) else { return nil }
         let key = (privateID?.uuidString ?? "normal") + origin
         let generation = privateID.map { privateGenerations[$0, default: 0] }
@@ -106,6 +106,18 @@ enum AssetRequest {
                 return image(prepared)
             }
             var seen = Set<URL>()
+            var fallback = URLComponents(string: origin)!
+            fallback.scheme = "https"
+            fallback.path = "/favicon.ico"
+            if quick, declared.isEmpty, let candidate = fallback.url {
+                seen.insert(candidate)
+                if let data = try? await fetch(candidate), !Task.isCancelled,
+                    let prepared = await assets.decode(data), !Task.isCancelled
+                {
+                    if privateID == nil { await assets.write(data, to: file) }
+                    return image(prepared)
+                }
+            }
             let known =
                 PublicSuffixList.shared.registrableDomain(url.host ?? "") == "reddit.com"
                 ? [URL(string: "https://www.redditstatic.com/shreddit/assets/favicon/192x192.png")!] : []
@@ -118,10 +130,7 @@ enum AssetRequest {
             let candidates = (discovered + known).filter {
                 $0.scheme == "https" && $0.user == nil && $0.password == nil && seen.insert($0).inserted
             }
-            var fallback = URLComponents(string: origin)!
-            fallback.scheme = "https"
-            fallback.path = "/favicon.ico"
-            for candidate in candidates + (fallback.url.map { [$0] } ?? []) {
+            for candidate in candidates + (fallback.url.map { seen.contains($0) ? [] : [$0] } ?? []) {
                 if Task.isCancelled { return nil }
                 guard let data = try? await fetch(candidate), !Task.isCancelled,
                     let prepared = await assets.decode(data), !Task.isCancelled
