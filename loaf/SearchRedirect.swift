@@ -5,6 +5,7 @@ nonisolated struct SearchRedirect: Codable, Sendable {
         case perplexity, chatgpt, appleIntelligence, duckduckgo, google, googleAIOverview, bing, ecosia, yahoo,
             startpage, kagi, wikipedia, custom
     }
+    static var availableProviders: [Provider] { Provider.allCases.filter { $0 != .googleAIOverview } }
     enum Shortcut: String, Codable, CaseIterable, Sendable {
         case commandReturn = "⌘↵"
         case optionReturn = "⌥↵"
@@ -46,7 +47,7 @@ nonisolated struct SearchRedirect: Codable, Sendable {
             : provider == .chatgpt
                 ? "ChatGPT"
                 : provider == .custom
-                    ? URL(string: template.replacingOccurrences(of: "{query}", with: ""))?.host ?? "custom search"
+                    ? "Custom…"
                     : [
                         Provider.perplexity: "Perplexity", .duckduckgo: "DuckDuckGo", .google: "Google",
                         .googleAIOverview: "Google AI Overview", .bing: "Bing", .kagi: "Kagi", .wikipedia: "Wikipedia",

@@ -33,19 +33,12 @@ import WebKit
     private var sleepingTask: Task<Void, Never>?
     private var restoredWindows: [SavedWindow] = []
     private var observers = Set<AnyCancellable>()
-    private var lastTabCloseClick: TimeInterval?
     func setAIFeaturesEnabled(_ enabled: Bool) {
         preferences.aiFeaturesEnabled = enabled
         if !enabled {
             for runtime in runtimes.values { for tab in runtime.tabs.values { tab.existingChatGPTSearch?.clear() } }
         }
         persistSoon()
-    }
-    func acceptTabCloseClick(at time: TimeInterval) -> Bool {
-        guard time.isFinite else { return false }
-        if let lastTabCloseClick, time - lastTabCloseClick < 0.16 { return false }
-        lastTabCloseClick = time
-        return true
     }
 
     init(directory override: URL? = nil, prepareServices: Bool = true, chatGPTAccount: ChatGPTAccount? = nil) {
@@ -112,6 +105,8 @@ import WebKit
         {
             preferences.alternateSearch?.enabled = false
         }
+        if preferences.searchEngine == .googleAIOverview { preferences.searchEngine = .google }
+        if preferences.alternateSearch?.provider == .googleAIOverview { preferences.alternateSearch?.provider = .google }
         downloads.configure(directory: directory)
         for publisher in [
             blocker.objectWillChange, downloads.objectWillChange, weather.objectWillChange, sites.objectWillChange,

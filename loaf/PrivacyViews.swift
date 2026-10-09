@@ -109,59 +109,75 @@ struct CookieManagerView: View {
                 || $0.name.localizedCaseInsensitiveContains(query)
         }.sorted { ($0.domain, $0.name) < ($1.domain, $1.name) }
     }
+    private var domains: [String] { Array(Set(filtered.map(\.domain))).sorted() }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            TextField("search domain or cookie name", text: $query).textFieldStyle(.roundedBorder)
-            Text("\(cookies.count) cookies · \(store.profile.name)").font(.caption).foregroundStyle(.secondary)
-            ForEach(Array(filtered.enumerated()), id: \.offset) { _, cookie in
-                HStack {
-                    WebsiteIcon(
-                        url: URL(
-                            string: (cookie.isSecure ? "https://" : "http://")
-                                + cookie.domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))), store: store)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(cookie.name).lineLimit(1)
-                        Text(cookie.domain + cookie.path + (cookie.isSecure ? " · secure" : "")).font(.caption)
-                            .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                TextField("search cookies…", text: $query).textFieldStyle(.roundedBorder)
+                Button("select all") { selectedCookies = Set(filtered.map(cookieID)) }
+                    .controlSize(.small).disabled(filtered.isEmpty)
+                if !selectedCookies.isEmpty {
+                    Button("delete \(selectedCookies.count)") { deleteSelectedCookies() }.controlSize(.small)
+                }
+                Button("history") { store.showPage(.history) }.controlSize(.small)
+            }.frame(maxWidth: 600).padding(.horizontal, 28).padding(.vertical, 16)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    Text("\(cookies.count.formatted()) \(cookies.count == 1 ? "cookie" : "cookies") · \(store.profile.name)")
+                        .font(.system(size: 12)).foregroundStyle(.secondary).padding(.bottom, 8)
+                    if filtered.isEmpty {
+                        emptyLibrary(icon: .cookie, title: query.isEmpty ? "no cookies saved" : "no matching cookies",
+                            detail: query.isEmpty ? "cookies saved by sites in this profile will appear here." : "try another domain or cookie name.")
                     }
-                    Spacer()
-                    Button("delete") {
-                        let jar = store.runtime.dataStore.httpCookieStore
-                        Task {
-                            await jar.deleteCookie(cookie)
-                            await refresh()
+                    ForEach(domains, id: \.self) { domain in
+                        let domainCookies = filtered.filter { $0.domain == domain }
+                        HStack(spacing: 8) {
+                            WebsiteIcon(url: URL(string: "https://" + domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))), store: store)
+                            Text(domain).font(.system(size: 12, weight: .medium)).textSelection(.enabled)
+                            Spacer(minLength: 8)
+                            Text(domainCookies.count.formatted()).font(.system(size: 11)).foregroundStyle(.secondary)
+                        }.padding(.top, 16).padding(.bottom, 4)
+                            .contextMenu {
+                                Button("Delete Domain Cookies") { deleteDomain(domain) }
+                            }
+                        ForEach(domainCookies, id: \.self) { cookie in
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(cookie.name).font(.system(size: 12)).lineLimit(1)
+                                    Text(cookie.path + (cookie.isSecure ? " · secure" : "") + (cookie.isHTTPOnly ? " · HTTP only" : ""))
+                                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer(minLength: 8)
+                                Text(cookie.expiresDate.map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "session")
+                                    .font(.system(size: 11)).foregroundStyle(.tertiary)
+                            }.padding(.horizontal, 12).padding(.vertical, 10)
+                                .background(Color.accentColor.opacity(selectedCookies.contains(cookieID(cookie)) ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 8))
+                                .contentShape(Rectangle()).onTapGesture {
+                                    let id = cookieID(cookie)
+                                    if NSEvent.modifierFlags.contains(.command) {
+                                        if !selectedCookies.insert(id).inserted { selectedCookies.remove(id) }
+                                    } else { selectedCookies = [id] }
+                                }.accessibilityAddTraits(selectedCookies.contains(cookieID(cookie)) ? .isSelected : [])
+                                .contextMenu {
+                                    Button("Delete Cookie") { selectedCookies = [cookieID(cookie)]; deleteSelectedCookies() }
+                                    Button("Delete Domain Cookies") { deleteDomain(domain) }
+                                }
                         }
-                    }.controlSize(.small)
-                    Button("delete domain") {
-                        let jar = store.runtime.dataStore.httpCookieStore
-                        let same = cookies.filter { $0.domain.lowercased() == cookie.domain.lowercased() }
-                        Task {
-                            for cookie in same { await jar.deleteCookie(cookie) }
-                            await refresh()
-                        }
-                    }.controlSize(.small)
-                }.padding(8).background(
-                    Color.accentColor.opacity(selectedCookies.contains(cookieID(cookie)) ? 0.12 : 0),
-                    in: RoundedRectangle(cornerRadius: 8)
-                )
-                .contentShape(Rectangle()).onTapGesture {
-                    let id = cookieID(cookie)
-                    if NSEvent.modifierFlags.contains(.command) {
-                        if !selectedCookies.insert(id).inserted { selectedCookies.remove(id) }
-                    } else {
-                        selectedCookies = [id]
                     }
-                }.accessibilityAddTraits(selectedCookies.contains(cookieID(cookie)) ? .isSelected : [])
-            }
-            if filtered.isEmpty { Text("no matching cookies").foregroundStyle(.secondary) }
-            Text("domain cookies can be shared by subdomains. deleting one can sign you out of more than one site.")
-                .font(.caption).foregroundStyle(.secondary)
+                    if !cookies.isEmpty {
+                        Text("domain cookies may be shared by subdomains. deleting them can sign you out.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary).padding(.top, 20)
+                    }
+                }.frame(maxWidth: 600).padding(.horizontal, 28).padding(.bottom, 24).frame(maxWidth: .infinity)
+            }.scrollIndicators(.hidden)
         }.background(LibraryDeleteKey(enabled: !selectedCookies.isEmpty, delete: deleteSelectedCookies))
-            .task(id: store.selectedProfileID) {
-                selectedCookies = []
-                await refresh()
-            }
+            .task(id: store.selectedProfileID) { selectedCookies = []; await refresh() }
             .onChange(of: query) { _, _ in selectedCookies.formIntersection(Set(filtered.map(cookieID))) }
+    }
+    private func deleteDomain(_ domain: String) {
+        let jar = store.runtime.dataStore.httpCookieStore
+        let selected = cookies.filter { $0.domain.lowercased() == domain.lowercased() }
+        Task { for cookie in selected { await jar.deleteCookie(cookie) }; await refresh() }
     }
     private func cookieID(_ cookie: HTTPCookie) -> String { cookie.domain + "\n" + cookie.path + "\n" + cookie.name }
     private func deleteSelectedCookies() {

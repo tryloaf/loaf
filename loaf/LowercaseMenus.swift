@@ -8,16 +8,6 @@ import WebKit
 
     static func install() {
         guard !installed else { return }
-        guard let original = class_getInstanceMethod(NSMenuItem.self, #selector(setter: NSMenuItem.title)),
-            let replacement = class_getInstanceMethod(NSMenuItem.self, #selector(NSMenuItem.loaf_setTitle(_:))),
-            let add = class_getInstanceMethod(NSMenu.self, #selector(NSMenu.addItem(_:))),
-            let lowercaseAdd = class_getInstanceMethod(NSMenu.self, #selector(NSMenu.loaf_addItem(_:))),
-            let insert = class_getInstanceMethod(NSMenu.self, #selector(NSMenu.insertItem(_:at:))),
-            let lowercaseInsert = class_getInstanceMethod(NSMenu.self, #selector(NSMenu.loaf_insertItem(_:at:)))
-        else { return }
-        method_exchangeImplementations(original, replacement)
-        method_exchangeImplementations(insert, lowercaseInsert)
-        method_exchangeImplementations(add, lowercaseAdd)
         for (selector, replacement) in [
             (NSSelectorFromString("_agent_setHighlighted:"), #selector(NSMenuItem.loaf_setAgentHighlighted(_:))),
             (
@@ -35,51 +25,18 @@ import WebKit
         if let menu = NSApp.mainMenu { normalize(menu) }
     }
 
-    static func normalize(_ menu: NSMenu) {
-        let title = menu.title.lowercased(with: Locale.current)
-        if menu.title != title { menu.title = title }
-        for item in menu.items { normalize(item) }
-    }
+    static func normalize(_ menu: NSMenu) {}
+    static func normalize(_ item: NSMenuItem) {}
 
-    static func normalize(_ item: NSMenuItem) {
-        let lowercase = item.title.lowercased(with: Locale.current)
-        if item.title != lowercase { item.title = lowercase }
-        if let attributed = item.attributedTitle, attributed.length > 0,
-            attributed.string != attributed.string.lowercased(with: Locale.current)
-        {
-            let title = NSMutableAttributedString(attributedString: attributed)
-            title.mutableString.setString(attributed.string.lowercased(with: Locale.current))
-            item.attributedTitle = title
-        }
-        if let submenu = item.submenu { normalize(submenu) }
-    }
 }
 
 extension NSMenuItem {
-    @objc fileprivate func loaf_setTitle(_ title: String) {
-        let lowercase = title.lowercased(with: Locale.current)
-        guard self.title != lowercase else { return }
-        loaf_setTitle(lowercase)
-    }
-
     @objc fileprivate func loaf_setAgentHighlighted(_ highlighted: Bool) {
         loaf_setAgentHighlighted(highlighted && isEnabled)
     }
 
     @objc fileprivate func loaf_setAgentHighlighted(_ highlighted: Bool, fencedWithWindow window: NSWindow?) {
         loaf_setAgentHighlighted(highlighted && isEnabled, fencedWithWindow: window)
-    }
-}
-
-extension NSMenu {
-    @objc fileprivate func loaf_addItem(_ item: NSMenuItem) {
-        LowercaseMenus.normalize(item)
-        loaf_addItem(item)
-    }
-
-    @objc fileprivate func loaf_insertItem(_ item: NSMenuItem, at index: Int) {
-        LowercaseMenus.normalize(item)
-        loaf_insertItem(item, at: index)
     }
 }
 
@@ -296,8 +253,7 @@ extension NSMenu {
         target: AnyObject? = nil, to menu: NSMenu
     ) -> NSMenuItem {
         let equivalent = flags.contains(.shift) ? key.uppercased() : key
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: equivalent)
-        item.title = title
+        let item = NSMenuItem(title: title.lowercased(with: Locale.current), action: action, keyEquivalent: equivalent)
         item.keyEquivalentModifierMask = flags
         item.target = target
         menu.addItem(item)
@@ -375,7 +331,7 @@ extension NSMenu {
         let existing = main.items.first { $0.submenu === develop }
         if coordinator.application.preferences.developerMenu == true {
             if existing == nil {
-                let item = NSMenuItem(title: "Develop", action: nil, keyEquivalent: "")
+                let item = NSMenuItem(title: "develop", action: nil, keyEquivalent: "")
                 item.submenu = develop
                 let index = main.items.firstIndex { $0.submenu === NSApp.windowsMenu } ?? main.numberOfItems
                 main.insertItem(item, at: index)

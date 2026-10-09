@@ -251,6 +251,7 @@ import WebKit
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered,
             defer: false)
         window.store = state
+        window.collectionBehavior = [.managed, .primary, .fullScreenPrimary, .fullScreenDisallowsTiling]
         window.updateTrafficLightAvailability()
         window.title = "loaf"
         window.titleVisibility = .hidden
@@ -612,8 +613,7 @@ import WebKit
             !forwardedPageCommands.contains(event)
         else { return false }
         forwardedPageCommands.add(event)
-        view.keyDown(with: event)
-        if let up = CapturedPageKeyboard.keyUp(event) { view.keyUp(with: up) }
+        responder.keyDown(with: event)
         return true
     }
     @discardableResult func handlePageKeyboard(_ event: NSEvent) -> Bool {
@@ -641,7 +641,8 @@ import WebKit
             armed.tabID == store?.selectedTab?.id, ProcessInfo.processInfo.systemUptime - armed.time <= 2
         {
             armedSiteShortcut = nil
-            if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return true }
+            performBrowserShortcut(key)
+            return true
         }
         if !editing && !siteFirst, NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return true }
 
@@ -701,7 +702,11 @@ import WebKit
     private(set) var sidebarOnlyChrome = false
     func setSidebarOnlyChrome(_ enabled: Bool) {
         guard sidebarOnlyChrome != enabled else { return }
-        captureTrafficLightFrames()
+        if enabled {
+            if !styleMask.contains(.fullScreen) { restoreTitlebar() }
+            contentView?.layoutSubtreeIfNeeded()
+            captureTrafficLightFrames()
+        }
         sidebarOnlyChrome = enabled
         if enabled { hideFullscreenTitlebar() } else if !styleMask.contains(.fullScreen) { restoreTitlebar() }
     }
@@ -791,7 +796,9 @@ import WebKit
                 x: rect.minX, y: content.isFlipped ? rect.minY : content.bounds.maxY - rect.maxY,
                 width: rect.width, height: rect.height)
         }
-        if frames.count == types.count { trafficLightFrames = frames }
+        if frames.count == types.count, frames.allSatisfy({ $0.width > 0 && (4...32).contains($0.minY) }),
+            zip(frames, frames.dropFirst()).allSatisfy({ $0.minX < $1.minX })
+        { trafficLightFrames = frames }
     }
     func restoreTitlebar() {
         styleMask.formUnion(windowedStyleMask)

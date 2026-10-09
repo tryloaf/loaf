@@ -496,7 +496,7 @@ struct PointerCapturePosition {
         let selector = NSSelectorFromString(mode == .inline && canDockInspector(webView) ? "attach" : "detach")
         if inspector.responds(to: selector) { inspector.perform(selector) }
     }
-    static func inspect(_ webView: WKWebView, mode: InspectorMode = .detached) -> Bool {
+    static func inspect(_ webView: WKWebView, mode: InspectorMode = .inline) -> Bool {
         guard webView.isInspectable, let inspector = object(webView, "_inspector") as? NSObject,
             inspector.responds(to: NSSelectorFromString("show"))
         else { return false }
@@ -585,7 +585,7 @@ struct PointerCapturePosition {
         if let media, ["https", "http"].contains(media.scheme) {
             add("open media in new tab") { _ = tab.store?.newTab(url: media, showOmnibar: false) }
         }
-        if let media {
+        if let media, !menu.items.contains(where: { $0.title.lowercased().contains("picture in picture") || $0.title.lowercased().contains("picture-in-picture") }) {
             let frame = object(hit, "frameInfo") as? WKFrameInfo
             add("picture in picture") {
                 tab.webView.callAsyncJavaScript(
@@ -619,8 +619,10 @@ struct PointerCapturePosition {
             }
         }
         if link == nil && !selected {
+            if !menu.items.contains(where: { $0.title.lowercased().contains("full screen") || $0.title.lowercased().contains("fullscreen") }) {
             add(tab.webView.window?.styleMask.contains(.fullScreen) == true ? "exit full screen" : "enter full screen")
             { tab.webView.window?.toggleFullScreen(nil) }
+            }
             add("back", enabled: tab.canGoBack) { tab.webView.goBack() }
             add("forward", enabled: tab.canGoForward) { tab.webView.goForward() }
             add("reload") { tab.reload() }
@@ -722,7 +724,7 @@ extension BrowserTab {
         }
     }
     func inspect(mode: InspectorMode? = nil) {
-        let chosen = mode ?? store?.preferences.inspectorMode ?? .detached
+        let chosen = mode ?? store?.preferences.inspectorMode ?? .inline
         if let mode, let store {
             store.preferences.inspectorMode = mode
             store.persistSoon()

@@ -6,17 +6,17 @@ import Combine
 #endif
 
 final class UpdateInstallationState: @unchecked Sendable {
-    static let shared = UpdateInstallationState()
-    private let lock = NSLock()
-    private var value = false
+    nonisolated static let shared = UpdateInstallationState()
+    nonisolated private let lock = NSLock()
+    nonisolated(unsafe) private var value = false
 
-    var isInstalling: Bool {
+    nonisolated var isInstalling: Bool {
         lock.lock()
         defer { lock.unlock() }
         return value
     }
 
-    func begin() {
+    nonisolated func begin() {
         lock.lock()
         value = true
         lock.unlock()
@@ -99,6 +99,12 @@ final class UpdateInstallationState: @unchecked Sendable {
         }
     }
     extension SoftwareUpdateManager: SPUUpdaterDelegate {
+        nonisolated func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
+            UpdateInstallationState.shared.begin()
+            // Sparkle's external quit Apple event can be delayed by sandbox/event routing.
+            // Its installer connection is resumed before this next-main-loop termination.
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
         nonisolated func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
             UpdateInstallationState.shared.begin()
         }

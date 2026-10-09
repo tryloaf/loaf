@@ -42,6 +42,7 @@ nonisolated enum AIProvider: String, Codable, CaseIterable, Sendable {
 
 nonisolated enum SearchEngine: String, Codable, CaseIterable, Sendable {
     case google, googleAIOverview, bing, duckduckgo, ecosia, yahoo, wikipedia, startpage, custom
+    static var available: [Self] { allCases.filter { $0 != .googleAIOverview } }
     var title: String {
         switch self {
         case .google: "Google"
@@ -52,7 +53,7 @@ nonisolated enum SearchEngine: String, Codable, CaseIterable, Sendable {
         case .yahoo: "Yahoo"
         case .wikipedia: "Wikipedia"
         case .startpage: "Startpage"
-        case .custom: "custom"
+        case .custom: "Custom…"
         }
     }
     var template: String {

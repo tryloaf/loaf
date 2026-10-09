@@ -16,9 +16,6 @@ import WebKit
     @Published var bookmarkDraft: BookmarkDraft?
     @Published var editingTabIconID: UUID?
     @Published var selectedSidebarTabIDs = Set<UUID>()
-    @Published private(set) var rapidTabClosing = false
-    @Published private(set) var tabCloseTargetID: UUID?
-    private var tabCloseSettleTask: Task<Void, Never>?
     var sidebarSelectionAnchor: UUID?
     @Published var editingGroupID: UUID?
     @Published var draggedFolderID: UUID?
@@ -300,10 +297,6 @@ import WebKit
     }
     func dispose() {
         restoredInteractionStates.removeAll()
-        tabCloseSettleTask?.cancel()
-        tabCloseSettleTask = nil
-        rapidTabClosing = false
-        tabCloseTargetID = nil
         sidebarEntryCache = nil
         cancelPasswordFill()
         passwordOffer = nil
@@ -462,27 +455,8 @@ import WebKit
     @discardableResult func closeFromPointer(
         _ tab: BrowserTab, at time: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) -> Bool {
-        guard tab.profileID == selectedProfileID, isOpenTab(tab),
-            application.acceptTabCloseClick(at: time)
-        else { return false }
-        let position = sidebarEntries.firstIndex { $0.id == tab.id }
-
-        rapidTabClosing = true
-        tabCloseSettleTask?.cancel()
-        tabCloseSettleTask = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
-            self?.rapidTabClosing = false
-            self?.tabCloseTargetID = nil
-            self?.tabCloseSettleTask = nil
-        }
+        guard tab.profileID == selectedProfileID, isOpenTab(tab) else { return false }
         close(tab)
-
-        if rapidTabClosing, let position {
-            let entries = sidebarEntries
-            tabCloseTargetID = entries.indices.contains(position) ? entries[position].tab?.id : nil
-        } else {
-            tabCloseTargetID = nil
-        }
         return true
     }
     func close(_ tab: BrowserTab) {

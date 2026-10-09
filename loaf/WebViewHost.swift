@@ -111,7 +111,7 @@ struct WebViewHost: NSViewRepresentable {
         private(set) var resizeCommits = 0
         func applyChromeInset() {
             guard !snapshotPending, !snapshotPrepared, configuredInset != requestedInset,
-                let webView = hostedWebView, webView.fullscreenState == .notInFullscreen
+                let webView = hostedWebView, webView.superview === self, webView.fullscreenState == .notInFullscreen
             else { return }
             configuredInset = requestedInset
             fallbackInset = WebKitAdapter.setChromeInset(webView, height: requestedInset) ? 0 : requestedInset
@@ -435,10 +435,14 @@ struct WebViewHost: NSViewRepresentable {
     }
     func makeNSView(context: Context) -> HostView {
         let host = HostView()
+        tab.webViewHost = host
         attach(to: host)
         return host
     }
     func updateNSView(_ host: HostView, context: Context) {
+        // SwiftUI may update the retiring split host after constructing its replacement.
+        // Only the latest host may move this tab’s live web view.
+        guard tab.webViewHost === host else { return }
         guard !tab.isDisposed else {
             host.cancelResizeSnapshot()
             return
@@ -475,11 +479,12 @@ struct WebViewHost: NSViewRepresentable {
     }
     static func dismantleNSView(_ host: HostView, coordinator: ()) {
         host.cancelResizeSnapshot()
-        if let view = host.hostedWebView, view.fullscreenState == .notInFullscreen,
+        if let view = host.hostedWebView, view.isDescendant(of: host), view.fullscreenState == .notInFullscreen,
             WebKitAdapter.inspectorIsDocked(view)
         {
             WebKitAdapter.closeInspector(view)
         }
+        host.hostedWebView = nil
     }
     private func configure(_ host: HostView) {
         let geometryChanged =

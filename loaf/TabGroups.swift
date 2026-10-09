@@ -323,8 +323,7 @@ extension BrowserWindowState {
         _ id: UUID, profileID: UUID, at time: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) -> Bool {
 
-        guard profileID == selectedProfileID, !rapidTabClosing, tabGroups.contains(where: { $0.id == id }),
-            application.acceptTabCloseClick(at: time)
+        guard profileID == selectedProfileID, tabGroups.contains(where: { $0.id == id })
         else { return false }
         closeTabGroup(id)
         removeTabGroup(id)
@@ -499,9 +498,9 @@ struct TabGroupRow: View {
                 } label: {
                     GolzheimIcon(icon: .close, size: 16, weight: 180).foregroundStyle(.secondary).frame(
                         width: 22, height: 24)
-                }.buttonStyle(PlayerActionStyle(outline: false)).opacity(hovered && !store.rapidTabClosing ? 1 : 0)
-                    .allowsHitTesting(hovered && !store.rapidTabClosing).accessibilityHidden(
-                        !hovered || store.rapidTabClosing
+                }.buttonStyle(PlayerActionStyle(outline: false)).opacity(hovered ? 1 : 0)
+                    .allowsHitTesting(hovered).accessibilityHidden(
+                        !hovered
                     ).help("delete folder").accessibilityLabel("delete folder")
             }.fixedSize()
         }.padding(.horizontal, 6).frame(height: 32).contentShape(Rectangle())

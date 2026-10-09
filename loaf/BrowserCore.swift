@@ -196,7 +196,6 @@ nonisolated enum BrowserPage: String, Codable, CaseIterable, Sendable {
         case .settings: "general"
         case .extensions: "extensions"
         case .profiles: "profiles"
-        case .cookies: "privacy"
         default: nil
         }
     }
@@ -330,6 +329,7 @@ nonisolated struct BrowserPreferences: Codable, Sendable {
     var developerMenu: Bool?
     var inspectorMode: InspectorMode?
     var userAgentMode: UserAgentMode?
+    var customUserAgent: String?
     var weatherProvider: String?
     var restoreSession: Bool?
     var warnBeforeQuitting: Bool?
@@ -418,7 +418,7 @@ nonisolated enum UserAgentMode: String, Codable, CaseIterable, Sendable {
         chromeAndroid, chromeOS, firefoxMac, firefoxWindows, firefoxAndroid, custom
     var title: String {
         switch self {
-        case .automatic: "automatic"
+        case .automatic: "Automatic"
         case .desktop: "Safari · macOS"
         case .safariIPhone: "Safari · iPhone"
         case .safariIPad: "Safari · iPad"
@@ -432,7 +432,7 @@ nonisolated enum UserAgentMode: String, Codable, CaseIterable, Sendable {
         case .firefoxMac: "Firefox · macOS"
         case .firefoxWindows: "Firefox · Windows"
         case .firefoxAndroid: "Firefox · Android"
-        case .custom: "custom…"
+        case .custom: "Custom…"
         }
     }
 }

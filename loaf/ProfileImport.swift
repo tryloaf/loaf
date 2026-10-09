@@ -1,4 +1,6 @@
 import Foundation
+import CommonCrypto
+import CryptoKit
 import SQLite3
 import WebKit
 
@@ -31,8 +33,9 @@ nonisolated struct ProfileImportPreview: Sendable {
     var bookmarks: [Favorite] = []
     var folders: [BookmarkFolder] = []
     var cookies: [CookieTransfer] = []
+    var tabs: [SavedTab] = []
     var warnings: [String] = []
-    var isEmpty: Bool { history.isEmpty && bookmarks.isEmpty && cookies.isEmpty }
+    var isEmpty: Bool { history.isEmpty && bookmarks.isEmpty && cookies.isEmpty && tabs.isEmpty }
 }
 
 nonisolated struct BookmarkArchive: Codable {
@@ -46,7 +49,7 @@ nonisolated enum ProfileImport {
         let message: String
         var errorDescription: String? { message }
     }
-    static func preview(_ source: URL) throws -> [ProfileImportPreview] {
+    static func preview(_ source: URL, cookiePassword: Data? = nil) throws -> [ProfileImportPreview] {
         let values = try source.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
         guard values.isSymbolicLink != true else {
             throw Failure(message: "Choose the original folder or file, rather than a symbolic link.")
@@ -55,33 +58,61 @@ nonisolated enum ProfileImport {
             let session = source.appendingPathComponent("session.json")
             if FileManager.default.fileExists(atPath: session.path) { return try snapshot(session) }
             var item = ProfileImportPreview(name: source.lastPathComponent)
+            func attempt(_ label: String, _ operation: () throws -> Void) {
+                do { try operation() } catch { item.warnings.append(label + ": " + error.localizedDescription) }
+            }
             for name in ["History", "History.db"] {
                 let file = source.appendingPathComponent(name)
                 if FileManager.default.fileExists(atPath: file.path) {
-                    item.history = try databaseHistory(file)
+                    attempt("history") { item.history = try databaseHistory(file) }
                     break
                 }
             }
+            let places = source.appendingPathComponent("places.sqlite")
+            if FileManager.default.fileExists(atPath: places.path) {
+                attempt("Firefox history") { item.history = try firefoxHistory(places) }
+                attempt("Firefox bookmarks") { try firefoxBookmarks(places, into: &item) }
+            }
             let bookmarks = source.appendingPathComponent("Bookmarks")
             if FileManager.default.fileExists(atPath: bookmarks.path) {
-                let object = try JSONSerialization.jsonObject(with: read(bookmarks)) as? [String: Any]
-                if let roots = object?["roots"] as? [String: Any] {
-                    for key in roots.keys.sorted() { collectBookmarks(roots[key], into: &item, folder: nil, depth: 0) }
+                attempt("bookmarks") {
+                    let object = try JSONSerialization.jsonObject(with: read(bookmarks)) as? [String: Any]
+                    if let roots = object?["roots"] as? [String: Any] {
+                        for key in roots.keys.sorted() { collectBookmarks(roots[key], into: &item, folder: nil, depth: 0) }
+                    }
+                }
+            }
+            let safariBookmarks = source.appendingPathComponent("Bookmarks.plist")
+            if FileManager.default.fileExists(atPath: safariBookmarks.path) {
+                attempt("Safari bookmarks") {
+                    let object = try PropertyListSerialization.propertyList(from: read(safariBookmarks), options: [], format: nil)
+                    safariBookmarkTree(object, into: &item, folder: nil, depth: 0)
+                }
+            }
+            let firefoxCookies = source.appendingPathComponent("cookies.sqlite")
+            if FileManager.default.fileExists(atPath: firefoxCookies.path) {
+                attempt("Firefox cookies") { item.cookies = try firefoxCookieRows(firefoxCookies) }
+            }
+            for name in ["Cookies.binarycookies", "Cookies/Cookies.binarycookies"] {
+                let file = source.appendingPathComponent(name)
+                if FileManager.default.fileExists(atPath: file.path) {
+                    attempt("WebKit cookies") { item.cookies += try binaryCookies(file) }
+                    break
                 }
             }
             let cookieJSON = source.appendingPathComponent("cookies.json")
             if FileManager.default.fileExists(atPath: cookieJSON.path) {
-                item.cookies = try JSONDecoder().decode([CookieTransfer].self, from: read(cookieJSON))
+                attempt("cookies") { item.cookies += try JSONDecoder().decode([CookieTransfer].self, from: read(cookieJSON)) }
             } else {
                 for name in ["Cookies", "Network/Cookies"] {
                     let file = source.appendingPathComponent(name)
                     if FileManager.default.fileExists(atPath: file.path) {
-                        let result = try databaseCookies(file)
-                        item.cookies = result.cookies
-                        if result.encrypted > 0 {
-                            item.warnings.append(
-                                "\(result.encrypted) encrypted cookies cannot be imported from this database. Export readable cookies to cookies.json to include them."
-                            )
+                        attempt("Chromium cookies") {
+                            let result = try databaseCookies(file, password: cookiePassword)
+                            item.cookies += result.cookies
+                            if result.encrypted > 0 {
+                                item.warnings.append("\(result.encrypted) protected cookies weren’t read. Use unlock encrypted cookies for a supported macOS browser, or import a readable cookies.json export.")
+                            }
                         }
                         break
                     }
@@ -90,11 +121,17 @@ nonisolated enum ProfileImport {
             guard !item.isEmpty || !item.warnings.isEmpty else {
                 throw Failure(
                     message:
-                        "No supported browsing data found. Choose a profile folder containing History or History.db, or a loaf session JSON file."
+                        "No supported browsing data found. Choose a Chromium, Firefox, or WebKit profile folder, or an exported bookmarks/session file."
                 )
             }
             return [sanitize(item)]
         }
+        if source.pathExtension.lowercased() == "plist" {
+            var item = ProfileImportPreview(name: source.deletingPathExtension().lastPathComponent)
+            safariBookmarkTree(try PropertyListSerialization.propertyList(from: read(source), options: [], format: nil), into: &item, folder: nil, depth: 0)
+            return [sanitize(item)]
+        }
+        if source.pathExtension.lowercased() == "binarycookies" { return [sanitize(.init(name: "WebKit", cookies: try binaryCookies(source)))] }
         if source.pathExtension.lowercased() == "html" {
             return [
                 .init(
@@ -150,6 +187,7 @@ nonisolated enum ProfileImport {
             }.prefix(20_000))
         item.bookmarks = Array(item.bookmarks.filter { validURL($0.address) }.prefix(20_000))
         item.cookies = Array(item.cookies.filter { $0.cookie() != nil }.prefix(10_000))
+        item.tabs = Array(item.tabs.filter { $0.address.map(validURL) == true }.prefix(500))
         item.folders = Array(item.folders.prefix(1_000))
         let folderIDs = Set(item.folders.map(\.id))
         for index in item.bookmarks.indices
@@ -237,27 +275,164 @@ nonisolated enum ProfileImport {
                 count: max(1, min(1_000_000, Int(row[3]) ?? 1)))
         }
     }
-    private static func databaseCookies(_ file: URL) throws -> (cookies: [CookieTransfer], encrypted: Int) {
+    private static func databaseCookies(_ file: URL, password: Data?) throws -> (cookies: [CookieTransfer], encrypted: Int) {
         let rows = try query(
             file,
             sql:
-                "SELECT name, value, host_key, path, is_secure, is_httponly, expires_utc, length(encrypted_value) FROM cookies LIMIT 10000"
+                "SELECT name, value, host_key, path, is_secure, is_httponly, expires_utc, hex(encrypted_value) FROM cookies LIMIT 10000"
         )
+        let metadata = try? query(file, sql: "SELECT value FROM meta WHERE key='version'")
+        let requiresHostHash = (metadata?.first?.first.flatMap(Int.init) ?? 24) >= 24
         var cookies: [CookieTransfer] = []
         var encrypted = 0
         for row in rows where row.count == 8 {
-            if row[1].isEmpty && (Int(row[7]) ?? 0) > 0 {
-                encrypted += 1
-                continue
+            var value = row[1]
+            if value.isEmpty && !row[7].isEmpty {
+                guard let password, let decoded = decryptChromiumCookie(row[7], domain: row[2], password: password, requiresHostHash: requiresHostHash) else {
+                    encrypted += 1
+                    continue
+                }
+                value = decoded
             }
             let raw = Double(row[6]) ?? 0
             cookies.append(
                 .init(
-                    name: row[0], value: row[1], domain: row[2], path: row[3], secure: row[4] == "1",
+                    name: row[0], value: value, domain: row[2], path: row[3], secure: row[4] == "1",
                     httpOnly: row[5] == "1", expires: raw > 0 ? raw / 1_000_000 - 11_644_473_600 : nil))
         }
         return (cookies, encrypted)
     }
+    private static func firefoxHistory(_ file: URL) throws -> [Visit] {
+        try query(file, sql: "SELECT url, title, last_visit_date, visit_count FROM moz_places WHERE last_visit_date IS NOT NULL ORDER BY last_visit_date DESC LIMIT 20000").compactMap { row in
+            guard row.count == 4, let time = Double(row[2]) else { return nil }
+            return Visit(title: String(row[1].prefix(500)), address: row[0], date: Date(timeIntervalSince1970: time / 1_000_000), count: max(1, Int(row[3]) ?? 1))
+        }
+    }
+    private static func firefoxBookmarks(_ file: URL, into item: inout ProfileImportPreview) throws {
+        let rows = try query(file, sql: "SELECT b.id, b.parent, b.type, COALESCE(b.title, p.title, ''), COALESCE(p.url, '') FROM moz_bookmarks b LEFT JOIN moz_places p ON p.id=b.fk ORDER BY b.position LIMIT 20000")
+        var folders: [String: UUID] = [:]
+        for row in rows where row.count == 5 && row[2] == "2" && !row[3].isEmpty {
+            let folder = BookmarkFolder(name: String(row[3].prefix(80)))
+            folders[row[0]] = folder.id
+            item.folders.append(folder)
+        }
+        for row in rows where row.count == 5 && row[2] == "1" && validURL(row[4]) {
+            item.bookmarks.append(.init(title: String((row[3].isEmpty ? row[4] : row[3]).prefix(500)), address: row[4], folderID: folders[row[1]]))
+        }
+    }
+    private static func firefoxCookieRows(_ file: URL) throws -> [CookieTransfer] {
+        try query(file, sql: "SELECT name, value, host, path, isSecure, isHttpOnly, expiry FROM moz_cookies WHERE originAttributes='' LIMIT 10000").compactMap { row in
+            guard row.count == 7 else { return nil }
+            return .init(name: row[0], value: row[1], domain: row[2], path: row[3], secure: row[4] == "1", httpOnly: row[5] == "1", expires: Double(row[6]))
+        }
+    }
+    private static func safariBookmarkTree(_ object: Any, into item: inout ProfileImportPreview, folder: UUID?, depth: Int) {
+        guard depth < 20, item.bookmarks.count < 20_000, let node = object as? [String: Any] else { return }
+        if let url = node["URLString"] as? String, validURL(url) {
+            let title = (node["URIDictionary"] as? [String: Any])?["title"] as? String ?? node["Title"] as? String ?? url
+            item.bookmarks.append(.init(title: String(title.prefix(500)), address: url, folderID: folder))
+        } else if let children = node["Children"] as? [Any] {
+            var target = folder
+            if depth > 0, let name = node["Title"] as? String, !name.isEmpty, item.folders.count < 1_000 {
+                let new = BookmarkFolder(name: String(name.prefix(80)))
+                item.folders.append(new); target = new.id
+            }
+            for child in children { safariBookmarkTree(child, into: &item, folder: target, depth: depth + 1) }
+        }
+    }
+    static func decryptChromiumCookie(_ hex: String, domain: String, password: Data, requiresHostHash: Bool = true) -> String? {
+        guard hex.count <= 40_000, hex.count.isMultiple(of: 2) else { return nil }
+        var bytes = [UInt8](); var index = hex.startIndex
+        while index < hex.endIndex {
+            let end = hex.index(index, offsetBy: 2)
+            guard let byte = UInt8(hex[index..<end], radix: 16) else { return nil }
+            bytes.append(byte); index = end
+        }
+        guard bytes.starts(with: Array("v10".utf8)), bytes.count > 3 else { return nil }
+        var key = [UInt8](repeating: 0, count: 16)
+        let salt = Array("saltysalt".utf8)
+        let derived = password.withUnsafeBytes { ptr in
+            CCKeyDerivationPBKDF(CCPBKDFAlgorithm(kCCPBKDF2), ptr.bindMemory(to: Int8.self).baseAddress, password.count,
+                salt, salt.count, CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA1), 1003, &key, key.count)
+        }
+        guard derived == kCCSuccess else { return nil }
+        let ciphertext = Array(bytes.dropFirst(3)); let iv = [UInt8](repeating: 32, count: 16)
+        var decoded = [UInt8](repeating: 0, count: ciphertext.count + 16); var count = 0
+        let capacity = decoded.count
+        let status = CCCrypt(CCOperation(kCCDecrypt), CCAlgorithm(kCCAlgorithmAES), CCOptions(kCCOptionPKCS7Padding), key, key.count, iv, ciphertext, ciphertext.count, &decoded, capacity, &count)
+        guard status == kCCSuccess else { return nil }
+        var result = Data(decoded.prefix(count))
+        // Cookie DB version 24+ prepends a SHA-256 hash of host_key. Never strip an arbitrary prefix.
+        let hash = Data(SHA256.hash(data: Data(domain.utf8)))
+        if requiresHostHash {
+            guard result.starts(with: hash) else { return nil }
+            result = result.dropFirst(32)
+        }
+        return String(data: result, encoding: .utf8)
+    }
+    static func binaryCookies(_ file: URL) throws -> [CookieTransfer] {
+        let data = try read(file)
+        func uint(_ offset: Int, in bytes: Data, big: Bool = false) -> Int? {
+            guard offset >= 0, offset <= bytes.count - 4 else { return nil }
+            let b = Array(bytes[offset..<offset+4])
+            return big ? Int(b[0]) << 24 | Int(b[1]) << 16 | Int(b[2]) << 8 | Int(b[3]) : Int(b[3]) << 24 | Int(b[2]) << 16 | Int(b[1]) << 8 | Int(b[0])
+        }
+        guard data.starts(with: Data("cook".utf8)), let count = uint(4, in: data, big: true), count <= 10_000, 8 + count * 4 <= data.count else { throw Failure(message: "Invalid WebKit cookie file.") }
+        var result: [CookieTransfer] = []; var cursor = 8 + count * 4
+        for index in 0..<count {
+            guard let size = uint(8 + index * 4, in: data, big: true), size >= 8, cursor <= data.count - size else { throw Failure(message: "Truncated WebKit cookie page.") }
+            let page = Data(data[cursor..<cursor+size]); cursor += size
+            guard let cookies = uint(4, in: page), cookies <= 10_000, 8 + cookies * 4 <= page.count else { continue }
+            for cookieIndex in 0..<cookies where result.count < 10_000 {
+                guard let offset = uint(8 + cookieIndex * 4, in: page), let length = uint(offset, in: page), length >= 56, offset <= page.count - length else { continue }
+                let entry = Data(page[offset..<offset+length])
+                func string(_ field: Int) -> String? {
+                    guard let start = uint(field, in: entry), start >= 56, start < entry.count, let end = entry[start...].firstIndex(of: 0) else { return nil }
+                    return String(data: entry[start..<end], encoding: .utf8)
+                }
+                guard let domain = string(16), let name = string(20), let path = string(24), let value = string(28), let flags = uint(8, in: entry) else { continue }
+                let bits = entry[40..<48].enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << ($1.offset * 8) }
+                let expires = Double(bitPattern: bits) + 978_307_200
+                result.append(.init(name: name, value: value, domain: domain, path: path, secure: flags & 1 != 0, httpOnly: flags & 4 != 0, expires: expires))
+            }
+        }
+        return result
+    }
+    static func arcSpaces(_ file: URL) throws -> [ProfileImportPreview] {
+        guard let object = try JSONSerialization.jsonObject(with: read(file)) as? [String: Any],
+            let state = object["sidebarSyncState"] as? [String: Any], let rawSpaces = state["spaceModels"] as? [Any], let rawItems = state["items"] as? [Any] else {
+            throw Failure(message: "This Arc sidebar format isn’t supported. Export bookmarks from Arc instead.")
+        }
+        func values(_ raw: [Any]) -> [[String: Any]] { raw.compactMap { ($0 as? [String: Any])?["value"] as? [String: Any] } }
+        let spaces = values(rawSpaces); let items = values(rawItems)
+        var byID: [String: [String: Any]] = [:]
+        for item in items { if let id = item["id"] as? String { byID[id] = item } }
+        return spaces.prefix(100).compactMap { space in
+            guard let name = space["title"] as? String, let id = space["id"] as? String else { return nil }
+            var roots = Set(space["containerIDs"] as? [String] ?? [])
+            for item in items {
+                if let data = item["data"] as? [String: Any], let container = data["itemContainer"] as? [String: Any], let type = container["containerType"] as? [String: Any], let spaceItems = type["spaceItems"] as? [String: Any], spaceItems["_0"] as? String == id, let itemID = item["id"] as? String { roots.insert(itemID) }
+            }
+            var preview = ProfileImportPreview(name: name)
+            func belongs(_ item: [String: Any]) -> Bool {
+                var parent = item["parentID"] as? String; var seen = Set<String>()
+                while let current = parent, seen.insert(current).inserted, seen.count <= 100 {
+                    if roots.contains(current) { return true }
+                    parent = byID[current]?["parentID"] as? String
+                }
+                return false
+            }
+            for item in items where belongs(item) {
+                guard let data = item["data"] as? [String: Any], let tab = data["tab"] as? [String: Any], let url = tab["savedURL"] as? String, validURL(url) else { continue }
+                let title = item["title"] as? String ?? tab["savedTitle"] as? String ?? url
+                preview.bookmarks.append(.init(title: title, address: url))
+                preview.tabs.append(SavedTab(title: title, address: url))
+            }
+            preview.warnings = ["Each Arc space becomes a separate loaf profile. Its saved tabs and bookmarks are imported; browser-profile history and cookies are available separately."]
+            return sanitize(preview)
+        }
+    }
+
 }
 
 extension BrowserWindowState {
@@ -309,6 +484,12 @@ extension BrowserWindowState {
             for item in preview.cookies { if let cookie = item.cookie() { await jar.setCookie(cookie) } }
         }
         if newProfile { switchProfile(destination) }
+        for saved in preview.tabs {
+            if let address = saved.address, let url = URL(string: address) {
+                let tab = newTab(url: url, profileID: destination, showOmnibar: false, activate: false)
+                tab.customTitle = saved.title
+            }
+        }
         persist()
     }
 }

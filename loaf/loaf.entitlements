@@ -25,5 +25,14 @@
         <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
         <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
 	</array>
+    <key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+    <array>
+        <string>Library/Application Support/</string>
+        <string>Library/Safari/</string>
+        <string>Library/Containers/</string>
+        <string>Library/Group Containers/</string>
+        <string>Library/Cookies/</string>
+        <string>Applications/</string>
+    </array>
 </dict>
 </plist>

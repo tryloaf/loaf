@@ -6,7 +6,7 @@ struct ChromePalette {
     var sample: NSColor? = nil
     var privateMode = false
     var primary: Color { Color(white: dark ? 0.94 : 0.08) }
-    var secondary: Color { Color(white: dark ? 0.72 : 0.32) }
+    var secondary: Color { Color(white: dark ? 0.81 : 0.32) }
     var barSurface: Color {
         privateMode
             ? PrivateChrome.base

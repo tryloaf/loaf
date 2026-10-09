@@ -169,7 +169,7 @@ struct ContentView: View {
                                                                     : 0)))
                                                 )
                                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                                .id(store.visibleSplit?.left ?? tab.id)
+                                                .id(store.visibleSplit.map { "split:\($0.left):\($0.right)" } ?? "tab:\(tab.id)")
                                             }
                                             if tab.loading {
                                                 GeometryReader { proxy in

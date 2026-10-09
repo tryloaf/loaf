@@ -24,7 +24,6 @@ struct HistoryView: View {
     @StateObject private var presentation: HistoryPresentation
     @State private var selection = HistorySelection()
     @State private var clearVisible = false
-    @State private var cookieVisible = false
     @State private var cookies: [HTTPCookie] = []
     @FocusState private var listFocused: Bool
     init(store: BrowserStore) {
@@ -50,7 +49,7 @@ struct HistoryView: View {
                 }.controlSize(.small).disabled(ordered.isEmpty || presentation.isBusy)
                     .help("select all visits matching this search")
                 Button {
-                    cookieVisible = true
+                    store.showPage(.cookies)
                 } label: {
                     Label {
                         Text("cookies")
@@ -136,16 +135,6 @@ struct HistoryView: View {
                 }
                 ClearingView(store: store)
             }.padding(24).frame(width: 480)
-        }
-        .sheet(isPresented: $cookieVisible, onDismiss: { Task { await refreshCookies() } }) {
-            VStack {
-                HStack {
-                    Text("cookies · " + store.profile.name).font(.title3)
-                    Spacer()
-                    Button("done") { cookieVisible = false }
-                }
-                ScrollView { CookieManagerView(store: store) }
-            }.padding(24).frame(width: 640, height: 520)
         }
     }
     private func historyRow(_ row: HistoryPresentation.Row, visitIDs: Set<UUID>) -> some View {
@@ -384,7 +373,7 @@ struct CookiePage: View {
     var body: some View {
         VStack(spacing: 0) {
             LibraryHeader(title: "cookies", icon: .cookie)
-            ScrollView { CookieManagerView(store: store).frame(maxWidth: 680).padding(24).frame(maxWidth: .infinity) }
+            CookieManagerView(store: store)
         }
     }
 }

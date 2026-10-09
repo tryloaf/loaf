@@ -36,6 +36,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     weak var store: BrowserStore?
     let passwordSuggestions = PasswordSuggestionState()
     private(set) var existingWebView: WKWebView?
+    weak var webViewHost: WebViewHost.HostView?
     private var disposedWebView: WKWebView?
     private var pendingConfiguration: WKWebViewConfiguration?
     private(set) var isDisposed = false
@@ -372,7 +373,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         guard let store, let webView = existingWebView, let origin = BrowserAddress.websiteOrigin(url) else { return }
         let settings =
             store.profileFor(profileID).siteSettings?[origin]
-            ?? SiteSettings(userAgent: store.preferences.userAgentMode ?? .desktop)
+            ?? SiteSettings(userAgent: store.preferences.userAgentMode ?? .desktop, customUserAgent: store.preferences.customUserAgent)
         if webView.pageZoom != settings.zoom { webView.pageZoom = settings.zoom }
         let userAgent = DesktopIdentity.userAgent(
             mode: settings.userAgent,
@@ -864,7 +865,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         guard let liveView = existingWebView, message.webView === liveView, page == .web else { return }
         guard let body = message.body as? [String: Any] else { return }
         if message.name == "loafShortcut", let key = body["key"] as? String {
-            (store?.nativeWindow as? LoafBrowserWindow)?.siteClaimedShortcut(key, tabID: id)
+            (store?.nativeWindow as? LoafBrowserWindow)?.siteClaimedShortcut(key, tabID: id, claimed: body["claimed"] as? Bool ?? true)
             return
         }
         if message.name == "loafStore" {

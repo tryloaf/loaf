@@ -182,6 +182,7 @@ struct SplitDivider: NSViewRepresentable {
         }
         override func mouseEntered(with event: NSEvent) {
             hovered = true
+            NSCursor.resizeLeftRight.set()
             needsDisplay = true
         }
         override func mouseExited(with event: NSEvent) {
@@ -213,6 +214,7 @@ struct SplitDivider: NSViewRepresentable {
             needsDisplay = true
         }
         override func mouseDragged(with event: NSEvent) {
+            NSCursor.resizeLeftRight.set()
             guard let store, let start = dragStart, store.visibleSplit?.left == start.left,
                 store.visibleSplit?.right == start.right
             else {

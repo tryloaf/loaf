@@ -59,6 +59,7 @@ struct ProfileTransparencyControl: View {
                     )
                     .animation(reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.8), value: dragging)
             }.frame(height: height)
+                .background(CursorRegion(cursor: dragging ? .closedHand : .openHand))
                 .focusable().focused($focused).focusEffectDisabled()
                 .onKeyPress(.leftArrow) {
                     shift(-0.025)

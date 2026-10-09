@@ -10,6 +10,7 @@ struct OnboardingView: View {
     @State private var name = "personal"
     @State private var previewDark = false
     @State private var icon = "🌱"
+    @State private var importVisible = false
     @State private var appearanceDemo: AppearancePreviewOption?
     init(store: BrowserStore, initialStep: Int = 0) {
         self.store = store
@@ -79,8 +80,8 @@ struct OnboardingView: View {
     private var themePreviews: some View {
         VStack(alignment: .leading, spacing: 8) {
             Picker("preview", selection: $previewDark) {
-                Text("light").tag(false)
-                Text("dark").tag(true)
+                Text("Light").tag(false)
+                Text("Dark").tag(true)
             }.pickerStyle(.segmented).labelsHidden()
             ProfileThemePreview(
                 height: 154, color: profileTint(store.profile),
@@ -91,9 +92,9 @@ struct OnboardingView: View {
             .fixedSize(horizontal: false, vertical: true)
             Text("appearance").fontWeight(.medium)
             Picker("appearance", selection: $appearance) {
-                Text("system").tag("system")
-                Text("light").tag("light")
-                Text("dark").tag("dark")
+                Text("System").tag("system")
+                Text("Light").tag("light")
+                Text("Dark").tag("dark")
             }.pickerStyle(.segmented).labelsHidden()
             Divider()
             option("sidebar-only titlebar") {
@@ -191,7 +192,7 @@ struct OnboardingView: View {
                             store.persistSoon()
                         })
                 ) {
-                    Text("none").tag(Optional<AIProvider>.none)
+                    Text("None").tag(Optional<AIProvider>.none)
                     ForEach(AppleIntelligence.visibleProviders, id: \.self) { Text($0.title).tag(Optional($0)) }
                 }.frame(width: 200)
             }
@@ -287,6 +288,10 @@ struct OnboardingView: View {
                                 shortcut("⌘S", "show or hide the sidebar")
                             }.padding(22).background(ink.opacity(0.045), in: RoundedRectangle(cornerRadius: 16))
                                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(ink.opacity(0.08)))
+                            Button("import from another browser…") { importVisible = true }
+                                .controlSize(.large)
+                            Text("choose installed browsers, profiles and Arc spaces. importing is optional.")
+                                .font(.system(size: 12)).foregroundStyle(ink.opacity(0.6))
                             Text("settings are available from the loaf menu.").font(.system(size: 12)).foregroundStyle(
                                 ink.opacity(0.6))
                         }
@@ -324,7 +329,7 @@ struct OnboardingView: View {
         .onChange(of: store.selectedProfileID) { _, _ in
             name = store.profile.name
             icon = store.profile.emoji
-        }
+        }.sheet(isPresented: $importVisible) { ProfileImportView(store: store) }
     }
     private func advance() {
         if step == 1 {
@@ -377,7 +382,7 @@ struct OnboardingSearchEnginePicker: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(selection: $selection) }
     func makeNSView(context: Context) -> NSPopUpButton {
         let button = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 24), pullsDown: false)
-        button.addItems(withTitles: SearchEngine.allCases.map(\.title))
+        button.addItems(withTitles: SearchEngine.available.map(\.title))
         button.controlSize = .small
         button.font = .systemFont(ofSize: 12)
         (button.cell as? NSPopUpButtonCell)?.alignment = .left
@@ -388,7 +393,7 @@ struct OnboardingSearchEnginePicker: NSViewRepresentable {
     }
     func updateNSView(_ button: NSPopUpButton, context: Context) {
         context.coordinator.selection = $selection
-        if let index = SearchEngine.allCases.firstIndex(of: selection), button.indexOfSelectedItem != index {
+        if let index = SearchEngine.available.firstIndex(of: selection), button.indexOfSelectedItem != index {
             button.selectItem(at: index)
         }
         (button.cell as? NSPopUpButtonCell)?.alignment = .left
@@ -397,8 +402,8 @@ struct OnboardingSearchEnginePicker: NSViewRepresentable {
         var selection: Binding<SearchEngine>
         init(selection: Binding<SearchEngine>) { self.selection = selection }
         @objc func changed(_ button: NSPopUpButton) {
-            guard SearchEngine.allCases.indices.contains(button.indexOfSelectedItem) else { return }
-            selection.wrappedValue = SearchEngine.allCases[button.indexOfSelectedItem]
+            guard SearchEngine.available.indices.contains(button.indexOfSelectedItem) else { return }
+            selection.wrappedValue = SearchEngine.available[button.indexOfSelectedItem]
         }
     }
 }

@@ -16,7 +16,6 @@ struct SettingsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var city = ""
-    @State private var cookieManager = false
     @State private var importVisible = false
     @State private var editing: UUID?
     @State private var extensionAddress = ""
@@ -268,16 +267,6 @@ struct SettingsView: View {
             .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
                 if let editing { ProfileEditor(store: store, profileID: editing) }
             }
-            .sheet(isPresented: $cookieManager) {
-                VStack {
-                    HStack {
-                        Text("cookies · \(store.profile.name)").font(.title3)
-                        Spacer()
-                        Button("done") { cookieManager = false }
-                    }
-                    ScrollView { CookieManagerView(store: store) }
-                }.padding(24).frame(width: 640, height: 520)
-            }
             .sheet(isPresented: $importVisible) { ProfileImportView(store: store) }
     }
     private var compactHeading: some View {
@@ -309,8 +298,8 @@ struct SettingsView: View {
         Group {
             Section("tabs & startup") {
                 Picker("pinned tabs", selection: optional(\.pinnedLayout, fallback: "grid")) {
-                    Text("grid").tag("grid")
-                    Text("list").tag("list")
+                    Text("Grid").tag("grid")
+                    Text("List").tag("list")
                 }.id("pinned-layout")
                 Toggle("restore windows and tabs on launch", isOn: optional(\.restoreSession, fallback: true)).id(
                     "restore")
@@ -335,7 +324,7 @@ struct SettingsView: View {
                     of: store.preferences.powerSaver
                 ) { _, _ in store.application.resources.refreshBattery() }
                 Picker("enable on battery below", selection: optional(\.powerSaverThreshold, fallback: 0)) {
-                    Text("never").tag(0)
+                    Text("Never").tag(0)
                     ForEach([10, 20, 30, 50], id: \.self) { Text("\($0)%").tag($0) }
                 }.onChange(of: store.preferences.powerSaverThreshold) { _, _ in
                     store.application.resources.refreshBattery()
@@ -392,11 +381,11 @@ struct SettingsView: View {
                         city.trimmingCharacters(in: .whitespacesAndNewlines) == store.preferences.weatherCity)
                 }.id("weather")
                 Picker("temperature", selection: $store.preferences.fahrenheit) {
-                    Text("fahrenheit · °F").tag(true)
-                    Text("celsius · °C").tag(false)
+                    Text("Fahrenheit · °F").tag(true)
+                    Text("Celsius · °C").tag(false)
                 }.onChange(of: store.preferences.fahrenheit) { _, _ in refreshWeather() }
                 Picker("provider", selection: optional(\.weatherProvider, fallback: "automatic")) {
-                    Text("automatic").tag("automatic")
+                    Text("Automatic").tag("automatic")
                     Text("Open-Meteo").tag("open-meteo")
                 }.onChange(of: store.preferences.weatherProvider) { _, _ in refreshWeather() }
                 Text(
@@ -423,9 +412,9 @@ struct SettingsView: View {
         Group {
             Section("window") {
                 Picker("theme", selection: $appearance) {
-                    Text("system").tag("system")
-                    Text("light").tag("light")
-                    Text("dark").tag("dark")
+                    Text("System").tag("system")
+                    Text("Light").tag("light")
+                    Text("Dark").tag("dark")
                 }.pickerStyle(.segmented).id("appearance")
                 Toggle(
                     "sidebar-only titlebar",
@@ -514,7 +503,7 @@ struct SettingsView: View {
     @ViewBuilder private var search: some View {
         Section("search engine") {
             Picker("search engine", selection: optional(\.searchEngine, fallback: .google)) {
-                ForEach(SearchEngine.allCases, id: \.self) { Text($0.title).tag($0) }
+                ForEach(SearchEngine.available, id: \.self) { Text($0.title).tag($0) }
             }
             if store.preferences.searchEngine == .custom {
                 TextField("HTTPS search URL with {query}", text: optional(\.customSearchTemplate, fallback: ""))
@@ -523,13 +512,6 @@ struct SettingsView: View {
                     Text("include one {query} placeholder in the path or query of an HTTPS URL").font(.caption)
                         .foregroundStyle(.secondary)
                 }
-            }
-        }
-        if store.preferences.searchEngine == .googleAIOverview {
-            Section {
-                Text(
-                    "opens Google Search. Google decides when an AI Overview is available; some queries show regular results."
-                ).font(.caption).foregroundStyle(.secondary)
             }
         }
         Section("wonderbar") {
@@ -548,7 +530,7 @@ struct SettingsView: View {
             Toggle("enable alternate search shortcut", isOn: redirectBinding(\.enabled)).id("alternate-search")
             Picker("provider", selection: redirectBinding(\.provider)) {
                 ForEach(
-                    SearchRedirect.Provider.allCases.filter {
+                    SearchRedirect.availableProviders.filter {
                         $0 != .appleIntelligence || AppleIntelligence.visibleProviders.contains(.onDevice)
                     }, id: \.self
                 ) {
@@ -579,10 +561,6 @@ struct SettingsView: View {
             if store.preferences.alternateSearch?.provider == .chatgpt {
                 Text("this shortcut uses ChatGPT, regardless of the answer provider below.").font(.caption)
                     .foregroundStyle(.secondary)
-            }
-            if store.preferences.alternateSearch?.provider == .googleAIOverview {
-                Text("Google decides when an AI Overview is available for a query.").font(.caption).foregroundStyle(
-                    .secondary)
             }
             Text(
                 "the shortcut searches your wonderbar text with this provider. return keeps its usual behavior. queries are sent only when you submit."
@@ -684,22 +662,26 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 ForEach((store.profile.siteSettings ?? [:]).keys.sorted(), id: \.self) { origin in
-                    HStack {
-                        Text(BrowserAddress.visible(origin)).font(.system(size: 12)).lineLimit(1)
-                        Spacer()
-                        Toggle(
-                            "downloads",
-                            isOn: Binding(
-                                get: { store.profile.siteSettings?[origin]?.downloads != false },
-                                set: { allowed in
-                                    store.updateCurrent { profile in
-                                        profile.siteSettings?[origin]?.downloads = allowed
-                                    }
-                                }
-                            )
-                        ).toggleStyle(.switch).controlSize(.mini).fixedSize()
-                        Button("reset") { store.updateCurrent { $0.siteSettings?.removeValue(forKey: origin) } }
-                    }
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top, spacing: 12) {
+                            WebsiteIcon(url: URL(string: origin), store: store)
+                            Text(BrowserAddress.visible(origin)).font(.system(size: 13, weight: .medium))
+                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Button("reset") { store.updateCurrent { $0.siteSettings?.removeValue(forKey: origin) } }
+                                .controlSize(.small)
+                        }
+                        Toggle("downloads", isOn: Binding(
+                            get: { store.profile.siteSettings?[origin]?.downloads != false },
+                            set: { allowed in store.updateCurrent { $0.siteSettings?[origin]?.downloads = allowed } }
+                        )).toggleStyle(.switch).controlSize(.small)
+                        if let settings = store.profile.siteSettings?[origin] {
+                            Text("JavaScript \(settings.javascript ? "on" : "off") · zoom \(Int(settings.zoom * 100))% · \(settings.userAgent.title)")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }.padding(.vertical, 4)
+
                 }
                 Text("macOS permissions remain authoritative for camera and microphone access.").font(.caption)
                     .foregroundStyle(.secondary)
@@ -753,7 +735,7 @@ struct SettingsView: View {
                 Text("choose whether sites can save cookies in this profile. remove existing cookies below.").font(
                     .caption
                 ).foregroundStyle(.secondary)
-                Button("manage cookies…") { cookieManager = true }.id("cookies")
+                Button("manage cookies…") { store.showPage(.cookies); store.application.coordinator?.activateBrowser() }.id("cookies")
             }
             Section("clear data") { ClearingView(store: store).id("clear") }
 
@@ -810,15 +792,18 @@ struct SettingsView: View {
                             }
                         }
                     }
-                Picker("web inspector", selection: optional(\.inspectorMode, fallback: .detached)) {
-                    Text("separate window").tag(InspectorMode.detached)
-                    Text("inline").tag(InspectorMode.inline)
+                Picker("web inspector", selection: optional(\.inspectorMode, fallback: .inline)) {
+                    Text("Separate window").tag(InspectorMode.detached)
+                    Text("Inline").tag(InspectorMode.inline)
                 }.settingDisabled(store.preferences.developerMenu != true).id("inspector-mode")
                 Text("choose where the inspector opens.").font(.caption).foregroundStyle(.secondary)
                 Picker("default browser identity", selection: optional(\.userAgentMode, fallback: .desktop)) {
-                    Text("desktop Safari").tag(UserAgentMode.desktop)
-                    Text("automatic").tag(UserAgentMode.automatic)
+                    ForEach(UserAgentMode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }.id("identity")
+                if store.preferences.userAgentMode == .custom {
+                    TextField("custom user agent", text: optional(\.customUserAgent, fallback: ""))
+                        .textFieldStyle(.roundedBorder)
+                }
                 Text(
                     Golzheim.available
                         ? "\(PersonalIcon.catalog.count) personalization icons"

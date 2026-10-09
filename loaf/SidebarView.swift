@@ -67,7 +67,7 @@ struct SidebarView: View {
             tray
 
         }
-        .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: store.extensionsVisible)
+        .animation(nil, value: store.extensionsVisible)
         .animation(
             reduceMotion ? nil : .smooth(duration: 0.2), value: store.profile.personalization?.compactSidebarWeather
         )
@@ -242,7 +242,7 @@ struct SidebarView: View {
             ).id(store.selectedProfileID)
         )
         .padding(.horizontal, 8).padding(.bottom, 8)
-        .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: store.extensionsVisible)
+        .animation(nil, value: store.extensionsVisible)
         .accessibilityElement(children: .contain).accessibilityLabel(trayProgress == 0 ? "sidebar controls" : "tray")
     }
     @ViewBuilder private var extensionStrip: some View {
@@ -279,10 +279,10 @@ struct SidebarView: View {
                 Button {
                     store.showPage(.extensions)
                 } label: {
-                    GolzheimIcon(icon: .settings, size: 14).frame(width: 24, height: 28)
+                    GolzheimIcon(icon: .settings, size: 14).frame(width: 26, height: 28)
                 }
                 .buttonStyle(LoafButtonStyle()).help("manage extensions").accessibilityLabel("manage extensions")
-            }.padding(.horizontal, 8).padding(.top, 3).padding(.bottom, 1)
+            }.padding(.leading, 8).padding(.trailing, 0).padding(.top, 3).padding(.bottom, 1)
                 .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 6)).padding(.horizontal, 8)
                 .accessibilityElement(children: .contain).accessibilityLabel("extension tray")
         }
@@ -520,12 +520,6 @@ struct TabListContent: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: slot)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: entries.map(\.id))
-        .transaction {
-            if store.rapidTabClosing {
-                $0.animation = nil
-                $0.disablesAnimations = true
-            }
-        }
         .id(store.selectedProfileID)
         .transition(
             reduceMotion
@@ -546,7 +540,7 @@ struct TabRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var selected: Bool { store.profile.selectedTab == tab.id || store.selectedSidebarTabIDs.contains(tab.id) }
     private var hasStatus: Bool { tab.loading || tab.media.contains(where: { !$0.paused }) }
-    private var accessoriesVisible: Bool { hovered || store.tabCloseTargetID == tab.id }
+    private var accessoriesVisible: Bool { hovered }
     private var accessoryWidth: CGFloat {
         (hasStatus ? 12 : 0)
             + (accessoriesVisible ? (store.isPersistentTab(tab) && !tab.pinned ? 46 : 20) + (hasStatus ? 8 : 0) : 0)
@@ -595,7 +589,7 @@ struct TabRow: View {
                         } label: {
                             GolzheimIcon(icon: tab.media.allSatisfy(\.muted) ? .muted : .volume, size: 12)
                                 .foregroundStyle(.secondary).frame(width: 20, height: 20)
-                        }.buttonStyle(.plain).accessibilityLabel(
+                        }.buttonStyle(PlayerActionStyle(outline: false)).accessibilityLabel(
                             tab.media.allSatisfy(\.muted) ? "unmute tab" : "mute tab")
                     }
                     if tab.sleeping {
