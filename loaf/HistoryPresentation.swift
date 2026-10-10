@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import NaturalLanguage
 
 private actor HistoryPreparationWorker {
     nonisolated struct Prepared: Sendable {
@@ -56,7 +57,8 @@ private actor HistoryPreparationWorker {
 private actor HistorySearchWorker {
     private var revision: UInt64?
     private var minimumRevision: UInt64 = 0
-    private var texts: [(NSString, NSString)] = []
+    private var texts: [LocalPageSearch.Document] = []
+    private lazy var embedding = NLEmbedding.wordEmbedding(for: .english)
 
     func discard(before revision: UInt64) {
         minimumRevision = max(minimumRevision, revision)
@@ -68,19 +70,20 @@ private actor HistorySearchWorker {
     func matches(_ visits: [Visit], revision: UInt64, query: String) -> [Int]? {
         guard !Task.isCancelled, revision >= minimumRevision else { return nil }
         if self.revision != revision {
-            var prepared: [(NSString, NSString)] = []
+            var prepared: [LocalPageSearch.Document] = []
             prepared.reserveCapacity(visits.count)
             for (index, visit) in visits.enumerated() {
                 if index % 128 == 0, Task.isCancelled { return nil }
-                prepared.append((visit.title as NSString, visit.address as NSString))
+                prepared.append(LocalPageSearch.Document(title: visit.title, address: visit.address))
             }
             texts = prepared
             self.revision = revision
         }
+        let query = LocalPageSearch.Query(query, embedding: embedding)
         var matches: [Int] = []
         for (index, text) in texts.enumerated() {
             if index % 128 == 0, Task.isCancelled { return nil }
-            if text.0.localizedCaseInsensitiveContains(query) || text.1.localizedCaseInsensitiveContains(query) {
+            if text.score(query) != nil {
                 matches.append(index)
             }
         }
@@ -98,11 +101,9 @@ private actor HistorySearchWorker {
         lazy var title = visit.title.isEmpty ? BrowserAddress.suggestionLabel(url) : BrowserAddress.visible(visit.title)
         lazy var dateText = "visited: " + visit.date.formatted(date: .numeric, time: .shortened)
 
-        private lazy var searchTitle = visit.title as NSString
-        private lazy var searchAddress = visit.address as NSString
-        func matches(_ query: String) -> Bool {
-            searchTitle.localizedCaseInsensitiveContains(query) || searchAddress.localizedCaseInsensitiveContains(query)
-        }
+        private lazy var searchDocument = LocalPageSearch.Document(title: visit.title, address: visit.address)
+        func matches(_ query: String) -> Bool { searchDocument.score(LocalPageSearch.Query(query)) != nil }
+        func matches(_ query: LocalPageSearch.Query) -> Bool { searchDocument.score(query) != nil }
         var id: UUID { visit.id }
         init(visit: Visit, day: Date) {
             self.visit = visit
@@ -182,6 +183,7 @@ private actor HistorySearchWorker {
     private var unfilteredSections: [Section] = []
     private var unfilteredOrdered: [UUID] = []
     private var subscriptions = Set<AnyCancellable>()
+    private lazy var embedding = NLEmbedding.wordEmbedding(for: .english)
     private let searchWorker = HistorySearchWorker()
     private let preparationWorker = HistoryPreparationWorker()
     private var searchTask: Task<Void, Never>?
@@ -320,7 +322,8 @@ private actor HistorySearchWorker {
         }
         guard rows.count > 512 else {
             isSearching = false
-            publish(rows.filter { query.isEmpty || $0.matches(query) })
+            let search = LocalPageSearch.Query(query, embedding: embedding)
+            publish(rows.filter { $0.matches(search) })
             return
         }
         isSearching = true
@@ -380,5 +383,55 @@ private actor HistorySearchWorker {
             suffix = String(suffix[suffix.index(after: dot)...])
         }
         return count
+    }
+}
+
+nonisolated struct HistoryMenuSections {
+    struct Group {
+        let title: String
+        let visits: [Visit]
+    }
+    let recent: [Visit]
+    let sessions: [Group]
+    let days: [Group]
+    let weeks: [Group]
+    init(visits: [Visit], currentSession: UUID, now: Date = Date(), calendar: Calendar = .current) {
+        let visits = visits.sorted { $0.date > $1.date }
+        var seen = Set<String>()
+        recent = Array(visits.filter { seen.insert($0.address).inserted }.prefix(10))
+        let recentIDs = Set(recent.map(\.id))
+        let remaining = visits.filter { !recentIDs.contains($0.id) }
+        let today = calendar.startOfDay(for: now)
+        let weekAgo = calendar.date(byAdding: .day, value: -7, to: today) ?? today
+        var sessionVisits: [[Visit]] = []
+        for visit in remaining where visit.date >= today {
+            if let last = sessionVisits.last?.last,
+                (visit.sessionID != nil
+                    ? visit.sessionID == last.sessionID : last.date.timeIntervalSince(visit.date) < 1800)
+            {
+                sessionVisits[sessionVisits.count - 1].append(visit)
+            } else {
+                sessionVisits.append([visit])
+            }
+        }
+        sessions = sessionVisits.prefix(8).map { group in
+            Group(
+                title: group[0].sessionID == currentSession
+                    ? "earlier this session" : group[0].date.formatted(date: .omitted, time: .shortened), visits: group)
+        }
+        let byDay = Dictionary(grouping: remaining.filter { $0.date < today && $0.date >= weekAgo }) {
+            calendar.startOfDay(for: $0.date)
+        }
+        days = byDay.keys.sorted(by: >).map { day in
+            Group(
+                title: calendar.isDateInYesterday(day)
+                    ? "yesterday" : day.formatted(.dateTime.weekday(.wide).month().day()), visits: byDay[day]!)
+        }
+        let byWeek = Dictionary(grouping: remaining.filter { $0.date < weekAgo }) {
+            calendar.dateInterval(of: .weekOfYear, for: $0.date)?.start ?? calendar.startOfDay(for: $0.date)
+        }
+        weeks = byWeek.keys.sorted(by: >).prefix(12).map { week in
+            Group(title: "week of " + week.formatted(.dateTime.month().day()), visits: byWeek[week]!)
+        }
     }
 }

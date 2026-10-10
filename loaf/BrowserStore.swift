@@ -58,7 +58,10 @@ import WebKit
         get { false }
         set { if newValue { application.coordinator?.showSettings(for: self) } }
     }
-    @Published var draggedTabID: UUID?
+    @Published var draggedTabID: UUID? {
+        didSet { if draggedTabID == nil { pinDropPreview = nil } }
+    }
+    @Published var pinDropPreview: PinDropPreview?
     @Published var hoveredSidebar = false
     @Published var profileDirection = 0
     @Published var profileResistance: CGFloat = 0
@@ -81,29 +84,20 @@ import WebKit
         didSet {
             guard sidebarVisible != oldValue else { return }
             hoveredSidebar = false
-            sidebarTransitionGeneration += 1
-            let generation = sidebarTransitionGeneration
             let visible = sidebarVisible
             let host = selectedTab?.existingWebView?.superview as? WebViewHost.HostView
             guard sidebarPresented != visible else {
                 host?.cancelResizeSnapshot()
                 return
             }
-            sidebarRevealReadyAt = .infinity
-            let present = { [weak self] in
-                guard let self, self.sidebarTransitionGeneration == generation else { return }
-                self.sidebarPresented = visible
-                self.sidebarRevealReadyAt = ProcessInfo.processInfo.systemUptime + (visible ? 0 : 0.26)
-            }
             if let host, preferences.resizeTransition != false {
-                host.beginResizeSnapshot { DispatchQueue.main.async { present() } }
-            } else {
-                present()
+                host.beginResizeSnapshot()
             }
+            sidebarPresented = visible
+            sidebarRevealReadyAt = ProcessInfo.processInfo.systemUptime + (visible ? 0 : SidebarMotion.duration)
         }
     }
     @Published private(set) var sidebarPresented = true
-    private var sidebarTransitionGeneration = 0
     var usesSidebarOnlyChrome: Bool { preferences.sidebarOnlyChrome != false }
     var compactToolbarHeight: CGFloat { !sidebarPresented && !usesSidebarOnlyChrome ? 32 : 0 }
     var pageEdgeInset: CGFloat {
@@ -812,7 +806,7 @@ import WebKit
             var order = sidebarEntries.compactMap { entry -> UUID? in
                 switch entry {
                 case .group(let group): return group.isPinned ? nil : group.id
-                case .tab(let tab): return tab.groupID == nil ? tab.id : nil
+                case .tab(let tab): return !tab.pinned && tab.groupID == nil ? tab.id : nil
                 case .newTab: return nil
                 }
             }
@@ -854,7 +848,8 @@ import WebKit
 
         guard url.user == nil, url.password == nil else { return }
         updateProfile(tab.profileID) { profile in
-            profile.history.insert(Visit(title: tab.title, address: url.absoluteString), at: 0)
+            profile.history.insert(
+                Visit(title: tab.title, address: url.absoluteString, sessionID: application.browsingSessionID), at: 0)
             profile.history = Array(profile.history.prefix(50_000))
         }
         persistSoon()

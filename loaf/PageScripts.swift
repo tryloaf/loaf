@@ -77,6 +77,17 @@ enum PageScripts {
           const elements = new Map();
           const presented = new Map();
           const identities = new WeakMap();
+          const volumeStates = new WeakMap();
+          let playerVolume = null;
+          const prepareVolume = el => {
+            let state = volumeStates.get(el);
+            if (!state) {
+              state = { startedMuted: el.muted || el.volume === 0, adjusted: !el.muted && el.volume > 0 && el.volume < 1 };
+              volumeStates.set(el, state);
+            }
+            if (playerVolume !== null) el.volume = playerVolume;
+            else if (!state.adjusted) el.volume = 1;
+          };
           let next = 0;
           let scheduled = false;
           const send = () => {
@@ -121,7 +132,14 @@ enum PageScripts {
               let id = identities.get(el);
               if (!id) {
                 id = String(++next); identities.set(el, id);
-                for (const event of ['play','pause','ended','volumechange','loadedmetadata','emptied']) el.addEventListener(event, schedule);
+                volumeStates.set(el, { startedMuted: el.muted || el.volume === 0, adjusted: !el.muted && el.volume > 0 && el.volume < 1 });
+                el.addEventListener('volumechange', () => {
+                  const state = volumeStates.get(el);
+                  if (!el.muted && el.volume > 0 && el.volume < 1) state.adjusted = true;
+                  schedule();
+                });
+                el.addEventListener('play', () => { if (volumeStates.get(el).startedMuted && !volumeStates.get(el).adjusted && playerVolume === null) el.volume = 1; schedule(); });
+                for (const event of ['pause','ended','loadedmetadata','emptied']) el.addEventListener(event, schedule);
               }
               if (elements.get(id) === el) continue;
               elements.set(id, el); changed = true;
@@ -149,12 +167,12 @@ enum PageScripts {
           });
           globalThis.loafMediaControl = (id, action, value) => {
             const el = elements.get(id); if (!el || !el.isConnected) return;
-            if (action === 'toggle') { if (el.paused) el.play().catch(() => {}); else el.pause(); }
+            if (action === 'toggle') { if (el.paused) { prepareVolume(el); el.muted = false; el.play().catch(() => {}); } else el.pause(); }
             if (action === 'seek' && Number.isFinite(el.duration)) el.currentTime = Math.max(0, Math.min(el.duration, value));
             if (action === 'skip' && Number.isFinite(el.duration)) el.currentTime = Math.max(0, Math.min(el.duration, el.currentTime + value));
-            if (action === 'volume' && Number.isFinite(value)) { el.volume = Math.max(0, Math.min(1, value)); el.muted = false; }
+            if (action === 'volume' && Number.isFinite(value)) { playerVolume = Math.max(0, Math.min(1, value)); volumeStates.get(el).adjusted = true; el.volume = playerVolume; el.muted = false; }
             if (action === 'airplay' && typeof el.webkitShowPlaybackTargetPicker === 'function') el.webkitShowPlaybackTargetPicker();
-            if (action === 'mute') el.muted = !el.muted;
+            if (action === 'mute') { if (el.muted) prepareVolume(el); el.muted = !el.muted; }
             if (action === 'pip' && el.tagName === 'VIDEO' && typeof el.webkitSetPresentationMode === 'function' && el.webkitSupportsPresentationMode?.('picture-in-picture'))
               el.webkitSetPresentationMode(el.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
             send();

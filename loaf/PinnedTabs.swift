@@ -116,10 +116,16 @@ struct TabActions: View {
         if store.isPersistentTab(tab) {
             Button("unpin tab") { store.removePersistentTab(tab) }
         } else {
-            Button("pin tab") { store.togglePin(tab) }
+            Button("pin tab") { store.setPinPresentation(tab, row: true) }
+            Button("pin to grid") { store.setPinPresentation(tab, row: false) }
         }
         Button(store.groupingTabs(including: tab).count > 1 ? "group selected tabs" : "new group with tab") {
             store.groupSelectedTabs(including: tab)
+        }
+        if tab.pinned {
+            Button(tab.pinPresentation == "row" ? "move pin to grid" : "show pin as row") {
+                store.setPinPresentation(tab, row: tab.pinPresentation != "row")
+            }
         }
         if !tab.pinned {
             Button("rename…") { store.editPin(tab) }
@@ -194,27 +200,62 @@ struct TabActions: View {
 struct PinnedTabGrid: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var store: BrowserStore
-    private var pins: [BrowserTab] { store.pinnedTabs }
+    private struct Item: Identifiable {
+        let id: UUID
+        let tab: BrowserTab?
+    }
+    private var items: [Item] {
+        let preview = store.pinDropPreview
+        var pins = store.gridPinnedTabs
+        if preview?.row == false { pins.removeAll { $0.id == store.draggedTabID } }
+        var items = pins.map { Item(id: $0.pinnedShortcutID ?? $0.id, tab: $0) }
+        if let preview, !preview.row, let id = store.draggedTabID {
+            let index =
+                preview.position.flatMap { position in
+                    pins.firstIndex { $0.id == position.target }.map { $0 + (position.after ? 1 : 0) }
+                } ?? items.count
+            items.insert(Item(id: id, tab: nil), at: min(items.count, index))
+        }
+        return items
+    }
     var body: some View {
-        if !pins.isEmpty {
-            let list = store.preferences.pinnedLayout == "list"
-            let columns = PinGridLayout.columns(for: pins.count)
-            ScrollView {
-                if list {
-                    VStack(spacing: 4) { ForEach(pins, id: \.pinnedShortcutID) { TabRow(tab: $0, store: store) } }
-                } else {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: columns), spacing: 6)
-                    {
-                        ForEach(pins, id: \.pinnedShortcutID) { PinnedTabTile(tab: $0, store: store) }
+        let items = items
+        let list = store.preferences.pinnedLayout == "list"
+        let columns = PinGridLayout.columns(for: items.count)
+        Group {
+            if items.isEmpty, store.draggedTabID != nil {
+                Text("pin to grid").font(.system(size: 11)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity).frame(height: PinGridLayout.tileHeight)
+                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+            } else if !items.isEmpty {
+                ScrollView {
+                    if list {
+                        VStack(spacing: 4) { ForEach(items) { item in tile(item, list: true) } }
+                    } else {
+                        LazyVGrid(
+                            columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: columns), spacing: 6
+                        ) {
+                            ForEach(items) { item in tile(item, list: false) }
+                        }
                     }
-                }
-            }.scrollIndicators(.hidden)
-                .frame(height: PinGridLayout.height(for: pins.count, list: list))
-                .accessibilityElement(children: .contain).accessibilityLabel("pinned tabs").id(store.selectedProfileID)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: pins.map(\.pinnedShortcutID))
+                }.scrollIndicators(.hidden)
+                    .frame(height: PinGridLayout.height(for: items.count, list: list))
+            }
+        }
+        .accessibilityElement(children: .contain).accessibilityLabel("pinned tabs").id(store.selectedProfileID)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: items.map(\.id))
+    }
+    @ViewBuilder private func tile(_ item: Item, list: Bool) -> some View {
+        if let tab = item.tab {
+            if list { TabRow(tab: tab, store: store) } else { PinnedTabTile(tab: tab, store: store) }
+        } else {
+            RoundedRectangle(cornerRadius: 8).fill(profileTint(store.profile).opacity(0.08))
+                .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(profileTint(store.profile).opacity(0.25)) }
+                .frame(height: PinGridLayout.tileHeight).allowsHitTesting(false)
         }
     }
 }
+
 struct PinnedTabTile: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

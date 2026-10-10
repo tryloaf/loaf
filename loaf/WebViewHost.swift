@@ -41,7 +41,7 @@ struct WebViewHost: NSViewRepresentable {
                 wantsLayer = true
                 layerContentsRedrawPolicy = .never
                 layer?.backgroundColor = background
-                layer?.masksToBounds = true
+                layer?.masksToBounds = false
 
                 imageLayer.contents = image
                 imageLayer.contentsGravity = .resize
@@ -93,15 +93,26 @@ struct WebViewHost: NSViewRepresentable {
         private var snapshotGeneration = 0
         private var snapshotDeadline = 0.0
         private var snapshotPending = false
-        private var snapshotPrepared = false
-        private var snapshotReady: (() -> Void)?
-        private var skipNextSnapshot = false
+        private var pendingWebViewGeometry: (transform: CATransform3D, position: CGPoint)?
         private var snapshotPaintReady = false
         private var snapshotPaintRequested = false
         private var snapshotStartSize = CGSize.zero
         private var snapshotStartInset: CGFloat = 0
+        private struct PreparedSnapshot {
+            let image: CGImage
+            let sourceSize: CGSize
+            let frame: NSRect
+            let inset: CGFloat
+            let navigation: UUID?
+            let preparedAt: TimeInterval
+        }
+        private var preparedSnapshot: PreparedSnapshot?
+        private var preparation: DispatchWorkItem?
+        private var preparationGeneration = 0
+        private var inputMonitor: Any?
         var resizeSnapshotVisible: Bool { resizeImage != nil }
-        var preparingResizeSnapshot: Bool { snapshotPending || snapshotPrepared }
+        var preparingResizeSnapshot: Bool { snapshotPending }
+        var hasPreparedResizeSnapshot: Bool { preparedSnapshot != nil }
         private var targetFrame = NSRect.zero
         private var previousBounds: NSRect?
         private var resizeEnd: DispatchWorkItem?
@@ -110,7 +121,7 @@ struct WebViewHost: NSViewRepresentable {
         private(set) var resizing = false
         private(set) var resizeCommits = 0
         func applyChromeInset() {
-            guard !snapshotPending, !snapshotPrepared, configuredInset != requestedInset,
+            guard !snapshotPending, configuredInset != requestedInset,
                 let webView = hostedWebView, webView.superview === self, webView.fullscreenState == .notInFullscreen
             else { return }
             configuredInset = requestedInset
@@ -119,13 +130,11 @@ struct WebViewHost: NSViewRepresentable {
         }
         func cancelResizeSnapshot() {
             let wasActive = snapshotPending || resizeImage != nil
-            let ready = snapshotReady
-            snapshotReady = nil
             snapshotGeneration += 1
             snapshotEnd?.cancel()
             snapshotEnd = nil
             snapshotPending = false
-            snapshotPrepared = false
+            restorePendingWebViewGeometry()
             snapshotPaintReady = false
             snapshotPaintRequested = false
             resizeImage?.removeFromSuperview()
@@ -139,15 +148,68 @@ struct WebViewHost: NSViewRepresentable {
                 previousBounds = bounds
                 needsLayout = true
             }
-            if let ready {
-                skipNextSnapshot = true
-                ready()
-            }
+            prepareResizeSnapshot()
         }
-        func beginResizeSnapshot(onReady: (() -> Void)? = nil) {
-            snapshotReady = onReady
-            snapshotPrepared = false
-            skipNextSnapshot = false
+        func invalidatePreparedResizeSnapshot() {
+            preparationGeneration += 1
+            preparation?.cancel()
+            preparation = nil
+            preparedSnapshot = nil
+        }
+        func prepareResizeSnapshot(delay: TimeInterval = 0.25) {
+            preparation?.cancel()
+            let generation = preparationGeneration
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.preparation = nil
+                guard self.preparationGeneration == generation,
+                    self.transitionEnabled, !self.reduceMotion,
+                    !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+                    !self.snapshotPending, self.resizeImage == nil,
+                    let webView = self.hostedWebView, webView.superview === self,
+                    webView.window?.isVisible == true, !webView.isLoading,
+                    webView.fullscreenState == .notInFullscreen,
+                    !WebKitAdapter.inspectorIsDocked(webView),
+                    webView.bounds.width > 0, webView.bounds.height > 0
+                else { return }
+                let frame = webView.frame
+                let navigation = self.configuredNavigation
+                let inset = self.configuredInset ?? 0
+                let (config, sourceSize) = self.snapshotConfiguration(webView)
+                webView.takeSnapshot(with: config) { [weak self, weak webView] image, _ in
+                    guard let self, let webView, self.preparationGeneration == generation,
+                        self.hostedWebView === webView, webView.frame == frame,
+                        self.configuredNavigation == navigation,
+                        !self.snapshotPending, self.resizeImage == nil,
+                        let pixels = image?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+                    else { return }
+                    ResizeImageView.prepare(pixels, sourceWidth: sourceSize.width) {
+                        [weak self, weak webView] texture in
+                        guard let self, let webView, self.preparationGeneration == generation,
+                            self.hostedWebView === webView, webView.frame == frame,
+                            self.configuredNavigation == navigation,
+                            webView.window != nil, !self.snapshotPending, self.resizeImage == nil
+                        else { return }
+                        self.preparedSnapshot = PreparedSnapshot(
+                            image: texture, sourceSize: sourceSize, frame: frame, inset: inset,
+                            navigation: navigation, preparedAt: ProcessInfo.processInfo.systemUptime)
+                    }
+                }
+            }
+            preparation = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        }
+        private func snapshotConfiguration(_ webView: WKWebView) -> (WKSnapshotConfiguration, CGSize) {
+            let config = WKSnapshotConfiguration()
+            let inset = fallbackInset == 0 ? min(webView.bounds.height, configuredInset ?? 0) : 0
+            let sourceSize = CGSize(width: webView.bounds.width, height: max(0, webView.bounds.height - inset))
+            config.rect = CGRect(
+                x: 0, y: webView.isFlipped ? inset : 0, width: sourceSize.width, height: sourceSize.height)
+            config.snapshotWidth = NSNumber(value: Double(min(webView.bounds.width, 1200)))
+            config.afterScreenUpdates = false
+            return (config, sourceSize)
+        }
+        func beginResizeSnapshot() {
             guard transitionEnabled, !reduceMotion, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
                 let webView = hostedWebView, webView.window != nil,
                 webView.fullscreenState == .notInFullscreen, webView.superview === self,
@@ -158,7 +220,10 @@ struct WebViewHost: NSViewRepresentable {
             }
             snapshotGeneration += 1
             let generation = snapshotGeneration
-            snapshotDeadline = ProcessInfo.processInfo.systemUptime + 0.26
+            preparation?.cancel()
+            preparation = nil
+            preparationGeneration += 1
+            snapshotDeadline = ProcessInfo.processInfo.systemUptime + SidebarMotion.duration
             snapshotEnd?.cancel()
             resizeEnd?.cancel()
             pendingResize?.cancel()
@@ -174,19 +239,31 @@ struct WebViewHost: NSViewRepresentable {
             if let resizeImage {
                 resizeImage.layer?.removeAllAnimations()
                 resizeImage.alphaValue = 1
-                completeSnapshotPreparation()
+                snapshotPending = false
+                scheduleSnapshotEnd()
                 needsLayout = true
                 return
             }
 
+            if let prepared = preparedSnapshot, prepared.frame == webView.frame,
+                prepared.navigation == configuredNavigation, prepared.inset == (configuredInset ?? 0),
+                ProcessInfo.processInfo.systemUptime - prepared.preparedAt < 2
+            {
+                let overlay = ResizeImageView(
+                    image: prepared.image, sourceSize: prepared.sourceSize, frame: bounds,
+                    background: webView.underPageBackgroundColor.cgColor)
+                addSubview(overlay, positioned: .above, relativeTo: webView)
+                resizeImage = overlay
+                preparedSnapshot = nil
+                snapshotPending = false
+                scheduleSnapshotEnd()
+                needsLayout = true
+                return
+            }
+            preparedSnapshot = nil
+
             snapshotPending = true
-            let config = WKSnapshotConfiguration()
-            let inset = fallbackInset == 0 ? min(webView.bounds.height, configuredInset ?? 0) : 0
-            let sourceSize = CGSize(width: webView.bounds.width, height: max(0, webView.bounds.height - inset))
-            config.rect = CGRect(
-                x: 0, y: webView.isFlipped ? inset : 0, width: sourceSize.width, height: sourceSize.height)
-            config.snapshotWidth = NSNumber(value: Double(min(webView.bounds.width, 1200)))
-            config.afterScreenUpdates = false
+            let (config, sourceSize) = snapshotConfiguration(webView)
             webView.takeSnapshot(with: config) { [weak self, weak webView] image, _ in
                 guard let self, let webView, self.snapshotGeneration == generation else { return }
                 guard self.hostedWebView === webView, webView.superview === self,
@@ -199,54 +276,58 @@ struct WebViewHost: NSViewRepresentable {
                     return
                 }
                 ResizeImageView.prepare(pixels, sourceWidth: sourceSize.width) { [weak self, weak webView] texture in
-                    guard let self, let webView, self.snapshotGeneration == generation else { return }
-                    guard webView.superview === self, webView.window != nil,
-                        webView.fullscreenState == .notInFullscreen, !WebKitAdapter.inspectorIsDocked(webView),
+                    guard let self, let webView, self.snapshotGeneration == generation,
+                        self.hostedWebView === webView, webView.superview === self,
+                        webView.window != nil, webView.fullscreenState == .notInFullscreen,
+                        !WebKitAdapter.inspectorIsDocked(webView),
                         ProcessInfo.processInfo.systemUptime < self.snapshotDeadline
-                    else {
-                        self.cancelResizeSnapshot()
-                        return
-                    }
+                    else { return }
                     let overlay = ResizeImageView(
                         image: texture, sourceSize: sourceSize, frame: self.bounds,
                         background: webView.underPageBackgroundColor.cgColor)
                     self.addSubview(overlay, positioned: .above, relativeTo: webView)
                     self.resizeImage = overlay
                     self.snapshotPending = false
-                    self.completeSnapshotPreparation()
-                    if !self.snapshotPrepared { self.applyChromeInset() }
+                    self.restorePendingWebViewGeometry()
+                    self.applyChromeInset()
                     self.needsLayout = true
                     self.layoutSubtreeIfNeeded()
                 }
             }
             scheduleSnapshotEnd()
         }
-        private func completeSnapshotPreparation() {
-            if let ready = snapshotReady {
-                snapshotReady = nil
-                snapshotPrepared = true
-                snapshotEnd?.cancel()
-                snapshotEnd = nil
-                ready()
-            } else {
-                scheduleSnapshotEnd()
-            }
-        }
-        func startPreparedResize() {
-            snapshotPrepared = false
-            snapshotDeadline = ProcessInfo.processInfo.systemUptime + 0.26
+        func sidebarDidChange() {
+            if !snapshotPending && resizeImage == nil { beginResizeSnapshot() }
+            guard snapshotPending || resizeImage != nil else { return }
+            snapshotDeadline = ProcessInfo.processInfo.systemUptime + SidebarMotion.duration
             snapshotPaintReady = false
             snapshotPaintRequested = false
             scheduleSnapshotEnd()
         }
-        func sidebarDidChange() {
-            if snapshotPrepared {
-                startPreparedResize()
-            } else if skipNextSnapshot {
-                skipNextSnapshot = false
-            } else {
-                beginResizeSnapshot()
+        private func fitPendingWebView(_ webView: WKWebView) {
+            guard let layer = webView.layer, webView.frame.width > 0, webView.frame.height > 0 else { return }
+            let target = pageFrame(for: viewportSize ?? bounds.size)
+            if pendingWebViewGeometry == nil {
+                pendingWebViewGeometry = (layer.transform, layer.position)
             }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer.transform = CATransform3DConcat(
+                pendingWebViewGeometry!.transform,
+                CATransform3DMakeScale(target.width / webView.frame.width, target.height / webView.frame.height, 1))
+            layer.position = CGPoint(
+                x: target.minX + layer.anchorPoint.x * target.width,
+                y: target.minY + layer.anchorPoint.y * target.height)
+            CATransaction.commit()
+        }
+        private func restorePendingWebViewGeometry() {
+            guard let geometry = pendingWebViewGeometry else { return }
+            pendingWebViewGeometry = nil
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            hostedWebView?.layer?.transform = geometry.transform
+            hostedWebView?.layer?.position = geometry.position
+            CATransaction.commit()
         }
         private func pageFrame(for size: CGSize) -> NSRect {
             let scale = window?.backingScaleFactor ?? 1
@@ -310,7 +391,7 @@ struct WebViewHost: NSViewRepresentable {
                 }
 
                 NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.16
+                    context.duration = SidebarMotion.snapshotFade
                     overlay.animator().alphaValue = 0
                 } completionHandler: { [weak self] in
                     guard let self, self.snapshotGeneration == generation else { return }
@@ -322,8 +403,41 @@ struct WebViewHost: NSViewRepresentable {
         }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if window == nil { cancelResizeSnapshot() }
+            if let inputMonitor { NSEvent.removeMonitor(inputMonitor) }
+            inputMonitor = nil
+            invalidatePreparedResizeSnapshot()
+            if window == nil {
+                cancelResizeSnapshot()
+                preparation?.cancel()
+                preparation = nil
+                return
+            }
+            inputMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.flagsChanged, .keyDown, .scrollWheel, .leftMouseDown, .leftMouseDragged]) {
+                    [weak self] event in
+                    MainActor.assumeIsolated {
+                        guard let self, event.window === self.window else { return }
+                        if event.type == .flagsChanged {
+                            if event.modifierFlags.contains(.command) { self.prepareResizeSnapshot(delay: 0) }
+                            return
+                        }
+                        if event.type == .keyDown, event.modifierFlags.contains(.command),
+                            event.charactersIgnoringModifiers?.lowercased() == "s"
+                        {
+                            return
+                        }
+                        let inside = self.bounds.contains(self.convert(event.locationInWindow, from: nil))
+                        let focused =
+                            (self.window?.firstResponder as? NSView).map { $0.isDescendant(of: self) } ?? false
+                        guard event.type == .keyDown ? focused : inside else { return }
+                        self.invalidatePreparedResizeSnapshot()
+                        self.prepareResizeSnapshot()
+                    }
+                    return event
+                }
+            prepareResizeSnapshot()
         }
+        deinit { if let inputMonitor { NSEvent.removeMonitor(inputMonitor) } }
         override func setFrameSize(_ newSize: NSSize) {
             guard frame.size != newSize else { return }
             super.setFrameSize(newSize)
@@ -346,9 +460,11 @@ struct WebViewHost: NSViewRepresentable {
             CATransaction.commit()
             resizeCommits += 1
             lastResize = ProcessInfo.processInfo.systemUptime
+            invalidatePreparedResizeSnapshot()
+            prepareResizeSnapshot()
         }
         private func finishResize() {
-            guard !snapshotPending, !snapshotPrepared, resizeImage == nil else { return }
+            guard !snapshotPending, resizeImage == nil else { return }
             pendingResize?.cancel()
             pendingResize = nil
             apply(targetFrame)
@@ -371,7 +487,10 @@ struct WebViewHost: NSViewRepresentable {
                 return
             }
             updateResizeImage()
-            if snapshotPending || snapshotPrepared { return }
+            if snapshotPending {
+                fitPendingWebView(webView)
+                return
+            }
             if resizeImage != nil {
                 let frame = pageFrame(for: viewportSize ?? bounds.size)
                 let changed = targetFrame != frame
@@ -442,7 +561,6 @@ struct WebViewHost: NSViewRepresentable {
     }
     func updateNSView(_ host: HostView, context: Context) {
 
-
         guard tab.webViewHost === host else { return }
         guard !tab.isDisposed else {
             host.cancelResizeSnapshot()
@@ -473,7 +591,6 @@ struct WebViewHost: NSViewRepresentable {
         view.removeFromSuperview()
         view.translatesAutoresizingMaskIntoConstraints = true
 
-
         if host.bounds.width > 0, host.bounds.height > 0 { view.frame = host.bounds }
         view.autoresizingMask = []
         host.addSubview(view)
@@ -481,6 +598,7 @@ struct WebViewHost: NSViewRepresentable {
         configure(host)
     }
     static func dismantleNSView(_ host: HostView, coordinator: ()) {
+        host.invalidatePreparedResizeSnapshot()
         host.cancelResizeSnapshot()
         if let view = host.hostedWebView, view.isDescendant(of: host), view.fullscreenState == .notInFullscreen,
             WebKitAdapter.inspectorIsDocked(view)
@@ -495,7 +613,10 @@ struct WebViewHost: NSViewRepresentable {
             || host.requestedInset != topInset || host.configuredNavigation != tab.navigationID
         host.reduceMotion = reduceMotion
         host.transitionEnabled = tab.store?.preferences.resizeTransition != false
-        if reduceMotion || host.configuredNavigation != tab.navigationID { host.cancelResizeSnapshot() }
+        if !host.transitionEnabled || reduceMotion || host.configuredNavigation != tab.navigationID {
+            host.invalidatePreparedResizeSnapshot()
+            host.cancelResizeSnapshot()
+        }
         host.configuredNavigation = tab.navigationID
         host.viewportSize = viewportSize
         if let previous = host.configuredSidebar, previous != sidebarVisible { host.sidebarDidChange() }

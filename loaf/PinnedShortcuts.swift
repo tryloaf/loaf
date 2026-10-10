@@ -1,8 +1,11 @@
 import AppKit
+import Combine
 import WebKit
 
 extension BrowserWindowState {
 
+    var gridPinnedTabs: [BrowserTab] { pinnedTabs.filter { $0.pinPresentation != "row" } }
+    var rowPinnedTabs: [BrowserTab] { pinnedTabs.filter { $0.pinPresentation == "row" } }
     var pinnedTabs: [BrowserTab] {
         guard application.profiles.contains(where: { $0.id == selectedProfileID }) else { return [] }
         let current = profile
@@ -17,6 +20,7 @@ extension BrowserWindowState {
             if let preview = pinPreviews[pin.id], preview.profileID == selectedProfileID, !preview.isDisposed {
                 if preview.title != pin.title || preview.pinnedTitle != pin.pinnedTitle
                     || preview.pinnedIcon != pin.pinnedIcon
+                    || preview.pinPresentation != pin.pinPresentation
                     || preview.pinnedAddress != (pin.pinnedAddress ?? pin.address)
                     || preview.url?.absoluteString != pin.address
                 {
@@ -47,6 +51,7 @@ extension BrowserWindowState {
                 if preview.title != pin.title { preview.title = pin.title }
                 if preview.pinnedTitle != pin.pinnedTitle { preview.pinnedTitle = pin.pinnedTitle }
                 if preview.pinnedIcon != pin.pinnedIcon { preview.pinnedIcon = pin.pinnedIcon }
+                if preview.pinPresentation != pin.pinPresentation { preview.pinPresentation = pin.pinPresentation }
                 preview.pinnedAddress = pin.pinnedAddress ?? pin.address
                 let url = pin.address.flatMap(URL.init(string:))
                 if preview.url != url { preview.url = url }
@@ -94,6 +99,7 @@ extension BrowserWindowState {
         let previous = pin
         pin.pinnedTitle = saved.pinnedTitle
         pin.pinnedIcon = saved.pinnedIcon
+        pin.pinPresentation = saved.pinPresentation
         pin.pinnedAddress = saved.pinnedAddress
         if let home = saved.pinnedAddress { pin.address = home }
         if tab.url?.absoluteString == pin.address { pin.title = tab.title }
@@ -110,6 +116,7 @@ extension BrowserWindowState {
             {
                 other.pinnedTitle = pin.pinnedTitle
                 other.pinnedIcon = pin.pinnedIcon
+                other.pinPresentation = pin.pinPresentation
                 other.pinnedAddress = pin.pinnedAddress
                 if var workspace = window.workspaces[tab.profileID],
                     let index = workspace.tabs.firstIndex(where: { $0.id == other.id })
@@ -152,6 +159,14 @@ extension BrowserWindowState {
         }
         tab.pinned = false
         tab.pinnedShortcutID = nil
+    }
+    func setPinPresentation(_ preview: BrowserTab, row: Bool) {
+        let tab = preview.pinned ? openPinned(preview) : openGroupMember(preview)
+        if !tab.pinned { togglePin(tab) }
+        tab.pinPresentation = row ? "row" : nil
+        tabChanged(tab)
+        sidebarEntryCache = nil
+        objectWillChange.send()
     }
     func returnToPin(_ tab: BrowserTab) {
         let open = tab.pinned ? openPinned(tab) : openGroupMember(tab)

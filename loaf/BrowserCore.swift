@@ -181,6 +181,7 @@ nonisolated struct SavedTab: Codable, Identifiable, Equatable, Sendable {
     var page: BrowserPage = .web
     var pinnedTitle: String?
     var pinnedIcon: String?
+    var pinPresentation: String?
     var pinnedAddress: String?
     var pinnedShortcutID: UUID?
     var customTitle: String?
@@ -237,6 +238,7 @@ nonisolated struct Visit: Codable, Identifiable, Equatable, Sendable {
     var address: String
     var date = Date()
     var count = 1
+    var sessionID: UUID?
 }
 
 nonisolated struct Favorite: Codable, Identifiable, Sendable {

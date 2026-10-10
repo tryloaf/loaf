@@ -6,6 +6,7 @@ import WebKit
 
 struct SettingsView: View {
     @ObservedObject var store: BrowserStore
+    @ObservedObject private var updates = SoftwareUpdateManager.shared
     @State private var section: String
     @State private var query = ""
     @State private var headingPassed = false
@@ -321,6 +322,15 @@ struct SettingsView: View {
                 Text(
                     "sleeping reloads a page when you return. forms, media, frames, private tabs and active downloads stay awake."
                 ).font(.caption).foregroundStyle(.secondary)
+            }
+            Section("updates") {
+                Toggle("check for updates automatically", isOn: $updates.automaticallyChecksForUpdates).id(
+                    "automatic-update-checks")
+                Toggle("download and install updates automatically", isOn: $updates.automaticallyInstallsUpdates).id(
+                    "automatic-updates")
+                Text("checks every six hours. available updates appear at the bottom of the window.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("check for updates now") { updates.checkForUpdates() }.disabled(!updates.canCheckForUpdates)
             }
             Section("power & time") {
                 Toggle("power saver", isOn: optional(\.powerSaver, fallback: false)).id("power-saver").onChange(
