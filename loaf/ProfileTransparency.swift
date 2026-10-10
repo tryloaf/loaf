@@ -21,7 +21,7 @@ struct ProfileTransparencyControl: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @GestureState private var dragging = false
+    @State private var dragging = false
     @FocusState private var focused: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -49,17 +49,15 @@ struct ProfileTransparencyControl: View {
                             Color.primary.opacity(focused ? 0.35 : 0.1), lineWidth: focused ? 2 : 1)
                     )
                     .contentShape(RoundedRectangle(cornerRadius: 14))
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .updating($dragging) { _, state, _ in state = true }
-                            .onChanged { event in
-                                focused = true
-                                value = ProfileTransparency.value(at: event.location.x, width: geometry.size.width)
-                            }
-                    )
+                    .overlay {
+                        CursorRegion(cursor: .openHand) { point, active in
+                            dragging = active
+                            focused = true
+                            value = ProfileTransparency.value(at: point.x, width: geometry.size.width)
+                        }
+                    }
                     .animation(reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.8), value: dragging)
             }.frame(height: height)
-                .background(CursorRegion(cursor: dragging ? .closedHand : .openHand))
                 .focusable().focused($focused).focusEffectDisabled()
                 .onKeyPress(.leftArrow) {
                     shift(-0.025)

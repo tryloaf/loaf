@@ -10,6 +10,12 @@ struct SettingsSearchResult: Identifiable {
 enum SettingsSearch {
     static let entries: [SettingsSearchResult] = [
         .init(
+            id: "automatic-update-checks", section: "general", title: "check for updates automatically",
+            keywords: "software Sparkle periodic background reminder version"),
+        .init(
+            id: "automatic-updates", section: "general", title: "install updates automatically",
+            keywords: "software Sparkle download install version"),
+        .init(
             id: "pinned-layout", section: "general", title: "pinned tab layout", keywords: "grid list sidebar pins rows"
         ),
         .init(
@@ -42,7 +48,8 @@ enum SettingsSearch {
         .init(
             id: "download-permissions", section: "websites", title: "ask before downloading from a new site",
             keywords: "downloads permission prompt allow block domain subdomain private"),
-        .init(id: "link-preview", section: "general", title: "show link preview on hover",
+        .init(
+            id: "link-preview", section: "general", title: "show link preview on hover",
             keywords: "link destination url hover status bar toast preview"),
         .init(id: "link-groups", section: "general", title: "browsing trails", keywords: "links groups tab history"),
         .init(

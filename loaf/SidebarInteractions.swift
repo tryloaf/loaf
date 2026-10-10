@@ -346,55 +346,93 @@ struct SidebarInteractions: NSViewRepresentable {
 
 struct PinDropZone: NSViewRepresentable {
     let store: BrowserStore
+    var row = false
     func makeNSView(context: Context) -> DropView {
         let view = DropView()
         view.registerForDraggedTypes(BrowserDragTypes.pasteboardTypes(.loafTab))
         return view
     }
-    func updateNSView(_ view: DropView, context: Context) { view.store = store }
+    func updateNSView(_ view: DropView, context: Context) {
+        view.store = store
+        view.row = row
+    }
     final class DropView: NSView {
         weak var store: BrowserStore?
+        var row = false
         private var highlighted = false { didSet { needsDisplay = true } }
         override func hitTest(_ point: NSPoint) -> NSView? {
-            guard let store, let id = store.draggedTabID, store.tabs.contains(where: { $0.id == id && !$0.pinned })
-            else { return nil }
+            guard store?.draggedTabID != nil else { return nil }
             return super.hitTest(point)
         }
         func validatedTab(_ sender: any NSDraggingInfo) -> BrowserTab? {
             guard let store, let source = sender.draggingSource as? TabDragArea.DragView, source.store === store,
-                source.window === window, sender.draggingDestinationWindow === window,
+                source.draggingWindow === window, sender.draggingDestinationWindow === window,
                 sender.draggingSourceOperationMask.contains(.move),
-                let tab = source.tab, !tab.pinned, tab.profileID == store.selectedProfileID, tab.windowID == store.id,
-                store.tabs.contains(where: { $0 === tab }), store.draggedTabID == tab.id,
+                let tab = source.tab, !tab.isDisposed,
+                tab.profileID == store.selectedProfileID, tab.windowID == store.id,
+                store.sidebarSelectableTabs.contains(where: { $0 === tab }), store.draggedTabID == tab.id,
                 let data = BrowserDragTypes.data(sender.draggingPasteboard, type: .loafTab), data.count <= 1024,
                 let drag = try? JSONDecoder().decode(TabDrag.self, from: data), drag.window == store.id,
                 drag.profile == tab.profileID, drag.tab == tab.id
             else { return nil }
             return tab
         }
+        func position(at point: NSPoint, source: BrowserTab) -> TabDropPosition? {
+            guard let store else { return nil }
+            let pins = (row ? store.rowPinnedTabs : store.gridPinnedTabs).filter { $0.id != source.id }
+            guard !pins.isEmpty else { return nil }
+            if row { return TabDropPosition(target: pins.last!.id, after: true) }
+            let list = store.preferences.pinnedLayout == "list"
+            let columns = list ? 1 : PinGridLayout.columns(for: pins.count + 1)
+            let cellWidth = max(1, (bounds.width + 6) / CGFloat(columns))
+            let y = isFlipped ? point.y : bounds.height - point.y
+            let column = min(columns - 1, max(0, Int(point.x / cellWidth)))
+            let index = max(0, Int(y / (PinGridLayout.tileHeight + (list ? 4 : 6)))) * columns + column
+            if index >= pins.count { return TabDropPosition(target: pins.last!.id, after: true) }
+            let after =
+                list
+                ? y.truncatingRemainder(dividingBy: 36) > 16
+                : point.x - CGFloat(column) * cellWidth > cellWidth / 2
+            return TabDropPosition(target: pins[index].id, after: after)
+        }
         override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
         override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
-            highlighted = validatedTab(sender) != nil
-            return highlighted ? .move : []
+            guard let tab = validatedTab(sender), let store else {
+                highlighted = false
+                return []
+            }
+            highlighted = true
+            let preview = PinDropPreview(
+                row: row, position: position(at: convert(sender.draggingLocation, from: nil), source: tab))
+            if store.pinDropPreview != preview { store.pinDropPreview = preview }
+            (sender.draggingSource as? TabDragArea.DragView)?.updateDraggingPreview(grid: !row)
+            return .move
         }
-        override func draggingExited(_ sender: (any NSDraggingInfo)?) { highlighted = false }
+        override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+            highlighted = false
+            if store?.pinDropPreview?.row == row { store?.pinDropPreview = nil }
+            (sender?.draggingSource as? TabDragArea.DragView)?.updateDraggingPreview(grid: false)
+        }
         override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool { validatedTab(sender) != nil }
         override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
             defer { highlighted = false }
             guard let tab = validatedTab(sender), let store else { return false }
-            store.togglePin(tab)
+            let destination = position(at: convert(sender.draggingLocation, from: nil), source: tab)
+            store.setPinPresentation(tab, row: row)
+            let pinned = store.pinnedTabs.first { $0.pinnedShortcutID == tab.pinnedShortcutID } ?? tab
+            if let destination,
+                let target = store.pinnedTabs.first(where: { $0.id == destination.target })
+            {
+                store.movePin(pinned, before: target, after: destination.after)
+            }
             store.draggedTabID = nil
             return true
         }
         override func draw(_ dirtyRect: NSRect) {
-            guard highlighted else { return }
+            guard highlighted, row else { return }
             let color = store.map { NSColor(profileTint($0.profile)) } ?? .controlAccentColor
-            color.withAlphaComponent(0.85).setFill()
-            NSBezierPath(
-                rect: NSRect(
-                    x: bounds.minX + 4, y: bounds.minY + 2,
-                    width: max(0, bounds.width - 8), height: 2)
-            ).fill()
+            color.withAlphaComponent(0.35).setStroke()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 5), xRadius: 8, yRadius: 8).stroke()
         }
     }
 }

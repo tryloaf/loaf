@@ -95,7 +95,7 @@ struct BrowserToolbar: View {
                             ProfileTransparency.opacity(store.profile.personalization?.windowTransparency ?? 0)))
                 } else {
                     ChromeBackdrop().overlay(
-                        palette.barSurface.opacity(palette.sample == nil || palette.privateMode ? 0.94 : 0.80))
+                        palette.barSurface.opacity(palette.privateMode ? 0.82 : palette.sample == nil ? 0.28 : 0.18))
                 }
             }
             .overlay(alignment: .bottom) { Rectangle().fill(palette.primary.opacity(0.06)).frame(height: 1) }
@@ -280,6 +280,11 @@ struct ContentView: View {
                             profileTint(store.profile), strength: store.profile.personalization?.tintStrength ?? 0.06,
                             dark: scheme == .dark))
             }.background(WindowChrome(store: store))
+            .overlay(alignment: .bottomTrailing) {
+                if !store.sidebarPresented && !store.hoveredSidebar {
+                    SoftwareUpdateReminder().frame(maxWidth: 280).padding(store.pageEdgeInset + 12)
+                }
+            }
             .overlay(alignment: .topLeading) {
                 if store.fullscreenControlsVisible && !store.usesSidebarOnlyChrome {
                     FullscreenWindowControls().frame(width: 76, height: 32)

@@ -78,6 +78,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     @Published var pinned: Bool
     @Published var pinnedTitle: String?
     @Published var pinnedIcon: String?
+    @Published var pinPresentation: String?
     var pinnedAddress: String?
     var pinnedShortcutID: UUID?
     @Published var customIcon: String?
@@ -143,7 +144,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     var saved: SavedTab {
         SavedTab(
             id: id, title: title, address: url?.user == nil ? url?.absoluteString : nil, pinned: pinned, page: page,
-            pinnedTitle: pinnedTitle, pinnedIcon: pinnedIcon,
+            pinnedTitle: pinnedTitle, pinnedIcon: pinnedIcon, pinPresentation: pinPresentation,
             pinnedAddress: pinnedAddress.flatMap { address in
                 guard let url = URL(string: address), ["http", "https"].contains(url.scheme), url.user == nil else {
                     return nil
@@ -172,6 +173,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         pinned = saved.pinned
         pinnedTitle = saved.pinnedTitle
         pinnedIcon = saved.pinnedIcon
+        pinPresentation = saved.pinPresentation
         customIcon = saved.customIcon
         pinnedAddress = saved.pinnedAddress ?? (saved.pinned ? saved.address : nil)
         pinnedShortcutID = saved.pinnedShortcutID
@@ -633,6 +635,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         guard existingWebView === webView, page == .web else { return }
         if requestedURL != nil, let activeNavigation, let navigation, activeNavigation !== navigation { return }
+        webViewHost?.invalidatePreparedResizeSnapshot()
         activeNavigation = navigation
         clearHoveredLink()
         if readerDocument != nil { exitReader() }
@@ -669,6 +672,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             }
         }
         loadFavicon()
+        webViewHost?.prepareResizeSnapshot()
         if sleepScrollPosition == nil { restoringFromSleep = false }
         if let point = sleepScrollPosition, webView.url == sleepRestoreURL {
             sleepScrollPosition = nil

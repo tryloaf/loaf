@@ -296,7 +296,7 @@ struct ProfileColorPad: View {
     var height: CGFloat = 208
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @GestureState private var dragging = false
+    @State private var dragging = false
     @FocusState private var focused: Bool
     private var hue: Double { (selection ?? ProfileColor.picked(fallback))?.pickerHue ?? 0 }
     private var color: Color { selection?.color ?? fallback }
@@ -327,21 +327,18 @@ struct ProfileColorPad: View {
                     Color.primary.opacity(focused ? 0.35 : 0.1), lineWidth: focused ? 2 : 1)
             )
             .contentShape(RoundedRectangle(cornerRadius: 16))
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .updating($dragging) { _, state, _ in state = true }
-                    .onChanged { value in
-                        focused = true
-                        let position = ProfileColorPadPosition.at(value.location, in: geometry.size)
-
-                        let updated = position.color(preserving: selection, fallbackHue: hue, in: geometry.size)
-                        if updated != selection { selection = updated }
-                        strength = position.strength
-                    }
-            )
+            .overlay {
+                CursorRegion(cursor: .openHand) { point, active in
+                    dragging = active
+                    focused = true
+                    let position = ProfileColorPadPosition.at(point, in: geometry.size)
+                    let updated = position.color(preserving: selection, fallbackHue: hue, in: geometry.size)
+                    if updated != selection { selection = updated }
+                    strength = position.strength
+                }
+            }
             .animation(reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.8), value: dragging)
         }.frame(height: height)
-            .background(CursorRegion(cursor: dragging ? .closedHand : .openHand))
             .focusable().focused($focused).focusEffectDisabled()
             .onKeyPress(.leftArrow) {
                 shiftHue(-1 / 120)

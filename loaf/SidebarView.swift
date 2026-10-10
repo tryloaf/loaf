@@ -12,6 +12,10 @@ struct TabDropPosition: Equatable {
     let target: UUID
     let after: Bool
 }
+struct PinDropPreview: Equatable {
+    let row: Bool
+    let position: TabDropPosition?
+}
 
 struct SidebarView: View {
     @Environment(\.colorScheme) private var scheme
@@ -52,10 +56,15 @@ struct SidebarView: View {
                     }
                 }
             address.padding(.horizontal, 8)
-            if !store.pinnedTabs.isEmpty {
+            if !store.gridPinnedTabs.isEmpty || store.draggedTabID != nil {
                 Color.clear.frame(
                     height: PinGridLayout.height(
-                        for: store.pinnedTabs.count, list: store.preferences.pinnedLayout == "list")
+                        for: max(
+                            store.draggedTabID != nil ? 1 : 0,
+                            store.gridPinnedTabs.count
+                                + (store.pinDropPreview?.row == false
+                                    && !store.gridPinnedTabs.contains { $0.id == store.draggedTabID } ? 1 : 0)),
+                        list: store.preferences.pinnedLayout == "list")
                 )
                 .overlay(PinnedTabGrid(store: store)).padding(.horizontal, 8).padding(.top, 10).padding(.bottom, 4)
                 .overlay { PinDropZone(store: store).padding(.horizontal, 8) }
@@ -239,8 +248,9 @@ struct SidebarView: View {
             .allowsHitTesting(trayProgress > 0.95).accessibilityHidden(trayProgress < 0.95)
             extensionStrip.opacity(extensionProgress)
                 .offset(y: 6 * (1 - extensionProgress))
-                .frame(height: 32 * extensionProgress, alignment: .top).clipped()
+                .frame(height: extensionStripHeight * extensionProgress, alignment: .top).clipped()
                 .allowsHitTesting(store.extensionsVisible).accessibilityHidden(!store.extensionsVisible)
+            SoftwareUpdateReminder().padding(.horizontal, 8)
             footer.zIndex(1)
         }
         .background {
@@ -279,43 +289,38 @@ struct SidebarView: View {
         .animation(nil, value: store.extensionsVisible)
         .accessibilityElement(children: .contain).accessibilityLabel(trayProgress == 0 ? "sidebar controls" : "tray")
     }
-    @ViewBuilder private var extensionStrip: some View {
+    private var extensionColumns: Int { max(1, Int((store.preferences.sidebarWidth - 48) / 30)) }
+    private var extensionStripHeight: CGFloat {
+        let count = store.profile.extensions.filter(\.enabled).count + 1
+        return CGFloat(min(5, max(1, (count + extensionColumns - 1) / extensionColumns))) * 32 + 4
+    }
+    private var extensionStrip: some View {
         let enabled = store.profile.extensions.filter(\.enabled)
-        HStack(spacing: 4) {
-            if enabled.isEmpty { Text("no extensions yet").font(.system(size: 11)).foregroundStyle(.secondary) }
-            ForEach(Array(enabled.prefix(max(1, Int((store.preferences.sidebarWidth - 70) / 30))))) { record in
+        return ScrollView {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: extensionColumns), spacing: 4)
+            {
+                ForEach(enabled) { record in
+                    Button {
+                        store.runtime.extensions.perform(record)
+                    } label: {
+                        Group {
+                            if let context = store.runtime.extensions.contexts[record.id],
+                                let image = context.webExtension.icon(for: CGSize(width: 18, height: 18))
+                            {
+                                Image(nsImage: image).resizable().scaledToFit().frame(width: 18, height: 18)
+                            } else {
+                                GolzheimIcon(icon: .extensionPuzzle, size: 16)
+                            }
+                        }.frame(maxWidth: .infinity).frame(height: 28).contentShape(Rectangle())
+                    }.buttonStyle(LoafButtonStyle()).help(record.name).accessibilityLabel(record.name)
+                }
                 Button {
-                    store.runtime.extensions.perform(record)
+                    store.showPage(.extensions)
                 } label: {
-                    Group {
-                        if let context = store.runtime.extensions.contexts[record.id],
-                            let image = context.webExtension.icon(for: CGSize(width: 18, height: 18))
-                        {
-                            Image(nsImage: image).resizable().scaledToFit().frame(width: 18, height: 18)
-                        } else {
-                            GolzheimIcon(icon: .extensionPuzzle, size: 16)
-                        }
-                    }.frame(width: 26, height: 28).contentShape(Rectangle())
-                }.buttonStyle(LoafButtonStyle()).help(record.name).accessibilityLabel(record.name)
-            }
-            Spacer(minLength: 0)
-            if enabled.count > max(1, Int((store.preferences.sidebarWidth - 70) / 30)) {
-                Menu {
-                    ForEach(Array(enabled.dropFirst(max(1, Int((store.preferences.sidebarWidth - 70) / 30))))) {
-                        record in Button(record.name) { store.runtime.extensions.perform(record) }
-                    }
-                } label: {
-                    GolzheimIcon(icon: .more, size: 14)
-                }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel(
-                    "more extensions")
-            }
-            Button {
-                store.showPage(.extensions)
-            } label: {
-                GolzheimIcon(icon: .settings, size: 14).frame(width: 26, height: 28)
-            }
-            .buttonStyle(LoafButtonStyle()).help("manage extensions").accessibilityLabel("manage extensions")
-        }.padding(.leading, 8).padding(.trailing, 0).padding(.top, 3).padding(.bottom, 1)
+                    GolzheimIcon(icon: .settings, size: 14).frame(maxWidth: .infinity).frame(height: 28)
+                }.buttonStyle(LoafButtonStyle()).help("manage extensions").accessibilityLabel("manage extensions")
+            }.padding(4)
+        }.scrollIndicators(.hidden).frame(height: extensionStripHeight)
             .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 6)).padding(.horizontal, 8)
             .accessibilityElement(children: .contain).accessibilityLabel("extension tray")
     }
@@ -527,15 +532,20 @@ struct TabListContent: View {
                                 _ = store.newTab()
                             } label: {
                                 HStack(spacing: 4) {
-                                    GolzheimIcon(icon: .plus, size: 12, weight: 220).frame(width: 16, height: 16)
-                                    Text("new tab")
+                                    GolzheimIcon(
+                                        icon: store.draggedTabID == nil ? .plus : .favorite, size: 12, weight: 220
+                                    )
+                                    .frame(width: 16, height: 16)
+                                    Text(store.draggedTabID == nil ? "new tab" : "pin as tab")
                                     Spacer()
-                                    Text("⌘T").font(.system(size: 10)).foregroundStyle(.tertiary)
+                                    if store.draggedTabID == nil {
+                                        Text("⌘T").font(.system(size: 10)).foregroundStyle(.tertiary)
+                                    }
                                 }
                                 .font(.system(size: 13)).padding(.horizontal, 8).frame(height: 32).background(
                                     Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
                             }.buttonStyle(LoafButtonStyle()).padding(.top, 8).padding(.bottom, 4)
-                                .overlay(alignment: .top) { PinDropZone(store: store).frame(height: 8) }
+                                .overlay { PinDropZone(store: store, row: true) }
                         }
                     }.offset(y: slot.map { row.index >= $0 ? SidebarTabMetrics.insertionGap : 0 } ?? 0)
                         .transition(reduceMotion ? .opacity : .asymmetric(insertion: .opacity, removal: .identity))

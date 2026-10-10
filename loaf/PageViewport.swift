@@ -2,8 +2,6 @@ import AppKit
 import QuartzCore
 import SwiftUI
 
-
-
 struct PageViewport<Content: View>: NSViewRepresentable {
     let leading: CGFloat
     let edge: CGFloat
@@ -25,7 +23,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
     static func dismantleNSView(_ view: Container, coordinator: ()) {
         view.surface.layer?.removeAllAnimations()
         view.contentSurface.layer?.removeAllAnimations()
-        view.clipMask.removeAllAnimations()
+        view.stopMotion()
     }
 
     struct Root: View {
@@ -37,7 +35,6 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         let host: NSHostingView<Root>
         let surface = NSView()
         let contentSurface = NSView()
-        let clipMask = CAShapeLayer()
         private var leading: CGFloat = 0
         private var edge: CGFloat = 0
         private var radius: CGFloat = 0
@@ -49,19 +46,14 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         init(content: Root) {
             host = NSHostingView(rootView: content)
             host.sizingOptions = []
-
-
             host.safeAreaRegions = []
-            contentSurface.wantsLayer = true
             super.init(frame: .zero)
             wantsLayer = true
             surface.wantsLayer = true
-            surface.layer?.masksToBounds = false
-            clipMask.fillColor = NSColor.white.cgColor
-            clipMask.anchorPoint = .zero
-            clipMask.position = .zero
-            surface.layer?.mask = clipMask
+            surface.layer?.masksToBounds = true
             surface.layer?.cornerCurve = .continuous
+            contentSurface.wantsLayer = true
+            contentSurface.layer?.masksToBounds = false
             contentSurface.addSubview(host)
             surface.addSubview(contentSurface)
             addSubview(surface)
@@ -79,11 +71,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             self.sidebarPresented = sidebarPresented
             initialized = true
             if changed { animateNextLayout = !reduceMotion && window != nil }
-            if reduceMotion {
-                surface.layer?.removeAllAnimations()
-                clipMask.removeAllAnimations()
-                contentSurface.layer?.removeAllAnimations()
-            }
+            if reduceMotion { stopMotion() }
             needsLayout = true
         }
         override func layout() {
@@ -91,73 +79,64 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             let target = NSRect(
                 x: leading, y: edge,
                 width: max(0, bounds.width - leading - edge), height: max(0, bounds.height - 2 * edge))
-            guard target != surface.frame || surface.layer?.cornerRadius != radius else {
-                animateNextLayout = false
-                return
-            }
-            let previous = surface.layer?.presentation()?.frame ?? surface.layer?.frame ?? surface.frame
-            let previousPath = clipMask.presentation()?.path ?? clipMask.path
+            let previous = surface.layer?.presentation()?.frame ?? surface.frame
             let previousRadius = surface.layer?.presentation()?.cornerRadius ?? surface.layer?.cornerRadius ?? radius
-            let animate =
-                animateNextLayout && previous.width > 0 && previous.height > 0
-                && target.width > 0 && target.height > 0
+            let animate = animateNextLayout && previous.width > 0 && previous.height > 0 && target != surface.frame
             animateNextLayout = false
+            guard target != surface.frame || surface.layer?.cornerRadius != radius else { return }
+            stopMotion()
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            surface.layer?.removeAllAnimations()
-            clipMask.removeAllAnimations()
-            contentSurface.layer?.removeAllAnimations()
             surface.frame = target
             surface.layer?.cornerRadius = radius
-            clipMask.bounds = surface.bounds
-
-
-
-            let expansion: CGFloat = edge == 0 && radius > 0 ? 1 / (window?.backingScaleFactor ?? 2) : 0
-            clipMask.path =
-                RoundedRectangle(cornerRadius: radius + expansion, style: .continuous)
-                .path(in: surface.bounds.insetBy(dx: -expansion, dy: -expansion)).cgPath
-            contentSurface.frame = NSRect(origin: .zero, size: target.size)
+            contentSurface.frame = surface.bounds
             host.frame = contentSurface.bounds
             host.layoutSubtreeIfNeeded()
             CATransaction.commit()
             guard animate, let layer = surface.layer else { return }
             let position = CABasicAnimation(keyPath: "position")
-
-
             position.fromValue = CGPoint(
                 x: previous.minX + layer.anchorPoint.x * previous.width,
                 y: previous.minY + layer.anchorPoint.y * previous.height)
             position.toValue = layer.position
-
-
-            let clipBounds = CABasicAnimation(keyPath: "bounds")
-            clipBounds.fromValue = CGRect(origin: layer.bounds.origin, size: previous.size)
-            clipBounds.toValue = layer.bounds
+            let bounds = CABasicAnimation(keyPath: "bounds")
+            bounds.fromValue = CGRect(origin: layer.bounds.origin, size: previous.size)
+            bounds.toValue = layer.bounds
+            let contentScale = CABasicAnimation(keyPath: "transform")
+            contentScale.fromValue = CATransform3DMakeScale(
+                previous.width / max(1, target.width), previous.height / max(1, target.height), 1)
+            contentScale.toValue = CATransform3DIdentity
+            let contentPosition = CABasicAnimation(keyPath: "position")
+            if let contentLayer = contentSurface.layer {
+                contentPosition.fromValue = CGPoint(
+                    x: contentLayer.anchorPoint.x * previous.width,
+                    y: contentLayer.anchorPoint.y * previous.height)
+                contentPosition.toValue = contentLayer.position
+            }
             let corners = CABasicAnimation(keyPath: "cornerRadius")
             corners.fromValue = previousRadius
             corners.toValue = radius
-            let clipPath = CABasicAnimation(keyPath: "path")
-            clipPath.fromValue = previousPath
-            clipPath.toValue = clipMask.path
-            let transform = CABasicAnimation(keyPath: "transform")
-            transform.fromValue = CATransform3DMakeScale(
-                previous.width / target.width, previous.height / target.height, 1)
-            transform.toValue = CATransform3DIdentity
-            for animation in [position, clipBounds, corners, clipPath, transform] {
-                animation.duration = 0.26
-                animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            for animation in [position, bounds, corners, contentPosition, contentScale] {
+                animation.duration = SidebarMotion.duration
+                animation.timingFunction = SidebarMotion.pageTiming
             }
             layer.add(position, forKey: "sidebarPosition")
-            layer.add(clipBounds, forKey: "sidebarBounds")
+            layer.add(bounds, forKey: "sidebarBounds")
             layer.add(corners, forKey: "sidebarCorners")
-            clipMask.add(clipBounds, forKey: "sidebarMaskBounds")
-            clipMask.add(clipPath, forKey: "sidebarClipPath")
-            contentSurface.layer?.add(transform, forKey: "sidebarContentSize")
+            contentSurface.layer?.add(contentPosition, forKey: "sidebarContentPosition")
+            contentSurface.layer?.add(contentScale, forKey: "sidebarContentScale")
+        }
+        func stopMotion() {
+            surface.layer?.removeAllAnimations()
+            contentSurface.layer?.removeAllAnimations()
         }
         override func setFrameSize(_ newSize: NSSize) {
             super.setFrameSize(newSize)
             needsLayout = true
+        }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil { stopMotion() }
         }
     }
 }

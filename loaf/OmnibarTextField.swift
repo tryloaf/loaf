@@ -25,6 +25,7 @@ struct OmnibarTextField: NSViewRepresentable {
     var inlineCompletion: String? = nil
     var actionPreview: String? = nil
     var actionPreviewID: String? = nil
+    var suggestionPresentationChanged: ((String?) -> Void)? = nil
     var focusSnapshot: (() -> (text: String, select: Bool)?)? = nil
     var fadesOverflow = false
     var reduceMotion = false
@@ -276,8 +277,51 @@ struct OmnibarTextField: NSViewRepresentable {
         var rejectedPreviewID: String?
 
         var inlineSuggestionsDenied = false
+        private var reportedPresentation: String?
+        private var presentationRevision = 0
+        private var selectionObserver: NSObjectProtocol?
+        private weak var observedEditor: NSTextView?
+        private func observeSelection(_ field: FocusField) {
+            guard let editor = field.currentEditor() as? NSTextView, observedEditor !== editor else { return }
+            if let selectionObserver { NotificationCenter.default.removeObserver(selectionObserver) }
+            observedEditor = editor
+            selectionObserver = NotificationCenter.default.addObserver(
+                forName: NSTextView.didChangeSelectionNotification, object: editor, queue: .main
+            ) { [weak self, weak field] _ in
+                MainActor.assumeIsolated {
+                    if let field { self?.reportPresentation(field) }
+                }
+            }
+        }
+        func reportPresentation(_ field: FocusField) {
+            let editor = field.currentEditor() as? NSTextView
+            let value: String?
+            if let editor, !editor.hasMarkedText(),
+                editor.string.utf16.count >= parent.text.utf16.count,
+                (hasSuffix
+                    && editor.selectedRange()
+                        == NSRange(
+                            location: parent.text.utf16.count,
+                            length: editor.string.utf16.count - parent.text.utf16.count)
+                    || hasPreview && editor.selectedRange() == NSRange(location: 0, length: editor.string.utf16.count))
+            {
+                value = editor.string
+            } else {
+                value = nil
+            }
+            guard value != reportedPresentation else { return }
+            reportedPresentation = value
+            presentationRevision += 1
+            let revision = presentationRevision
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.presentationRevision == revision else { return }
+                self.parent.suggestionPresentationChanged?(value)
+            }
+        }
         func offerCompletion(_ field: FocusField) {
+            defer { reportPresentation(field) }
             guard let editor = field.currentEditor() as? NSTextView, !editor.hasMarkedText() else { return }
+            observeSelection(field)
             let range = editor.selectedRange()
             let prefixLength = parent.text.utf16.count
             let ownsPreview = hasPreview && range == NSRange(location: 0, length: editor.string.utf16.count)
@@ -332,11 +376,22 @@ struct OmnibarTextField: NSViewRepresentable {
             hasSuffix = true
         }
         func controlTextDidBeginEditing(_ notification: Notification) {
-            (notification.object as? FocusField)?.configureEditor()
+            guard let field = notification.object as? FocusField else { return }
+            field.configureEditor()
+            observeSelection(field)
         }
         func controlTextDidEndEditing(_ notification: Notification) {
-            (notification.object as? FocusField)?.releaseEditorObservation()
+            if let selectionObserver { NotificationCenter.default.removeObserver(selectionObserver) }
+            selectionObserver = nil
+            observedEditor = nil
+            if let field = notification.object as? FocusField {
+                field.releaseEditorObservation()
+                hasSuffix = false
+                hasPreview = false
+                reportPresentation(field)
+            }
         }
+        deinit { if let selectionObserver { NotificationCenter.default.removeObserver(selectionObserver) } }
         func controlTextDidChange(_ notification: Notification) {
             guard let field = notification.object as? FocusField,
                 parent.focusSnapshot == nil || parent.focusSnapshot?() != nil
@@ -347,8 +402,10 @@ struct OmnibarTextField: NSViewRepresentable {
             rejectedPreviewID = nil
             parent.text = field.stringValue
             field.revealCaretAfterEditing()
+            reportPresentation(field)
         }
         func accept(_ control: NSControl, textView: NSTextView) {
+            defer { if let field = control as? FocusField { reportPresentation(field) } }
             (control as? FocusField)?.pinsCompletionPrefix = false
             let range = textView.selectedRange()
             if hasPreview, range == NSRange(location: 0, length: textView.string.utf16.count), !textView.hasMarkedText()
@@ -367,6 +424,7 @@ struct OmnibarTextField: NSViewRepresentable {
             textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
         }
         func control(_ control: NSControl, textView: NSTextView, doCommandBy command: Selector) -> Bool {
+            defer { if let field = control as? FocusField { reportPresentation(field) } }
             guard !textView.hasMarkedText(), parent.focusSnapshot == nil || parent.focusSnapshot?() != nil else {
                 return false
             }

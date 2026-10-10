@@ -30,6 +30,7 @@ import SwiftUI
         let tabs: [SavedTab]
         let localGroups: [TabGroup]?
         let pinnedGroups: [TabGroup]?
+        let shortcuts: [SavedTab]?
         let order: [UUID]?
         let runtimeRevision: UInt64
         let split: [UUID]?
@@ -53,7 +54,8 @@ extension BrowserWindowState {
         let workspace = workspaces[selectedProfileID]
         let key = SidebarEntryCache.Key(
             profileID: selectedProfileID, tabs: current.tabs, localGroups: workspace?.groups,
-            pinnedGroups: current.pinnedGroups, order: workspace?.sidebarOrder, runtimeRevision: runtime.tabsRevision,
+            pinnedGroups: current.pinnedGroups, shortcuts: current.pinShortcuts, order: workspace?.sidebarOrder,
+            runtimeRevision: runtime.tabsRevision,
             split: browserSplit.map { [$0.left, $0.right] })
         if let sidebarEntryCache, sidebarEntryCache.key == key { return sidebarEntryCache.entries }
         let openTabs = tabs
@@ -78,7 +80,7 @@ extension BrowserWindowState {
         let groupsByID = local.reduce(into: [UUID: TabGroup]()) { if $0[$1.id] == nil { $0[$1.id] = $1 } }
         let looseByID = loose.reduce(into: [UUID: BrowserTab]()) { if $0[$1.id] == nil { $0[$1.id] = $1 } }
         let result =
-            groups.filter(\.isPinned).flatMap(entries) + [.newTab]
+            rowPinnedTabs.map(SidebarEntry.tab) + groups.filter(\.isPinned).flatMap(entries) + [.newTab]
             + (order + available.filter { !orderedIDs.contains($0) }).flatMap { id in
                 if let group = groupsByID[id] { return entries(group) }
                 return looseByID[id].map { [SidebarEntry.tab($0)] } ?? []
@@ -152,7 +154,7 @@ extension BrowserWindowState {
         let order = sidebarEntries.compactMap { entry -> UUID? in
             switch entry {
             case .group(let group): return group.isPinned ? nil : group.id
-            case .tab(let tab): return tab.groupID == nil ? tab.id : nil
+            case .tab(let tab): return !tab.pinned && tab.groupID == nil ? tab.id : nil
             case .newTab: return nil
             }
         }
@@ -343,6 +345,27 @@ extension BrowserWindowState {
         objectWillChange.send()
         persistSoon()
     }
+    func moveTabOutsideGroup(_ preview: BrowserTab, relativeTo target: UUID, after: Bool) {
+        let tab = preview.groupMemberID != nil ? openGroupMember(preview) : preview
+        if tab.pinned { removePin(tab) }
+        assignTab(tab, to: nil)
+        var order = sidebarEntries.compactMap { entry -> UUID? in
+            switch entry {
+            case .group(let group): return group.isPinned ? nil : group.id
+            case .tab(let item): return !item.pinned && item.groupID == nil ? item.id : nil
+            case .newTab: return nil
+            }
+        }
+        order.removeAll { $0 == tab.id }
+        if let index = order.firstIndex(of: target) {
+            order.insert(tab.id, at: index + (after ? 1 : 0))
+        } else {
+            order.insert(tab.id, at: 0)
+        }
+        workspaces[selectedProfileID]?.sidebarOrder = order
+        objectWillChange.send()
+        persistSoon()
+    }
     func moveTabGroup(_ id: UUID, relativeTo target: UUID, after: Bool) {
         guard id != target, let group = tabGroups.first(where: { $0.id == id }) else { return }
         if group.isPinned {
@@ -360,7 +383,7 @@ extension BrowserWindowState {
             var order = sidebarEntries.compactMap { entry -> UUID? in
                 switch entry {
                 case .group(let group): return group.isPinned ? nil : group.id
-                case .tab(let tab): return tab.groupID == nil ? tab.id : nil
+                case .tab(let tab): return !tab.pinned && tab.groupID == nil ? tab.id : nil
                 case .newTab: return nil
                 }
             }

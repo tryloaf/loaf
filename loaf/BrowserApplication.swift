@@ -10,6 +10,7 @@ import WebKit
     @Published var error: String?
     @Published var windows: [BrowserWindowState] = []
     let directory: URL
+    let browsingSessionID = UUID()
     let blocker = ContentBlocker()
     let downloads = DownloadManager()
     let weather = WeatherService()

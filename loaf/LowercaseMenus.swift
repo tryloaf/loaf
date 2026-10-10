@@ -28,22 +28,26 @@ import WebKit
     static func normalize(_ menu: NSMenu) {}
     static func normalize(_ item: NSMenuItem) {}
 
-
-
     static func normalizeWebContext(_ menu: NSMenu) {
-        let verbs: Set<String> = ["open", "download", "copy", "look", "share", "save", "inspect", "enter", "exit",
+        let verbs: Set<String> = [
+            "open", "download", "copy", "look", "share", "save", "inspect", "enter", "exit",
             "play", "pause", "mute", "unmute", "show", "hide", "loop", "back", "forward", "reload", "stop",
-            "print", "search", "add", "remove", "cut", "paste", "select", "translate", "view", "reading"]
+            "print", "search", "add", "remove", "cut", "paste", "select", "translate", "view", "reading",
+        ]
         for item in menu.items where !item.isSeparatorItem {
             if let submenu = item.submenu { normalizeWebContext(submenu) }
             let original = item.title
             guard let first = original.lowercased().split(whereSeparator: { !$0.isLetter }).first,
-                verbs.contains(String(first)) else { continue }
-            let expression = try! NSRegularExpression(pattern: #"“[^”]*”|\"[^\"]*\"|\b(?:Google|Safari|AirPlay|JavaScript|WebKit|PDF|URL|HTML|macOS)\b"#)
+                verbs.contains(String(first))
+            else { continue }
+            let expression = try! NSRegularExpression(
+                pattern: #"“[^”]*”|\"[^\"]*\"|\b(?:Google|Safari|AirPlay|JavaScript|WebKit|PDF|URL|HTML|macOS)\b"#)
             let string = original as NSString
-            var title = "", position = 0
+            var title = ""
+            var position = 0
             for match in expression.matches(in: original, range: NSRange(location: 0, length: string.length)) {
-                title += string.substring(with: NSRange(location: position, length: match.range.location - position)).lowercased(with: Locale.current)
+                title += string.substring(with: NSRange(location: position, length: match.range.location - position))
+                    .lowercased(with: Locale.current)
                 title += string.substring(with: match.range)
                 position = NSMaxRange(match.range)
             }
@@ -88,6 +92,7 @@ extension NSMenuItem {
     private var mainMenuObservation: NSKeyValueObservation?
     private var restoringMainMenu = false
     private let bookmarks = NSMenu(title: "Bookmarks")
+    private let history = NSMenu(title: "history")
     private let profiles = NSMenu(title: "Profiles")
     private let develop = NSMenu(title: "develop")
     private let developItem = NSMenuItem(title: "develop", action: nil, keyEquivalent: "")
@@ -113,10 +118,12 @@ extension NSMenuItem {
 
     @objc private func runDockCommand(_ item: NSMenuItem) {
         guard validateMenuItem(item), let raw = item.representedObject as? String,
-            let command = Command(rawValue: raw) else { return }
+            let command = Command(rawValue: raw)
+        else { return }
         switch command {
         case .newWindow:
-            let profileID = store?.profile.privateMode == true
+            let profileID =
+                store?.profile.privateMode == true
                 ? coordinator.application.profiles.first(where: { !$0.privateMode })?.id : store?.selectedProfileID
             coordinator.newWindow(profileID: profileID)
         case .newPrivateWindow:
@@ -128,7 +135,10 @@ extension NSMenuItem {
 
     func install() {
         LowercaseMenus.install()
-        guard mainMenu == nil else { restoreMainMenu(); return }
+        guard mainMenu == nil else {
+            restoreMainMenu()
+            return
+        }
         let main = NSMenu(title: "loaf")
         let app = appendMenu("loaf", to: main)
         add("About loaf", .about, to: app)
@@ -222,7 +232,7 @@ extension NSMenuItem {
             "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), key: "f", flags: [.command, .control],
             to: view)
 
-        let history = appendMenu("History", to: main)
+        appendMenu("History", submenu: history, to: main)
         add("Back", .back, key: "[", to: history)
         add("Forward", .forward, key: "]", to: history)
         add("Show History", .history, key: "y", to: history)
@@ -259,7 +269,6 @@ extension NSMenuItem {
 
         restoreMainMenu()
         mainMenuObservation = NSApp.observe(\.mainMenu, options: [.new]) { [weak self] _, _ in
-
 
             Task { @MainActor [weak self] in self?.scheduleRefresh() }
         }
@@ -339,8 +348,14 @@ extension NSMenuItem {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === bookmarks { rebuildBookmarks() }
+        if menu === history { rebuildHistory() }
         if menu === profiles { rebuildProfiles() }
         if menu === userAgents { rebuildUserAgents() }
+        if menu !== bookmarks && menu !== history {
+            for item in menu.items where item.action == #selector(openFavorite(_:)) {
+                loadPageIcon(item)
+            }
+        }
         refreshCommands(in: menu)
         LowercaseMenus.normalize(menu)
     }
@@ -363,12 +378,96 @@ extension NSMenuItem {
         if let store, !store.profile.favorites.isEmpty {
             bookmarks.addItem(.separator())
             for favorite in store.profile.favorites.prefix(12) {
-                let item = system(favorite.title, #selector(openFavorite(_:)), target: self, to: bookmarks)
-                item.representedObject = favorite.address
+                addPage(favorite.title, address: favorite.address, to: bookmarks)
             }
         }
     }
 
+    private func addPage(_ title: String, address: String, to menu: NSMenu, fetchIcon: Bool = true) {
+        let url = URL(string: address)
+        let label = title.isEmpty ? BrowserAddress.suggestionLabel(url) : title
+        let item = NSMenuItem(title: label, action: #selector(openFavorite(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = address
+        let font = NSFont.menuFont(ofSize: 13)
+        let maximum: CGFloat = 280
+        var visible = label
+        if (visible as NSString).size(withAttributes: [.font: font]).width > maximum {
+            var lower = 0
+            var upper = label.count
+            while lower < upper {
+                let middle = (lower + upper + 1) / 2
+                let proposed = String(label.prefix(middle)) + "…"
+                if (proposed as NSString).size(withAttributes: [.font: font]).width <= maximum {
+                    lower = middle
+                } else {
+                    upper = middle - 1
+                }
+            }
+            visible = String(label.prefix(lower)) + "…"
+        }
+        item.attributedTitle = NSAttributedString(string: visible, attributes: [.font: font])
+        item.toolTip = label + "\n" + address
+        menu.addItem(item)
+        guard let store, let url else { return }
+        let privateID = store.profile.privateMode ? store.selectedProfileID : nil
+        item.image =
+            store.application.favicons.cachedImage(for: url, privateID: privateID).map(menuIcon)
+            ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+        if fetchIcon { loadPageIcon(item) }
+    }
+    private func menuIcon(_ image: NSImage) -> NSImage {
+        let copy = (image.copy() as? NSImage) ?? image
+        copy.size = NSSize(width: 16, height: 16)
+        return copy
+    }
+    private func loadPageIcon(_ item: NSMenuItem) {
+        guard let store, let address = item.representedObject as? String, let url = URL(string: address) else { return }
+        let profileID = store.selectedProfileID
+        let privateID = store.profile.privateMode ? profileID : nil
+        if let cached = store.application.favicons.cachedImage(for: url, privateID: privateID) {
+            item.image = menuIcon(cached)
+            return
+        }
+        Task { @MainActor [weak item, weak store, weak self] in
+            guard let store else { return }
+            let image = await store.application.favicons.image(
+                for: url, privateID: privateID, quick: true, discoverPage: false)
+            guard let item, store.selectedProfileID == profileID, let image else { return }
+            item.image = self?.menuIcon(image)
+        }
+    }
+    private func rebuildHistory() {
+        history.removeAllItems()
+        add("Back", .back, key: "[", to: history)
+        add("Forward", .forward, key: "]", to: history)
+        add("Show History", .history, key: "y", to: history)
+        add("Reopen Closed Tab", .reopenTab, key: "t", flags: [.command, .shift], to: history)
+        add("Reopen Last Closed Window", .reopenWindow, key: "n", flags: [.command, .option, .shift], to: history)
+        guard let store, !store.profile.privateMode else { return }
+        let sections = HistoryMenuSections(
+            visits: store.profile.history, currentSession: store.application.browsingSessionID)
+        guard !sections.recent.isEmpty else { return }
+        history.addItem(.separator())
+        let heading = NSMenuItem(title: "recent pages", action: nil, keyEquivalent: "")
+        heading.isEnabled = false
+        history.addItem(heading)
+        for visit in sections.recent { addPage(visit.title, address: visit.address, to: history) }
+        for (title, groups) in [
+            ("previous sessions", sections.sessions), ("previous days", sections.days),
+            ("previous weeks", sections.weeks),
+        ] {
+            guard !groups.isEmpty else { continue }
+            let parent = appendMenu(title, to: history)
+            for group in groups {
+                let submenu = appendMenu(group.title, to: parent)
+                var seen = Set<String>()
+                for visit in group.visits.filter({ seen.insert($0.address).inserted }).prefix(30) {
+                    addPage(visit.title, address: visit.address, to: submenu, fetchIcon: false)
+                }
+            }
+        }
+    }
     private func rebuildProfiles() {
         profiles.removeAllItems()
         add(
@@ -409,7 +508,6 @@ extension NSMenuItem {
         restoringMainMenu = true
         defer { restoringMainMenu = false }
 
-
         var expected = baseItems
         if coordinator.application.preferences.developerMenu == true {
 
@@ -427,11 +525,20 @@ extension NSMenuItem {
         }
         if NSApp.mainMenu !== main { NSApp.mainMenu = main }
         if let services = baseItems.first?.submenu?.items.first(where: { $0.submenu?.title == "services" })?.submenu,
-            NSApp.servicesMenu !== services { NSApp.servicesMenu = services }
+            NSApp.servicesMenu !== services
+        {
+            NSApp.servicesMenu = services
+        }
         if let window = baseItems.first(where: { $0.title == "window" })?.submenu,
-            NSApp.windowsMenu !== window { NSApp.windowsMenu = window }
+            NSApp.windowsMenu !== window
+        {
+            NSApp.windowsMenu = window
+        }
         if let help = baseItems.first(where: { $0.title == "help" })?.submenu,
-            NSApp.helpMenu !== help { NSApp.helpMenu = help }
+            NSApp.helpMenu !== help
+        {
+            NSApp.helpMenu = help
+        }
     }
 
     private func rebuildUserAgents() {
@@ -523,7 +630,15 @@ extension NSMenuItem {
         case .favorites: store?.showPage(.favorites)
         case .nextTab: store?.cycleTab(1)
         case .previousTab: store?.cycleTab(-1)
-        case .pin: if let tab = store?.selectedTab { store?.togglePin(tab) }
+        case .pin:
+            if let store, let tab = store.selectedTab {
+                if tab.pinned {
+                    store.removePin(tab)
+                    store.tabChanged(tab)
+                } else {
+                    store.setPinPresentation(tab, row: true)
+                }
+            }
         case .duplicate: if let url = store?.selectedTab?.url { _ = store?.newTab(url: url, showOmnibar: false) }
         case .downloads: store?.showPage(.downloads)
         case .previousProfile: store?.swipeProfile(-1)
