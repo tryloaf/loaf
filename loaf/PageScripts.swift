@@ -30,7 +30,8 @@ enum PageScripts {
         Array.from(document.head?.querySelectorAll('link[rel~=icon],link[rel~=apple-touch-icon],link[rel~=apple-touch-icon-precomposed]') || [])
           .filter(i => !i.media || matchMedia(i.media).matches)
           .sort((a,b) => (b.sizes?.value.includes('32') ? 1 : 0) - (a.sizes?.value.includes('32') ? 1 : 0))
-          .slice(0,16).map(i => i.href).filter(h => h.length <= 4096)
+          .slice(0,16).map(i => i.href)
+          .filter(h => h.length <= (h.startsWith('data:image/') ? 65536 : 4096))
         """#
     static let favicon = """
         (() => {

@@ -359,10 +359,7 @@ struct TabListView: NSViewRepresentable {
         view.hasHorizontalScroller = false
         view.drawsBackground = false
         view.contentView.drawsBackground = false
-        let layout = TabInsertionLayout(
-            rows: store.sidebarEntries.map {
-                .init(id: $0.id, pinned: $0.tab == nil, height: $0.height, containerID: $0.tab?.groupID)
-            })
+        let layout = store.sidebarInsertionLayout
         view.documentView = NSHostingView(
             rootView: TabListContent(store: store, position: $position, visibleRange: view.visibleRange(in: layout)))
         view.registerForDraggedTypes(
@@ -376,7 +373,7 @@ struct TabListView: NSViewRepresentable {
         view.store = store
         view.getPosition = { position }
         view.setPosition = { position = $0 }
-        view.refreshVisibleRows(force: true)
+        view.refreshVisibleRows()
         view.revealChangedSelection()
         view.needsLayout = true
     }
@@ -392,6 +389,9 @@ struct TabListView: NSViewRepresentable {
         private var viewportObserver: NSObjectProtocol?
         private var viewportRefreshPending = false
         private var renderedRange: Range<Int>?
+        private var renderedPosition: TabDropPosition?
+        private var hasRendered = false
+        private(set) var rootUpdates = 0
         private var lastSelectedID: UUID?
         override init(frame: NSRect) {
             super.init(frame: frame)
@@ -425,8 +425,12 @@ struct TabListView: NSViewRepresentable {
         func refreshVisibleRows(force: Bool = false) {
             guard let store, let host = documentView as? NSHostingView<TabListContent> else { return }
             let range = visibleRange(in: insertionLayout)
-            guard force || range != renderedRange else { return }
+            let position = getPosition?()
+            guard force || !hasRendered || range != renderedRange || position != renderedPosition else { return }
+            hasRendered = true
             renderedRange = range
+            renderedPosition = position
+            rootUpdates += 1
             host.rootView = TabListContent(
                 store: store,
                 position: Binding(
@@ -459,10 +463,7 @@ struct TabListView: NSViewRepresentable {
             }
         }
         var insertionLayout: TabInsertionLayout {
-            TabInsertionLayout(
-                rows: (store?.sidebarEntries ?? []).map {
-                    .init(id: $0.id, pinned: $0.tab == nil, height: $0.height, containerID: $0.tab?.groupID)
-                })
+            store?.sidebarInsertionLayout ?? TabInsertionLayout(rows: [])
         }
         override func layout() {
             super.layout()

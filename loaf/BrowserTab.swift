@@ -917,8 +917,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             updateFavicon(
                 for: source,
                 declared: links.compactMap {
-                    guard $0.count <= 4096, let link = URL(string: $0), link.scheme == "https",
-                        link.user == nil, link.password == nil
+                    guard $0.count <= ($0.hasPrefix("data:image/") ? 65536 : 4096), let link = URL(string: $0),
+                        FaviconService.acceptsIconURL(link, for: source)
                     else { return nil }
                     return link
                 })
@@ -1230,11 +1230,9 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             updateFavicon(
                 for: source,
                 declared: links.compactMap {
-                    guard $0.count <= 4096,
+                    guard $0.count <= ($0.hasPrefix("data:image/") ? 65536 : 4096),
                         let link = URL(string: $0),
-                        link.scheme == "https",
-                        link.user == nil,
-                        link.password == nil
+                        FaviconService.acceptsIconURL(link, for: source)
                     else {
                         return nil
                     }

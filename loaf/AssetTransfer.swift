@@ -24,7 +24,13 @@ nonisolated final class AssetTransfer: @unchecked Sendable {
     private var continuation: CheckedContinuation<Data, Error>?
     private var task: URLSessionDataTask?
     private var redirects = 0
-    init(limit: Int) { body = AssetBody(limit: limit) }
+    private let allowHTTP: Bool
+    private let originalURL: URL?
+    init(limit: Int, allowHTTP: Bool = false, originalURL: URL? = nil) {
+        body = AssetBody(limit: limit)
+        self.allowHTTP = allowHTTP
+        self.originalURL = originalURL
+    }
     func start(_ task: URLSessionDataTask, continuation: CheckedContinuation<Data, Error>) -> Bool {
         lock.lock()
         if let result {
@@ -95,8 +101,16 @@ nonisolated final class AssetTransfer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         redirects += 1
-        return result == nil && redirects <= 5 && request.url?.scheme == "https" && request.url?.user == nil
-            && request.url?.password == nil
+        guard let url = request.url else { return false }
+        guard result == nil, redirects <= 5, url.host != nil, url.user == nil, url.password == nil else {
+            return false
+        }
+        if originalURL?.scheme == "http" {
+            guard let originalURL else { return false }
+            return allowHTTP && url.scheme == "http" && BrowserAddress.isLocalHost(url.host)
+                && BrowserAddress.websiteOrigin(url) == BrowserAddress.websiteOrigin(originalURL)
+        }
+        return url.scheme == "https"
     }
 }
 

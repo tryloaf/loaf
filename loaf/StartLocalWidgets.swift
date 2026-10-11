@@ -28,7 +28,12 @@ struct StartChecklistWidget: View {
     let options: StartWidgetOptions
     var showsHeader = true
     @State private var draft = ""
+    @State private var expanded = false
     private var items: [StartChecklistItem] { (store.profile.personalization ?? Personalization()).boundedChecklist }
+    private var visibleItems: [StartChecklistItem] {
+        let remaining = items.filter { !$0.complete }
+        return options.hideCompleted == true ? remaining : remaining + items.filter(\.complete)
+    }
     private func update(_ edit: (inout Personalization) -> Void) {
         store.updateCurrent { profile in
             var value = profile.personalization ?? Personalization()
@@ -46,13 +51,25 @@ struct StartChecklistWidget: View {
             if showsHeader {
                 HStack {
                     GolzheimIcon(icon: .check, size: 14)
-                    Text("checklist").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                    Text("checklist").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
                     Spacer()
                     Text("\(items.filter { !$0.complete }.count)").font(.system(size: 11)).foregroundStyle(.tertiary)
                         .monospacedDigit()
+                        .accessibilityLabel("\(items.filter { !$0.complete }.count) remaining items")
+                    if items.contains(where: \.complete) {
+                        Menu {
+                            Button("clear completed") {
+                                update { $0.checklistItems = $0.boundedChecklist.filter { !$0.complete } }
+                            }
+                        } label: {
+                            GolzheimIcon(icon: .more, size: 13)
+                        }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                        .accessibilityLabel("checklist actions")
+                    }
                 }
             }
-            ForEach(Array(items.filter { options.hideCompleted != true || !$0.complete }.prefix(options.limit))) {
+            ForEach(Array(visibleItems.prefix(expanded ? 100 : options.limit))) {
                 item in
                 WidgetTaskRow(
                     complete: item.complete,
@@ -90,7 +107,16 @@ struct StartChecklistWidget: View {
                         }
                 }
             }
-            if items.isEmpty { Text("keep a few things in view").font(.system(size: 12)).foregroundStyle(.secondary) }
+            if visibleItems.isEmpty {
+                Text(items.isEmpty ? "keep a few things in view" : "all done")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            if visibleItems.count > options.limit {
+                Button(expanded ? "show less" : "\(visibleItems.count - options.limit) more items") {
+                    expanded.toggle()
+                }
+                .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
             HStack(spacing: 6) {
                 TextField("add an item…", text: $draft).textFieldStyle(.plain).font(.system(size: 12)).onSubmit(add)
                     .accessibilityLabel("new checklist item")

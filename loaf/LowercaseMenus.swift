@@ -5,6 +5,15 @@ import WebKit
 
 @MainActor enum LowercaseMenus {
     private static var installed = false
+    private static var trackingObserver: NSObjectProtocol?
+    private static var capitalizationEnabled: () -> Bool = { true }
+    private static var originalTitleKey: UInt8 = 0
+    private static var displayedTitleKey: UInt8 = 0
+
+    static func configure(capitalizationEnabled: @escaping () -> Bool) {
+        self.capitalizationEnabled = capitalizationEnabled
+        if let menu = NSApp.mainMenu { normalize(menu) }
+    }
 
     static func install() {
         guard !installed else { return }
@@ -22,13 +31,67 @@ import WebKit
             }
         }
         installed = true
+        trackingObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main
+        ) { note in
+            guard let menu = note.object as? NSMenu else { return }
+            MainActor.assumeIsolated { LowercaseMenus.normalize(menu) }
+        }
         if let menu = NSApp.mainMenu { normalize(menu) }
     }
 
-    static func normalize(_ menu: NSMenu) {}
-    static func normalize(_ item: NSMenuItem) {}
+    static func normalize(_ menu: NSMenu) {
+        for item in menu.items where !item.isSeparatorItem { normalize(item) }
+    }
+
+    static func normalize(_ item: NSMenuItem) {
+
+        if item.identifier?.rawValue == "loaf.page" || item.identifier?.rawValue == "loaf.profile" { return }
+        if item.identifier?.rawValue == "loaf.profileWindow" {
+            let prefix = "new window · "
+            guard item.title.lowercased().hasPrefix(prefix) else { return }
+            item.title = (capitalizationEnabled() ? "New Window · " : prefix)
+                + item.title.dropFirst(prefix.count)
+            return
+        }
+        let lastDisplayed = objc_getAssociatedObject(item, &displayedTitleKey) as? String
+        let original = lastDisplayed == item.title
+            ? (objc_getAssociatedObject(item, &originalTitleKey) as? String ?? item.title) : item.title
+        objc_setAssociatedObject(item, &originalTitleKey, original, .OBJC_ASSOCIATION_COPY_NONATOMIC)
+        let title = capitalizationEnabled() ? standardTitle(original) : original
+        if item.title != title { item.title = title }
+        objc_setAssociatedObject(item, &displayedTitleKey, title, .OBJC_ASSOCIATION_COPY_NONATOMIC)
+        if let attributed = item.attributedTitle, attributed.string != title {
+            let updated = NSMutableAttributedString(attributedString: attributed)
+            updated.mutableString.setString(title)
+            item.attributedTitle = updated
+        }
+        if let submenu = item.submenu {
+            if submenu.title != title { submenu.title = title }
+            normalize(submenu)
+        }
+    }
+
+    private static func standardTitle(_ title: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"“[^”]*”|\"[^\"]*\"|[\p{L}][\p{L}\p{N}'’]*"#) else {
+            return title
+        }
+        let source = title as NSString
+        var result = ""
+        var offset = 0
+        for match in regex.matches(in: title, range: NSRange(location: 0, length: source.length)) {
+            result += source.substring(with: NSRange(location: offset, length: match.range.location - offset))
+            let word = source.substring(with: match.range)
+
+            result += word.contains(where: \.isUppercase) || word.hasPrefix("“") || word.hasPrefix("\"")
+                ? word : word.prefix(1).uppercased(with: Locale.current) + word.dropFirst()
+            offset = NSMaxRange(match.range)
+        }
+        return result + source.substring(from: offset)
+    }
 
     static func normalizeWebContext(_ menu: NSMenu) {
+        guard !capitalizationEnabled() else { return }
         let verbs: Set<String> = [
             "open", "download", "copy", "look", "share", "save", "inspect", "enter", "exit",
             "play", "pause", "mute", "unmute", "show", "hide", "loop", "back", "forward", "reload", "stop",
@@ -135,6 +198,9 @@ extension NSMenuItem {
 
     func install() {
         LowercaseMenus.install()
+        LowercaseMenus.configure(capitalizationEnabled: { [weak coordinator] in
+            coordinator?.application.preferences.capitalizeMenus != false
+        })
         guard mainMenu == nil else {
             restoreMainMenu()
             return
@@ -377,6 +443,7 @@ extension NSMenuItem {
         add("Show Favorites", .favorites, key: "b", flags: [.command, .shift], to: bookmarks)
         if let store, !store.profile.favorites.isEmpty {
             bookmarks.addItem(.separator())
+            bookmarks.addItem(.sectionHeader(title: "saved bookmarks"))
             for favorite in store.profile.favorites.prefix(12) {
                 addPage(favorite.title, address: favorite.address, to: bookmarks)
             }
@@ -406,7 +473,10 @@ extension NSMenuItem {
             }
             visible = String(label.prefix(lower)) + "…"
         }
-        item.attributedTitle = NSAttributedString(string: visible, attributes: [.font: font])
+        item.title = visible
+        item.identifier = NSUserInterfaceItemIdentifier("loaf.page")
+
+        if #available(macOS 27.0, *) { item.preferredImageVisibility = .visible }
         item.toolTip = label + "\n" + address
         menu.addItem(item)
         guard let store, let url else { return }
@@ -431,32 +501,40 @@ extension NSMenuItem {
         }
         Task { @MainActor [weak item, weak store, weak self] in
             guard let store else { return }
-            let image = await store.application.favicons.image(
-                for: url, privateID: privateID, quick: true, discoverPage: false)
+            let service = store.application.favicons
+            let saved = await service.storedImage(for: url, privateID: privateID)
+            if let item, store.selectedProfileID == profileID, let saved {
+                item.image = self?.menuIcon(saved)
+                return
+            }
+            let image = await service.image(for: url, privateID: privateID, quick: true)
             guard let item, store.selectedProfileID == profileID, let image else { return }
             item.image = self?.menuIcon(image)
         }
     }
     private func rebuildHistory() {
         history.removeAllItems()
+        history.addItem(.sectionHeader(title: "navigation"))
         add("Back", .back, key: "[", to: history)
         add("Forward", .forward, key: "]", to: history)
         add("Show History", .history, key: "y", to: history)
+        history.addItem(.separator())
         add("Reopen Closed Tab", .reopenTab, key: "t", flags: [.command, .shift], to: history)
         add("Reopen Last Closed Window", .reopenWindow, key: "n", flags: [.command, .option, .shift], to: history)
         guard let store, !store.profile.privateMode else { return }
         let sections = HistoryMenuSections(
             visits: store.profile.history, currentSession: store.application.browsingSessionID)
-        guard !sections.recent.isEmpty else { return }
-        history.addItem(.separator())
-        let heading = NSMenuItem(title: "recent pages", action: nil, keyEquivalent: "")
-        heading.isEnabled = false
-        history.addItem(heading)
-        for visit in sections.recent { addPage(visit.title, address: visit.address, to: history) }
-        for (title, groups) in [
+        if !sections.recent.isEmpty {
+            history.addItem(.separator())
+            history.addItem(.sectionHeader(title: "recent pages"))
+            for visit in sections.recent { addPage(visit.title, address: visit.address, to: history) }
+        }
+        let olderSections: [(String, [HistoryMenuSections.Group])] = [
             ("previous sessions", sections.sessions), ("previous days", sections.days),
             ("previous weeks", sections.weeks),
-        ] {
+        ]
+        if olderSections.contains(where: { !$0.1.isEmpty }) { history.addItem(.separator()) }
+        for (title, groups) in olderSections {
             guard !groups.isEmpty else { continue }
             let parent = appendMenu(title, to: history)
             for group in groups {
@@ -477,15 +555,20 @@ extension NSMenuItem {
             "Next Profile", .nextProfile, key: String(UnicodeScalar(NSRightArrowFunctionKey)!),
             flags: [.command, .option], to: profiles)
         profiles.addItem(.separator())
+        profiles.addItem(.sectionHeader(title: "profiles"))
         for (index, profile) in coordinator.application.profiles.enumerated() {
             let item = system(
                 profile.name, #selector(switchProfile(_:)), key: index < 9 ? String(index + 1) : "",
                 flags: [.command, .option], target: self, to: profiles)
+            item.title = profile.name
             item.representedObject = profile.id
+            item.identifier = NSUserInterfaceItemIdentifier("loaf.profile")
             item.state = store?.selectedProfileID == profile.id ? .on : .off
             let window = system(
                 "New Window · " + profile.name, #selector(newProfileWindow(_:)), target: self, to: profiles)
+            window.title = "new window · " + profile.name
             window.representedObject = profile.id
+            window.identifier = NSUserInterfaceItemIdentifier("loaf.profileWindow")
         }
         profiles.addItem(.separator())
         add("Edit Profile…", .editProfile, to: profiles)
@@ -511,8 +594,7 @@ extension NSMenuItem {
         var expected = baseItems
         if coordinator.application.preferences.developerMenu == true {
 
-            if developItem.title != "develop" { developItem.title = "develop" }
-            let index = expected.firstIndex { $0.title == "window" } ?? expected.count
+            let index = expected.firstIndex { $0.submenu === NSApp.windowsMenu } ?? expected.count
             expected.insert(developItem, at: index)
         }
         if main.items.map(ObjectIdentifier.init) != expected.map(ObjectIdentifier.init) {
@@ -524,21 +606,22 @@ extension NSMenuItem {
             while main.numberOfItems > expected.count { main.removeItem(at: main.numberOfItems - 1) }
         }
         if NSApp.mainMenu !== main { NSApp.mainMenu = main }
-        if let services = baseItems.first?.submenu?.items.first(where: { $0.submenu?.title == "services" })?.submenu,
+        if let services = baseItems.first?.submenu?.items.first(where: { $0.title.lowercased() == "services" })?.submenu,
             NSApp.servicesMenu !== services
         {
             NSApp.servicesMenu = services
         }
-        if let window = baseItems.first(where: { $0.title == "window" })?.submenu,
+        if let window = baseItems.first(where: { $0.title.lowercased() == "window" })?.submenu,
             NSApp.windowsMenu !== window
         {
             NSApp.windowsMenu = window
         }
-        if let help = baseItems.first(where: { $0.title == "help" })?.submenu,
+        if let help = baseItems.first(where: { $0.title.lowercased() == "help" })?.submenu,
             NSApp.helpMenu !== help
         {
             NSApp.helpMenu = help
         }
+        LowercaseMenus.normalize(main)
     }
 
     private func rebuildUserAgents() {

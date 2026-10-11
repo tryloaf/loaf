@@ -5,10 +5,13 @@ struct SettingsSearchResult: Identifiable {
     let section: String
     let title: String
     let keywords: String
+    var websiteOrigin: String? = nil
 }
 
 enum SettingsSearch {
     static let entries: [SettingsSearchResult] = [
+        .init(id: "icloud-sync", section: "sync", title: "sync with iCloud · experimental",
+              keywords: "cloud Mac devices sidebar profiles pinned tabs groups preferences other Macs experimental"),
         .init(
             id: "automatic-update-checks", section: "general", title: "check for updates automatically",
             keywords: "software Sparkle periodic background reminder version"),
@@ -67,6 +70,9 @@ enum SettingsSearch {
         .init(
             id: "sidebar-only-chrome", section: "appearance", title: "sidebar-only titlebar",
             keywords: "hide titlebar toolbar traffic lights gray grey dots window controls hover"),
+        .init(
+            id: "capitalize-menus", section: "appearance", title: "capitalize menu items",
+            keywords: "context menus menu bar uppercase lowercase title case normal capitalization"),
         .init(
             id: "page-margins", section: "appearance", title: "keep page margins when sidebar is hidden",
             keywords: "rounded border edges detection background inset padding compact sidebar-only"),
@@ -135,12 +141,17 @@ enum SettingsSearch {
             id: "identity", section: "advanced", title: "default browser identity",
             keywords: "user agent safari desktop automatic webkit"),
     ]
-    static func results(for query: String) -> [SettingsSearchResult] {
+    static func results(for query: String, websiteOrigins: [String] = []) -> [SettingsSearchResult] {
         let words = query.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
         guard !words.isEmpty else { return [] }
         func stem(_ word: String) -> String { word.count > 4 && word.hasSuffix("s") ? String(word.dropLast()) : word }
-        return entries.filter { entry in
+        let websites = websiteOrigins.map { origin in
+            SettingsSearchResult(
+                id: origin, section: "websites", title: BrowserAddress.visible(origin),
+                keywords: "saved website site permissions " + origin, websiteOrigin: origin)
+        }
+        return (entries + websites).filter { entry in
             let terms = (entry.title + " " + entry.section + " " + entry.keywords).lowercased()
             let vocabulary = terms.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map { stem(String($0)) }
             return words.allSatisfy { word in vocabulary.contains { $0.contains(stem(word)) } }

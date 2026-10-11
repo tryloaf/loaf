@@ -24,7 +24,6 @@ struct OmnibarTextField: NSViewRepresentable {
     var tracksOmnibar = true
     var inlineCompletion: String? = nil
     var actionPreview: String? = nil
-    var actionPreviewID: String? = nil
     var suggestionPresentationChanged: ((String?) -> Void)? = nil
     var focusSnapshot: (() -> (text: String, select: Bool)?)? = nil
     var fadesOverflow = false
@@ -67,12 +66,61 @@ struct OmnibarTextField: NSViewRepresentable {
         field.monochromeSelection = monochromeSelection
         field.configureSelection()
         let composing = (field.currentEditor() as? NSTextView)?.hasMarkedText() == true
-        if !composing && field.stringValue != text && !context.coordinator.hasSuffix && !context.coordinator.hasPreview
-        {
+        if !composing && field.stringValue != text {
             field.stringValue = text
         }
         context.coordinator.offerCompletion(field)
         field.updateOverflowFade()
+    }
+    final class SuggestionOverlay: NSView {
+        var suggestion = "" { didSet { needsDisplay = true; updateTrailingFade() } }
+        var startX: CGFloat = 0 { didSet { needsDisplay = true; updateTrailingFade() } }
+        var suggestionFont = NSFont.systemFont(ofSize: 17) { didSet { needsDisplay = true; updateTrailingFade() } }
+        private let trailingFade = CAGradientLayer()
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            wantsLayer = true
+            trailingFade.startPoint = CGPoint(x: 0, y: 0.5)
+            trailingFade.endPoint = CGPoint(x: 1, y: 0.5)
+            trailingFade.colors = [NSColor.white.cgColor, NSColor.white.cgColor, NSColor.clear.cgColor]
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override var isFlipped: Bool { true }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func layout() {
+            super.layout()
+            updateTrailingFade()
+        }
+        private func updateTrailingFade() {
+            let remainingWidth = bounds.maxX - startX
+            let textWidth = (suggestion as NSString).size(withAttributes: [.font: suggestionFont]).width
+            guard remainingWidth > 0, textWidth > remainingWidth + 0.5 else {
+                layer?.mask = nil
+                return
+            }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            trailingFade.frame = bounds
+            trailingFade.locations = [
+                0, NSNumber(value: max(0, (bounds.width - min(20, remainingWidth)) / max(1, bounds.width))), 1,
+            ]
+            layer?.mask = trailingFade
+            CATransaction.commit()
+        }
+        override func draw(_ dirtyRect: NSRect) {
+            guard !suggestion.isEmpty, startX < bounds.maxX else { return }
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byClipping
+            let height = suggestionFont.ascender - suggestionFont.descender + suggestionFont.leading + 2
+            NSAttributedString(string: suggestion, attributes: [
+                .font: suggestionFont,
+                .foregroundColor: NSColor.secondaryLabelColor.withAlphaComponent(0.7),
+                .paragraphStyle: paragraph,
+            ]).draw(with: NSRect(
+                x: startX, y: (bounds.height - height) / 2 + 1,
+                width: max(0, bounds.maxX - startX), height: height
+            ), options: [.usesLineFragmentOrigin])
+        }
     }
     final class FocusField: NSTextField {
         override var intrinsicContentSize: NSSize {
@@ -84,6 +132,38 @@ struct OmnibarTextField: NSViewRepresentable {
         var fadesOverflow = false
         var reduceMotion = false
         var monochromeSelection = false
+        private let suggestionOverlay = SuggestionOverlay()
+        func showSuggestion(_ suffix: String?) {
+            guard let editor = currentEditor() as? NSTextView, window?.firstResponder === editor,
+                let suffix, !suffix.isEmpty
+            else {
+                suggestionOverlay.suggestion = ""
+                suggestionOverlay.isHidden = true
+                return
+            }
+            if suggestionOverlay.superview == nil {
+                addSubview(suggestionOverlay, positioned: .above, relativeTo: nil)
+                suggestionOverlay.frame = bounds
+                suggestionOverlay.autoresizingMask = [.width, .height]
+            }
+            suggestionOverlay.suggestion = suffix
+            suggestionOverlay.suggestionFont = editor.font ?? font ?? .systemFont(ofSize: 17)
+            updateSuggestionPosition()
+        }
+        func updateSuggestionPosition() {
+            guard !suggestionOverlay.suggestion.isEmpty,
+                let editor = currentEditor() as? NSTextView, window?.firstResponder === editor,
+                let window
+            else {
+                suggestionOverlay.isHidden = true
+                return
+            }
+            let location = editor.string.utf16.count
+            let caret = editor.firstRect(forCharacterRange: NSRange(location: location, length: 0), actualRange: nil)
+            let x = convert(window.convertFromScreen(caret), from: nil).minX
+            suggestionOverlay.startX = x
+            suggestionOverlay.isHidden = x < 0 || x >= bounds.maxX
+        }
         private weak var selectionEditor: NSTextView?
         private var originalSelectionAttributes: [NSAttributedString.Key: Any]?
         func configureSelection() {
@@ -110,6 +190,7 @@ struct OmnibarTextField: NSViewRepresentable {
         }
         override func textDidEndEditing(_ notification: Notification) {
             restoreSelection()
+            showSuggestion(nil)
             super.textDidEndEditing(notification)
         }
         private(set) var overflowFadeVisible = false
@@ -120,16 +201,6 @@ struct OmnibarTextField: NSViewRepresentable {
         private var clipObserver: NSObjectProtocol?
         private weak var observedClip: NSClipView?
         private var editorBaseline: CGFloat = 0
-        var pinsCompletionPrefix = false
-        private var completionScrollOrigin: CGFloat = 0
-        func pinCompletionPrefix(resetOrigin: Bool = false) {
-            if resetOrigin {
-                completionScrollOrigin = 0
-            } else if !pinsCompletionPrefix {
-                completionScrollOrigin = max(0, observedClip?.bounds.minX ?? 0)
-            }
-            pinsCompletionPrefix = true
-        }
         func releaseEditorObservation() {
             if let clipObserver { NotificationCenter.default.removeObserver(clipObserver) }
             clipObserver = nil
@@ -248,13 +319,12 @@ struct OmnibarTextField: NSViewRepresentable {
                         guard let self, let clip, let editor, self.currentEditor() === editor,
                             self.window?.firstResponder === editor
                         else { return }
-                        let x =
-                            self.pinsCompletionPrefix && editor.selectedRange().length > 0
-                            ? self.completionScrollOrigin : max(0, clip.bounds.minX)
+                        let x = max(0, clip.bounds.minX)
                         if abs(clip.bounds.minY - self.editorBaseline) > 0.01 || abs(clip.bounds.minX - x) > 0.01 {
                             clip.scroll(to: NSPoint(x: x, y: self.editorBaseline))
                         }
                         self.updateOverflowFade()
+                        self.updateSuggestionPosition()
                     }
                 }
             }
@@ -272,11 +342,6 @@ struct OmnibarTextField: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: OmnibarTextField
         init(_ parent: OmnibarTextField) { self.parent = parent }
-        var hasSuffix = false
-        var hasPreview = false
-        var rejectedPreviewID: String?
-
-        var inlineSuggestionsDenied = false
         private var reportedPresentation: String?
         private var presentationRevision = 0
         private var selectionObserver: NSObjectProtocol?
@@ -289,26 +354,11 @@ struct OmnibarTextField: NSViewRepresentable {
                 forName: NSTextView.didChangeSelectionNotification, object: editor, queue: .main
             ) { [weak self, weak field] _ in
                 MainActor.assumeIsolated {
-                    if let field { self?.reportPresentation(field) }
+                    if let field { self?.offerCompletion(field) }
                 }
             }
         }
-        func reportPresentation(_ field: FocusField) {
-            let editor = field.currentEditor() as? NSTextView
-            let value: String?
-            if let editor, !editor.hasMarkedText(),
-                editor.string.utf16.count >= parent.text.utf16.count,
-                (hasSuffix
-                    && editor.selectedRange()
-                        == NSRange(
-                            location: parent.text.utf16.count,
-                            length: editor.string.utf16.count - parent.text.utf16.count)
-                    || hasPreview && editor.selectedRange() == NSRange(location: 0, length: editor.string.utf16.count))
-            {
-                value = editor.string
-            } else {
-                value = nil
-            }
+        private func reportPresentation(_ value: String?) {
             guard value != reportedPresentation else { return }
             reportedPresentation = value
             presentationRevision += 1
@@ -319,61 +369,38 @@ struct OmnibarTextField: NSViewRepresentable {
             }
         }
         func offerCompletion(_ field: FocusField) {
-            defer { reportPresentation(field) }
-            guard let editor = field.currentEditor() as? NSTextView, !editor.hasMarkedText() else { return }
+            guard let editor = field.currentEditor() as? NSTextView, !editor.hasMarkedText(),
+                editor.string == parent.text, !parent.text.isEmpty
+            else {
+                field.showSuggestion(nil)
+                reportPresentation(nil)
+                return
+            }
             observeSelection(field)
             let range = editor.selectedRange()
-            let prefixLength = parent.text.utf16.count
-            let ownsPreview = hasPreview && range == NSRange(location: 0, length: editor.string.utf16.count)
-            let selectingAllForAction =
-                parent.actionPreview != nil && range == NSRange(location: 0, length: editor.string.utf16.count)
-            let atEnd =
-                ownsPreview || selectingAllForAction
-                || (range.location == prefixLength
-                    && (range.length == 0 || (hasSuffix && range.length == editor.string.utf16.count - prefixLength)))
-            guard atEnd else {
-                field.pinsCompletionPrefix = false
+            guard range.length == 0, range.location == parent.text.utf16.count else {
+                field.showSuggestion(nil)
+                reportPresentation(nil)
                 return
             }
-            if let preview = parent.actionPreview, let id = parent.actionPreviewID, id != rejectedPreviewID {
-                field.pinCompletionPrefix(resetOrigin: true)
-                if editor.string != preview {
-                    field.stringValue = preview
-                    editor.string = preview
+            if let title = parent.actionPreview, !title.isEmpty {
+                let tail: String
+                if title.lowercased().hasPrefix(parent.text.lowercased()) {
+                    tail = String(title.dropFirst(parent.text.count))
+                } else {
+                    tail = "  ·  " + title
                 }
-                editor.setSelectedRange(NSRange(location: 0, length: preview.utf16.count))
-                editor.scrollRangeToVisible(NSRange(location: 0, length: 0))
-                hasPreview = true
-                hasSuffix = false
+                field.showSuggestion(tail)
+                reportPresentation(title)
                 return
             }
-            if hasPreview {
-                field.pinsCompletionPrefix = false
-                field.stringValue = parent.text
-                editor.string = parent.text
-                editor.setSelectedRange(NSRange(location: prefixLength, length: 0))
-                hasPreview = false
+            if let full = parent.inlineCompletion, full.hasPrefix(parent.text), full.count > parent.text.count {
+                field.showSuggestion(String(full.dropFirst(parent.text.count)))
+                reportPresentation(full)
+            } else {
+                field.showSuggestion(nil)
+                reportPresentation(nil)
             }
-            guard !inlineSuggestionsDenied, let full = parent.inlineCompletion, full.hasPrefix(parent.text),
-                full.utf16.count > prefixLength
-            else {
-                if hasSuffix {
-                    field.pinsCompletionPrefix = false
-                    field.stringValue = parent.text
-                    editor.string = parent.text
-                    editor.setSelectedRange(NSRange(location: prefixLength, length: 0))
-                    hasSuffix = false
-                }
-                return
-            }
-            field.pinCompletionPrefix()
-            if editor.string != full {
-                field.stringValue = full
-                editor.string = full
-            }
-            editor.setSelectedRange(NSRange(location: prefixLength, length: full.utf16.count - prefixLength))
-            editor.scrollRangeToVisible(NSRange(location: 0, length: 0))
-            hasSuffix = true
         }
         func controlTextDidBeginEditing(_ notification: Notification) {
             guard let field = notification.object as? FocusField else { return }
@@ -386,9 +413,8 @@ struct OmnibarTextField: NSViewRepresentable {
             observedEditor = nil
             if let field = notification.object as? FocusField {
                 field.releaseEditorObservation()
-                hasSuffix = false
-                hasPreview = false
-                reportPresentation(field)
+                field.showSuggestion(nil)
+                reportPresentation(nil)
             }
         }
         deinit { if let selectionObserver { NotificationCenter.default.removeObserver(selectionObserver) } }
@@ -396,35 +422,12 @@ struct OmnibarTextField: NSViewRepresentable {
             guard let field = notification.object as? FocusField,
                 parent.focusSnapshot == nil || parent.focusSnapshot?() != nil
             else { return }
-            field.pinsCompletionPrefix = false
-            hasSuffix = false
-            hasPreview = false
-            rejectedPreviewID = nil
+            field.showSuggestion(nil)
             parent.text = field.stringValue
             field.revealCaretAfterEditing()
-            reportPresentation(field)
-        }
-        func accept(_ control: NSControl, textView: NSTextView) {
-            defer { if let field = control as? FocusField { reportPresentation(field) } }
-            (control as? FocusField)?.pinsCompletionPrefix = false
-            let range = textView.selectedRange()
-            if hasPreview, range == NSRange(location: 0, length: textView.string.utf16.count), !textView.hasMarkedText()
-            {
-                hasPreview = false
-                parent.text = textView.string
-                textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
-                return
-            }
-            let selectedSuffix =
-                textView.string.hasPrefix(parent.text) && range.location == parent.text.utf16.count && range.length > 0
-                && range.length == textView.string.utf16.count - parent.text.utf16.count
-            guard selectedSuffix, !textView.hasMarkedText() else { return }
-            hasSuffix = false
-            parent.text = textView.string
-            textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
+            reportPresentation(nil)
         }
         func control(_ control: NSControl, textView: NSTextView, doCommandBy command: Selector) -> Bool {
-            defer { if let field = control as? FocusField { reportPresentation(field) } }
             guard !textView.hasMarkedText(), parent.focusSnapshot == nil || parent.focusSnapshot?() != nil else {
                 return false
             }
@@ -436,7 +439,6 @@ struct OmnibarTextField: NSViewRepresentable {
                 if !parent.tracksOmnibar && NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
                     parent.move(-1)
                 } else {
-                    accept(control, textView: textView)
                     parent.submit()
                 }
             case #selector(NSResponder.moveDown(_:)): parent.move(1)
@@ -444,40 +446,19 @@ struct OmnibarTextField: NSViewRepresentable {
             case #selector(NSResponder.cancelOperation(_:)): parent.cancel()
             case #selector(NSResponder.insertTab(_:)):
                 let range = textView.selectedRange()
-                let accepted =
-                    (hasPreview && range == NSRange(location: 0, length: textView.string.utf16.count))
-                    || (textView.string.hasPrefix(parent.text) && range.location == parent.text.utf16.count
-                        && range.length > 0 && range.length == textView.string.utf16.count - parent.text.utf16.count)
-                accept(control, textView: textView)
-                if !accepted {
-                    guard range.length == 0, range.location == textView.string.utf16.count else { return false }
+                guard range.length == 0, range.location == textView.string.utf16.count else { return false }
+                if parent.actionPreview != nil {
+                    parent.complete()
+                } else if let full = parent.inlineCompletion, full.hasPrefix(parent.text),
+                    full.count > parent.text.count
+                {
+                    parent.text = full
+                    (control as? NSTextField)?.stringValue = full
+                    textView.string = full
+                    textView.setSelectedRange(NSRange(location: full.utf16.count, length: 0))
+                } else {
                     parent.complete()
                 }
-            case #selector(NSResponder.deleteBackward(_:)), #selector(NSResponder.deleteForward(_:)),
-                #selector(NSResponder.moveLeft(_:)):
-                let range = textView.selectedRange()
-                if hasPreview, range == NSRange(location: 0, length: textView.string.utf16.count) {
-                    guard command != #selector(NSResponder.moveLeft(_:)) else { return false }
-                    hasPreview = false
-                    rejectedPreviewID = parent.actionPreviewID
-                    inlineSuggestionsDenied = true
-                    (control as? FocusField)?.pinsCompletionPrefix = false
-                    (control as? NSTextField)?.stringValue = parent.text
-                    textView.string = parent.text
-                    textView.setSelectedRange(NSRange(location: parent.text.utf16.count, length: 0))
-                    (control as? FocusField)?.revealCaretAfterEditing()
-                    return true
-                }
-                guard textView.string.hasPrefix(parent.text), range.location == parent.text.utf16.count,
-                    range.length > 0, range.length == textView.string.utf16.count - parent.text.utf16.count
-                else { return false }
-                hasSuffix = false
-                inlineSuggestionsDenied = true
-                (control as? FocusField)?.pinsCompletionPrefix = false
-                (control as? NSTextField)?.stringValue = parent.text
-                textView.string = parent.text
-                textView.setSelectedRange(NSRange(location: parent.text.utf16.count, length: 0))
-                (control as? FocusField)?.revealCaretAfterEditing()
             default: return false
             }
             return true

@@ -15,11 +15,13 @@ enum AssetRequest {
         config.timeoutIntervalForResource = 120
         return URLSession(configuration: config, delegate: transfers, delegateQueue: nil)
     }()
-    static func data(_ url: URL, limit: Int = 1_000_000, timeout: TimeInterval = 8) async throws -> Data {
-        guard url.scheme == "https", url.user == nil, url.password == nil, limit >= 0, limit <= 50_000_000 else {
+    static func data(_ url: URL, limit: Int = 1_000_000, timeout: TimeInterval = 8, allowHTTP: Bool = false) async throws -> Data {
+        guard (url.scheme == "https" || (allowHTTP && url.scheme == "http" && BrowserAddress.isLocalHost(url.host))), url.host != nil,
+            url.user == nil, url.password == nil, limit >= 0, limit <= 50_000_000
+        else {
             throw URLError(.unsupportedURL)
         }
-        let transfer = AssetTransfer(limit: limit)
+        let transfer = AssetTransfer(limit: limit, allowHTTP: allowHTTP, originalURL: url)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 var request = URLRequest(url: url)
@@ -39,6 +41,11 @@ enum AssetRequest {
     private var memory: [String: NSImage] = [:]
     private var order: [String] = []
     private var failures: [String: Date] = [:]
+    private struct DeclaredAttempt {
+        let links: [URL]
+        let date: Date
+    }
+    private var recentDeclaredAttempts: [String: DeclaredAttempt] = [:]
     private var privateGenerations: [UUID: Int] = [:]
     private let assets: FaviconAssets
     private let fetch: (URL) async throws -> Data
@@ -49,7 +56,9 @@ enum AssetRequest {
         let discoverPage: Bool
     }
     private var pending: [String: Pending] = [:]
-    init(directory: URL, fetch: @escaping (URL) async throws -> Data = { try await AssetRequest.data($0) }) {
+    init(directory: URL, fetch: @escaping (URL) async throws -> Data = {
+        try await AssetRequest.data($0, allowHTTP: $0.scheme == "http")
+    }) {
         self.directory = directory
         self.fetch = fetch
         assets = FaviconAssets(directory: directory)
@@ -68,7 +77,11 @@ enum AssetRequest {
         failures[key] = nil
         order.removeAll { $0 == key }
         order.append(key)
-        while order.count > 512 { memory.removeValue(forKey: order.removeFirst()) }
+        while order.count > 512 {
+            let removed = order.removeFirst()
+            memory.removeValue(forKey: removed)
+            recentDeclaredAttempts.removeValue(forKey: removed)
+        }
     }
 
     func storedImage(for url: URL, privateID: UUID? = nil) async -> NSImage? {
@@ -88,6 +101,11 @@ enum AssetRequest {
         let generation = privateID.map { privateGenerations[$0, default: 0] }
         func valid() -> Bool { privateID.map { privateGenerations[$0, default: 0] == generation } ?? true }
         if !refresh, let image = memory[key] { return image }
+        if !declared.isEmpty, let attempt = recentDeclaredAttempts[key], attempt.links == declared,
+            Date().timeIntervalSince(attempt.date) < 300
+        {
+            return memory[key]
+        }
         if let request = pending[key] {
 
 
@@ -117,7 +135,8 @@ enum AssetRequest {
             }
             var seen = Set<URL>()
             var fallback = URLComponents(string: origin)!
-            fallback.scheme = "https"
+            let localHTTP = url.scheme == "http" && BrowserAddress.isLocalHost(url.host)
+            fallback.scheme = localHTTP ? "http" : "https"
             fallback.path = "/favicon.ico"
             if quick, declared.isEmpty, let candidate = fallback.url {
                 seen.insert(candidate)
@@ -132,17 +151,24 @@ enum AssetRequest {
                 PublicSuffixList.shared.registrableDomain(url.host ?? "") == "reddit.com"
                 ? [URL(string: "https://www.redditstatic.com/shreddit/assets/favicon/192x192.png")!] : []
             var discovered = declared
-            if discoverPage, discovered.isEmpty, let pageURL = URL(string: origin), let data = try? await fetch(pageURL),
+            if discoverPage, discovered.isEmpty, (url.scheme == "https" || localHTTP),
+                let pageURL = URL(string: origin), let data = try? await fetch(pageURL),
                 data.count <= 512_000, !Task.isCancelled, let html = String(data: data, encoding: .utf8)
             {
                 discovered = Self.declaredIcons(in: html, relativeTo: pageURL)
             }
             let candidates = (discovered + known).filter {
-                $0.scheme == "https" && $0.user == nil && $0.password == nil && seen.insert($0).inserted
+                Self.acceptsIconURL($0, for: url) && seen.insert($0).inserted
             }
             for candidate in candidates + (fallback.url.map { seen.contains($0) ? [] : [$0] } ?? []) {
                 if Task.isCancelled { return nil }
-                guard let data = try? await fetch(candidate), !Task.isCancelled,
+                let data: Data?
+                if candidate.scheme == "data" {
+                    data = Self.inlineIconData(candidate)
+                } else {
+                    data = try? await fetch(candidate)
+                }
+                guard let data, !Task.isCancelled,
                     let prepared = await assets.decode(data), !Task.isCancelled
                 else { continue }
                 if privateID == nil { await assets.write(data, to: file) }
@@ -157,6 +183,13 @@ enum AssetRequest {
         guard pending[key]?.id == id else { return valid() ? memory[key] : nil }
         pending[key] = nil
         guard valid() else { return nil }
+        if !declared.isEmpty {
+            if recentDeclaredAttempts.count >= 512 {
+                recentDeclaredAttempts = recentDeclaredAttempts.filter { Date().timeIntervalSince($0.value.date) < 300 }
+            }
+            if recentDeclaredAttempts.count >= 512 { recentDeclaredAttempts.removeAll() }
+            recentDeclaredAttempts[key] = DeclaredAttempt(links: declared, date: Date())
+        }
         if let result {
             remember(result, key: key)
         } else {
@@ -165,6 +198,33 @@ enum AssetRequest {
             failures[key] = Date()
         }
         return result
+    }
+    nonisolated static func acceptsIconURL(_ icon: URL, for page: URL) -> Bool {
+        guard icon.user == nil, icon.password == nil else { return false }
+        switch icon.scheme?.lowercased() {
+        case "https": return icon.host != nil
+        case "http":
+            return page.scheme == "http" && BrowserAddress.isLocalHost(page.host)
+                && BrowserAddress.isLocalHost(icon.host)
+                && BrowserAddress.websiteOrigin(icon) != nil
+                && BrowserAddress.websiteOrigin(icon) == BrowserAddress.websiteOrigin(page)
+        case "data": return icon.absoluteString.utf8.count <= 128_000
+        default: return false
+        }
+    }
+    nonisolated private static func inlineIconData(_ url: URL) -> Data? {
+        let value = url.absoluteString
+        guard value.utf8.count <= 128_000, value.hasPrefix("data:"),
+            let comma = value.firstIndex(of: ",")
+        else { return nil }
+        let metadata = value[value.index(value.startIndex, offsetBy: 5)..<comma].lowercased()
+        guard metadata.hasPrefix("image/") else { return nil }
+        let payload = value[value.index(after: comma)...]
+        if metadata.split(separator: ";").contains("base64") {
+            return Data(base64Encoded: String(payload))
+        }
+        guard let decoded = String(payload).removingPercentEncoding else { return nil }
+        return Data(decoded.utf8)
     }
     nonisolated static func declaredIcons(in html: String, relativeTo page: URL) -> [URL] {
         guard let links = try? NSRegularExpression(pattern: "<link\\b[^>]{0,4096}>", options: .caseInsensitive),
@@ -198,6 +258,7 @@ enum AssetRequest {
         }
         memory = memory.filter { !$0.key.hasPrefix(id.uuidString) }
         failures = failures.filter { !$0.key.hasPrefix(id.uuidString) }
+        recentDeclaredAttempts = recentDeclaredAttempts.filter { !$0.key.hasPrefix(id.uuidString) }
         order.removeAll { $0.hasPrefix(id.uuidString) }
     }
 }

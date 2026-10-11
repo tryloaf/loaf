@@ -14,7 +14,7 @@ nonisolated enum OmnibarMetrics {
     }
 }
 
-enum SuggestionKind { case tab, history, favorite, site, search, page }
+nonisolated enum SuggestionKind: Hashable, Sendable { case tab, history, favorite, site, search, page }
 struct Suggestion: Identifiable {
     let id: String
     let title: String
@@ -47,8 +47,10 @@ struct Suggestion: Identifiable {
     struct Accumulator {
         let transform: (Suggestion) -> Suggestion
         let key: (Suggestion) -> String
+        let limit: Int
         private var entries: [(original: Suggestion, score: Double, result: Suggestion, key: String)] = []
-        init(transform: @escaping (Suggestion) -> Suggestion, key: @escaping (Suggestion) -> String) {
+        init(limit: Int = 6, transform: @escaping (Suggestion) -> Suggestion, key: @escaping (Suggestion) -> String) {
+            self.limit = limit
             self.transform = transform
             self.key = key
         }
@@ -57,10 +59,10 @@ struct Suggestion: Identifiable {
         }
         mutating func offer(score: Double, make: () -> Suggestion) {
 
-            if entries.count == 6, score < entries.last!.score { return }
+            if entries.count == limit, score < entries.last!.score { return }
             let original = make()
             let value = (original, score)
-            if entries.count == 6, let last = entries.last, !Self.precedes(value, (last.original, last.score)) {
+            if entries.count == limit, let last = entries.last, !Self.precedes(value, (last.original, last.score)) {
                 return
             }
             let result = transform(original)
@@ -71,9 +73,10 @@ struct Suggestion: Identifiable {
             }
             entries.append((original, score, result, identity))
             entries.sort { Self.precedes(($0.original, $0.score), ($1.original, $1.score)) }
-            if entries.count > 6 { entries.removeLast() }
+            if entries.count > limit { entries.removeLast() }
         }
         var results: [Suggestion] { entries.map(\.result) }
+        var scoredResults: [(Suggestion, Double)] { entries.map { ($0.result, $0.score) } }
     }
     static func best(
         _ entries: [(Suggestion, Double)], transform: @escaping (Suggestion) -> Suggestion,
@@ -82,6 +85,143 @@ struct Suggestion: Identifiable {
         var ranking = Accumulator(transform: transform, key: key)
         for (value, score) in entries { ranking.offer(score: score) { value } }
         return ranking.results
+    }
+}
+
+nonisolated struct PreparedHistoryVisit: Sendable {
+    let visit: Visit
+    let title: String
+    let address: String
+    let host: String
+    let label: String
+    let catalogHost: String?
+    let titleSearch: LocalPageSearch.Text
+    let addressSearch: LocalPageSearch.Text
+    let hostSearch: LocalPageSearch.Text
+    let savedSearch: Bool
+    let document: LocalPageSearch.Document
+
+    init(_ visit: Visit) {
+        self.visit = visit
+        let url = URL(string: visit.address)
+        let title = visit.title.lowercased()
+        let address = visit.address.lowercased()
+        self.title = title
+        self.address = address
+        label = BrowserAddress.suggestionLabel(url)
+        let rawHost = url?.host?.lowercased() ?? ""
+        let catalogHost = rawHost.hasPrefix("www.") ? String(rawHost.dropFirst(4)) : rawHost
+        self.catalogHost =
+            url.map {
+                ["https", "http"].contains($0.scheme) && $0.user == nil && $0.password == nil && $0.port == nil
+                    && !catalogHost.isEmpty
+            } == true ? catalogHost : nil
+        host = url?.host?.replacingOccurrences(of: "www.", with: "").lowercased() ?? ""
+        titleSearch = LocalPageSearch.Text(title)
+        addressSearch = LocalPageSearch.Text(address)
+        hostSearch = LocalPageSearch.Text(host)
+        savedSearch = BrowserAddress.defaultSearchQuery(url) != nil
+        document = LocalPageSearch.Document(title: visit.title, address: visit.address)
+    }
+
+    func score(query: LocalPageSearch.Query) -> Double? {
+        let literal = query.literal
+        if literal.isEmpty { return 0 }
+        if hostSearch.hasPrefix(literal) || addressSearch.hasPrefix(literal) { return 120 }
+        if titleSearch.hasPrefix(literal) { return 100 }
+        if hostSearch.contains(literal) { return 95 }
+        if titleSearch.contains(literal) { return 85 }
+        if addressSearch.contains(literal) { return 75 }
+        guard !query.patterns.isEmpty else { return nil }
+        if query.patterns.allSatisfy({ titleSearch.contains($0[0]) || addressSearch.contains($0[0]) }) { return 65 }
+        guard
+            query.patterns.allSatisfy({ patterns in
+                patterns.contains { titleSearch.contains($0) || addressSearch.contains($0) }
+            })
+        else { return nil }
+        return document.score(query)
+    }
+}
+
+nonisolated struct HistorySuggestionMatch: Sendable {
+    let visit: Visit
+    let label: String
+    let score: Double
+}
+
+nonisolated struct PreparedHistorySnapshot: Sendable {
+    let rows: [PreparedHistoryVisit]
+    let byID: [UUID: PreparedHistoryVisit]
+    let hostVisits: [String: Int]
+    let addressVisits: [String: Int]
+    let rowsPrepared: Int
+}
+
+nonisolated enum HistorySuggestionWork {
+    static func prepare(_ visits: [Visit], previous: [UUID: PreparedHistoryVisit]) -> PreparedHistorySnapshot {
+        var rows: [PreparedHistoryVisit] = []
+        var byID: [UUID: PreparedHistoryVisit] = [:]
+        var hostVisits: [String: Int] = [:]
+        var addressVisits: [String: Int] = [:]
+        var rowsPrepared = 0
+        rows.reserveCapacity(visits.count)
+        byID.reserveCapacity(visits.count)
+        hostVisits.reserveCapacity(min(visits.count, 2_000))
+        addressVisits.reserveCapacity(min(visits.count, 10_000))
+        for (index, visit) in visits.enumerated() {
+            if index & 255 == 0, Task.isCancelled { break }
+            let row: PreparedHistoryVisit
+            if let cached = previous[visit.id], cached.visit == visit {
+                row = cached
+            } else {
+                row = PreparedHistoryVisit(visit)
+                rowsPrepared += 1
+            }
+            rows.append(row)
+            byID[visit.id] = row
+            if let host = row.catalogHost { hostVisits[host, default: 0] += 1 }
+            addressVisits[visit.address, default: 0] += 1
+        }
+        return PreparedHistorySnapshot(
+            rows: rows, byID: byID, hostVisits: hostVisits, addressVisits: addressVisits,
+            rowsPrepared: rowsPrepared)
+    }
+
+    static func matches(
+        rows: [PreparedHistoryVisit], addressVisits: [String: Int], query: LocalPageSearch.Query,
+        emptyQuery: Bool, now: Date, limit: Int = 128
+    ) -> [HistorySuggestionMatch] {
+        guard !rows.isEmpty, limit > 0 else { return [] }
+        var best: [HistorySuggestionMatch] = []
+        best.reserveCapacity(min(limit, rows.count))
+
+        func outranks(_ lhs: HistorySuggestionMatch, _ rhs: HistorySuggestionMatch) -> Bool {
+            lhs.score == rhs.score ? lhs.visit.id.uuidString < rhs.visit.id.uuidString : lhs.score > rhs.score
+        }
+        func worstIndex() -> Int {
+            best.indices.reduce(0) { current, candidate in
+                outranks(best[current], best[candidate]) ? candidate : current
+            }
+        }
+
+        for (index, row) in rows.enumerated() {
+            if index & 255 == 0, Task.isCancelled { return [] }
+            guard let score = row.score(query: query) else { continue }
+            let visit = row.visit
+            let adjusted = score + (emptyQuery ? 35 : 20)
+                + min(20, log2(Double((addressVisits[visit.address] ?? 1) + 1)) * 5)
+                + max(0, 12 - now.timeIntervalSince(visit.date) / 86400)
+                - (row.savedSearch ? 15 : 0)
+            let match = HistorySuggestionMatch(visit: visit, label: row.label, score: adjusted)
+            if best.count < limit {
+                best.append(match)
+            } else {
+                let index = worstIndex()
+                if outranks(match, best[index]) { best[index] = match }
+            }
+        }
+        best.sort(by: outranks)
+        return best
     }
 }
 
@@ -98,67 +238,17 @@ struct Suggestion: Identifiable {
     private var profileID: UUID?
     private weak var currentStore: BrowserStore?
     private var tldObserver: AnyCancellable?
-    private struct HistorySource: Equatable {
+    private struct HistorySignature: Equatable {
         let profile: UUID
-        let visits: [Visit]
+        let count: Int
+        let firstID: UUID?
+        let firstDate: Date?
+        let lastID: UUID?
     }
-    private final class PreparedVisit {
-        let visit: Visit
-        let title: String
-        let address: String
-        let host: String
-        private let url: URL?
-
-        lazy var label = BrowserAddress.suggestionLabel(url)
-        let catalogHost: String?
-        let titleSearch: LocalPageSearch.Text
-        let addressSearch: LocalPageSearch.Text
-        let hostSearch: LocalPageSearch.Text
-        let savedSearch: Bool
-        lazy var document = LocalPageSearch.Document(title: visit.title, address: visit.address)
-        init(_ visit: Visit) {
-            self.visit = visit
-            let url = URL(string: visit.address)
-            let title = visit.title.lowercased()
-            let address = visit.address.lowercased()
-            self.url = url
-            self.title = title
-            self.address = address
-            let rawHost = url?.host?.lowercased() ?? ""
-            let catalogHost = rawHost.hasPrefix("www.") ? String(rawHost.dropFirst(4)) : rawHost
-            self.catalogHost =
-                url.map {
-                    ["https", "http"].contains($0.scheme) && $0.user == nil && $0.password == nil && $0.port == nil
-                        && !catalogHost.isEmpty
-                } == true ? catalogHost : nil
-            host = url?.host?.replacingOccurrences(of: "www.", with: "").lowercased() ?? ""
-            titleSearch = LocalPageSearch.Text(title)
-            addressSearch = LocalPageSearch.Text(address)
-            hostSearch = LocalPageSearch.Text(host)
-            savedSearch = BrowserAddress.defaultSearchQuery(url) != nil
-        }
-        func score(for needle: String, query: LocalPageSearch.Query) -> Double? {
-            let literal = query.literal
-            if literal.isEmpty { return 0 }
-            if hostSearch.hasPrefix(literal) || addressSearch.hasPrefix(literal) { return 120 }
-            if titleSearch.hasPrefix(literal) { return 100 }
-            if hostSearch.contains(literal) { return 95 }
-            if titleSearch.contains(literal) { return 85 }
-            if addressSearch.contains(literal) { return 75 }
-            guard !query.patterns.isEmpty else { return nil }
-            if query.patterns.allSatisfy({ titleSearch.contains($0[0]) || addressSearch.contains($0[0]) }) { return 65 }
-            guard
-                query.patterns.allSatisfy({ patterns in
-                    patterns.contains { titleSearch.contains($0) || addressSearch.contains($0) }
-                })
-            else { return nil }
-            return document.score(query)
-        }
-    }
-    private weak var historyOwner: BrowserStore?
-    private var historyObserver: AnyCancellable?
-    private var preparedHistory: [PreparedVisit] = []
-    private var preparedHistoryByID: [UUID: PreparedVisit] = [:]
+    private var historySignature: HistorySignature?
+    private var historyPreparationTask: Task<Void, Never>?
+    private var preparedHistory: [PreparedHistoryVisit] = []
+    private var preparedHistoryByID: [UUID: PreparedHistoryVisit] = [:]
     private var hostVisits: [String: Int] = [:]
     private var addressVisits: [String: Int] = [:]
     private(set) var historyPreparations = 0
@@ -218,6 +308,15 @@ struct Suggestion: Identifiable {
         let values: [Suggestion]
     }
     private var cache: [CacheKey: Cached] = [:]
+    private struct LearnedChoice: Codable {
+        var profile: UUID
+        var query: String
+        var destination: String
+        var count: Int
+        var lastUsed: Date
+    }
+    private var learnedChoices: [LearnedChoice] = []
+    private var learningFile: URL?
     init(fetch: @escaping (URL) async throws -> Data = { try await AssetRequest.data($0, limit: 100_000) }) {
         self.fetch = fetch
         tldObserver = TopLevelDomains.shared.changes.sink { [weak self] in
@@ -227,6 +326,47 @@ struct Suggestion: Identifiable {
         }
     }
     private var explicitSelection = false
+    private func loadLearning(from store: BrowserStore) {
+        let file = store.application.directory.appendingPathComponent("WonderbarChoices.json")
+        guard learningFile != file else { return }
+        learningFile = file
+        learnedChoices = (try? Data(contentsOf: file)).flatMap {
+            try? JSONDecoder().decode([LearnedChoice].self, from: $0)
+        } ?? []
+    }
+    func remember(_ suggestion: Suggestion, query: String, store: BrowserStore) {
+        guard !store.profile.privateMode, suggestion.id != "input", suggestion.id != "search-input",
+            !query.isEmpty, query.count <= 80, !query.contains("@"), !query.contains("://")
+        else { return }
+        loadLearning(from: store)
+        let value = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard value.count >= 2 else { return }
+        let destination = canonical(suggestion.destination, kind: suggestion.kind)
+        if let index = learnedChoices.firstIndex(where: {
+            $0.profile == store.selectedProfileID && $0.query == value && $0.destination == destination
+        }) {
+            learnedChoices[index].count = min(100, learnedChoices[index].count + 1)
+            learnedChoices[index].lastUsed = Date()
+        } else {
+            learnedChoices.append(LearnedChoice(
+                profile: store.selectedProfileID, query: value, destination: destination, count: 1, lastUsed: Date()))
+        }
+        if learnedChoices.count > 500 {
+            learnedChoices.sort { $0.lastUsed > $1.lastUsed }
+            learnedChoices = Array(learnedChoices.prefix(500))
+        }
+        if let file = learningFile, let data = try? JSONEncoder().encode(learnedChoices) {
+            try? data.write(to: file, options: .atomic)
+        }
+    }
+    private func learnedBoost(for suggestion: Suggestion, query: String, profile: UUID) -> Double {
+        guard !query.isEmpty else { return 0 }
+        let destination = canonical(suggestion.destination, kind: suggestion.kind)
+        guard let choice = learnedChoices.first(where: {
+            $0.profile == profile && $0.query == query && $0.destination == destination
+        }) else { return 0 }
+        return min(28, log2(Double(choice.count + 1)) * 10)
+    }
     var selected: Int {
         get { suggestions.firstIndex { $0.id == selectedID } ?? 0 }
         set {
@@ -236,6 +376,7 @@ struct Suggestion: Identifiable {
     }
     func update(_ query: String, store: BrowserStore) {
         currentStore = store
+        if !store.profile.privateMode { loadLearning(from: store) }
         if query != previousQuery || profileID != store.selectedProfileID {
             selectedID = nil
             previousQuery = query
@@ -278,31 +419,35 @@ struct Suggestion: Identifiable {
         nextTabs.reserveCapacity(openTabs.count)
         var tabsByAddress: [String: BrowserTab] = [:]
         func tabAction(_ suggestion: Suggestion) -> Suggestion {
-            guard suggestion.kind != .search && suggestion.kind != .page,
+            guard suggestion.id != "input", suggestion.kind != .search && suggestion.kind != .page,
                 let tab = tabsByAddress[canonical(suggestion.destination, kind: suggestion.kind)]
             else { return suggestion }
             return Suggestion(
                 id: "tab-\(tab.id)", title: tab.sidebarTitle,
-                detail: tab.windowID == store.id ? "switch to tab" : "switch to tab · other window", icon: .globe,
+                detail: tab.windowID == store.id ? "switch to tab" : "switch to tab · other window", icon: .sidebar,
                 destination: tab.url!.absoluteString, tabID: tab.id, kind: .tab)
         }
-        var ranking = SuggestionRanking.Accumulator(transform: tabAction) {
+        var ranking = SuggestionRanking.Accumulator(limit: 40, transform: tabAction) {
             self.canonical($0.destination, kind: $0.kind)
         }
-        func consider(_ suggestion: @autoclosure () -> Suggestion, score: Double) {
-            guard let domainPrefix else {
-                ranking.offer(score: score, make: suggestion)
-                return
-            }
-            let value = suggestion()
+        func adjustedScore(_ value: Suggestion, score: Double) -> Double {
+            var adjusted = score + (store.profile.privateMode ? 0 : learnedBoost(
+                for: value, query: text.lowercased(), profile: store.selectedProfileID))
+            guard let domainPrefix else { return adjusted }
             let url = value.kind == .search || value.kind == .page ? nil : URL(string: value.destination)
             let host = url?.host?.lowercased() ?? ""
             let key = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
             let completion =
                 BrowserAddress.isSuggestedWebsite(url) && key.hasPrefix(domainPrefix)
                 && value.defaultSearchQuery == nil
-            ranking.offer(score: score + (completion ? 160 : 0)) { value }
+            if completion { adjusted += 160 }
+            return adjusted
         }
+        func consider(_ suggestion: @autoclosure () -> Suggestion, score: Double) {
+            let value = suggestion()
+            ranking.offer(score: adjustedScore(value, score: score)) { value }
+        }
+        var inputAction: Suggestion?
         for page in BrowserPage.allCases {
             if page == .ask && store.preferences.aiFeaturesEnabled == false { continue }
             if let score = score(page.title, page.address) {
@@ -341,7 +486,7 @@ struct Suggestion: Identifiable {
                     Suggestion(
                         id: "tab-\(tab.id)", title: title,
                         detail: tab.windowID == store.id ? "switch to tab" : "switch to tab · other window",
-                        icon: .globe, destination: address, tabID: tab.id, kind: .tab),
+                        icon: .sidebar, destination: address, tabID: tab.id, kind: .tab),
                     score: score + (needle.isEmpty ? 25 : 40))
             }
         }
@@ -358,21 +503,6 @@ struct Suggestion: Identifiable {
                     score: score + (needle.isEmpty ? 65 : 35))
             }
         }
-        let now = Date()
-        for row in preparedHistory {
-            let visit = row.visit
-            if let score = row.score(for: needle, query: localQuery) {
-                consider(
-                    Suggestion(
-                        id: "history-" + visit.address, title: visit.title, detail: row.label, icon: .history,
-                        destination: visit.address, kind: .history),
-                    score: score + (needle.isEmpty ? 35 : 20)
-                        + min(20, log2(Double((addressVisits[visit.address] ?? 1) + 1)) * 5)
-                        + max(0, 12 - now.timeIntervalSince(visit.date) / 86400)
-                        - (row.savedSearch ? 15 : 0))
-            }
-        }
-
         let siteNeedle = needle.replacingOccurrences(of: "^https?://", with: "", options: .regularExpression)
         let homepageIntent = !siteNeedle.contains(where: { "/?#@: ".contains($0) })
         if homepageIntent {
@@ -445,13 +575,14 @@ struct Suggestion: Identifiable {
                 ? store.searchAddress(text)?.absoluteString ?? text : text
             let addressIntent = text.contains(".") && !text.contains(where: { $0.isWhitespace })
             if internalPage == nil {
-                consider(
-                    Suggestion(
-                        id: "input", title: direct ? BrowserAddress.display(resolved) : text,
-                        detail: direct ? "go to site" : (store.preferences.searchEngine ?? .google).title + " search",
-                        icon: direct ? .globe : .search,
-                        destination: direct ? resolved?.absoluteString ?? text : searchDestination,
-                        kind: direct ? .site : .search), score: direct || addressIntent ? 200 : 70)
+                let typed = Suggestion(
+                    id: "input", title: direct ? BrowserAddress.display(resolved) : text,
+                    detail: direct ? "go to site" : (store.preferences.searchEngine ?? .google).title + " search",
+                    icon: direct ? .globe : .search,
+                    destination: direct ? resolved?.absoluteString ?? text : searchDestination,
+                    kind: direct ? .site : .search)
+                inputAction = typed
+                consider(typed, score: direct || addressIntent ? 200 : 70)
             }
             if direct, internalPage == nil, let address = store.searchAddress(text) {
                 consider(
@@ -460,40 +591,70 @@ struct Suggestion: Identifiable {
                         destination: address.absoluteString, kind: .search), score: 199)
             }
         }
-        let local = ranking.results
-        guard text.count >= 2, text.count <= 200, !store.profile.privateMode,
-            store.preferences.googleSuggestions || store.preferences.remoteSites == true,
-            !text.contains("/"), !text.contains(":"), !text.contains("@"), !text.contains("."),
-            BrowserAddress.resolve(text)?.host == "www.google.com"
-        else {
-            publish(Array(local.prefix(6)))
-            return
-        }
-        publish(Array(local.prefix(6)))
+
+        let baseLocal = ranking.scoredResults + (inputAction.map {
+            [($0, $0.kind == .site ? 200.0 : 70.0)]
+        } ?? [])
+        let baseResults = ranked(baseLocal, query: text, domainPrefix: domainPrefix)
+        publish(baseResults)
+
+        let historyRows = preparedHistory
+        let historyAddressVisits = addressVisits
+        let historyNow = Date()
+        let remoteEligible = text.count >= 2 && text.count <= 200 && !store.profile.privateMode
+            && (store.preferences.googleSuggestions || store.preferences.remoteSites == true)
+            && !text.contains("/") && !text.contains(":") && !text.contains("@") && !text.contains(".")
+            && BrowserAddress.resolve(text)?.host == "www.google.com"
         let searches = store.preferences.googleSuggestions
         let sites = store.preferences.remoteSites == true
         let provider = store.preferences.suggestionProvider ?? .google
-        let key = CacheKey(
-            profile: store.selectedProfileID, query: text, searches: searches, sites: sites, provider: provider)
-        func combined(_ remote: [Suggestion]) -> [Suggestion] {
-            var values = local
-            var keys = Set(values.map { canonical($0.destination, kind: $0.kind) })
-            for remoteSuggestion in remote.prefix(5) {
-                var suggestion = tabAction(remoteSuggestion)
-                if suggestion.kind == .search {
-                    suggestion.detail = (store.preferences.searchEngine ?? .google).title + " search"
-                }
-                if keys.insert(canonical(suggestion.destination, kind: suggestion.kind)).inserted {
-                    values.append(suggestion)
-                }
+        let remoteKey = remoteEligible
+            ? CacheKey(
+                profile: store.selectedProfileID, query: text, searches: searches, sites: sites, provider: provider)
+            : nil
+
+        task = Task { @MainActor in
+            let historyMatches = await Task.detached(priority: .userInitiated) {
+                HistorySuggestionWork.matches(
+                    rows: historyRows, addressVisits: historyAddressVisits, query: localQuery,
+                    emptyQuery: needle.isEmpty, now: historyNow)
+            }.value
+            guard !Task.isCancelled, token == generation, store.selectedProfileID == profileID else { return }
+
+            var local = baseLocal
+            local.reserveCapacity(baseLocal.count + historyMatches.count)
+            for match in historyMatches {
+                let original = Suggestion(
+                    id: "history-" + match.visit.address, title: match.visit.title, detail: match.label,
+                    icon: .history, destination: match.visit.address, kind: .history)
+                local.append((tabAction(original), adjustedScore(original, score: match.score)))
             }
-            return Array(values.prefix(6))
-        }
-        if let cached = cache[key], Date().timeIntervalSince(cached.date) < 300 {
-            publish(combined(cached.values))
-            if Date().timeIntervalSince(cached.date) < 15 { return }
-        }
-        task = Task {
+            let localResults = ranked(local, query: text, domainPrefix: domainPrefix)
+            publish(localResults, remoteUpdate: true)
+
+            guard let key = remoteKey else { return }
+            if let cached = cache[key], Date().timeIntervalSince(cached.date) < 300 {
+                var candidates = local
+                for (index, remoteSuggestion) in cached.values.prefix(8).enumerated() {
+                    var suggestion = tabAction(remoteSuggestion)
+                    if suggestion.kind == .search {
+                        suggestion.detail = (store.preferences.searchEngine ?? .google).title + " search"
+                    }
+                    let score: Double
+                    if remoteSuggestion.kind == .site {
+                        let host = suggestion.siteURL?.host?.lowercased() ?? ""
+                        let shortHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+                        score = 156 - Double(index * 4)
+                            + (domainPrefix.map { shortHost.hasPrefix($0) } == true ? 160 : 0)
+                    } else {
+                        score = 125 - Double(index * 4)
+                    }
+                    candidates.append((suggestion, score + learnedBoost(
+                        for: suggestion, query: text.lowercased(), profile: store.selectedProfileID)))
+                }
+                publish(ranked(candidates, query: text, domainPrefix: domainPrefix), remoteUpdate: true)
+                if Date().timeIntervalSince(cached.date) < 15 { return }
+            }
             do {
                 try await Task.sleep(for: .milliseconds(35))
                 guard !Task.isCancelled else { return }
@@ -508,53 +669,119 @@ struct Suggestion: Identifiable {
                     cache.removeValue(forKey: oldest)
                 }
                 cache[key] = Cached(date: Date(), values: remote)
-                publish(combined(remote))
+                var candidates = local
+                for (index, remoteSuggestion) in remote.prefix(8).enumerated() {
+                    var suggestion = tabAction(remoteSuggestion)
+                    if suggestion.kind == .search {
+                        suggestion.detail = (store.preferences.searchEngine ?? .google).title + " search"
+                    }
+                    let score: Double
+                    if remoteSuggestion.kind == .site {
+                        let host = suggestion.siteURL?.host?.lowercased() ?? ""
+                        let shortHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+                        score = 156 - Double(index * 4)
+                            + (domainPrefix.map { shortHost.hasPrefix($0) } == true ? 160 : 0)
+                    } else {
+                        score = 125 - Double(index * 4)
+                    }
+                    candidates.append((suggestion, score + learnedBoost(
+                        for: suggestion, query: text.lowercased(), profile: store.selectedProfileID)))
+                }
+                publish(ranked(candidates, query: text, domainPrefix: domainPrefix), remoteUpdate: true)
                 remoteLoading = false
             } catch {
                 if token == generation, !Task.isCancelled {
-                    publish(Array(local.prefix(6)))
+                    publish(localResults, remoteUpdate: true)
                     remoteLoading = false
                 }
             }
         }
     }
+
+    private func ranked(
+        _ candidates: [(Suggestion, Double)], query: String, domainPrefix: String?
+    ) -> [Suggestion] {
+        var sorted = candidates.sorted {
+            $0.1 == $1.1 ? $0.0.id < $1.0.id : $0.1 > $1.1
+        }
+
+        if !query.isEmpty && domainPrefix == nil {
+            sorted = sorted.map { suggestion, score in
+                (suggestion, suggestion.id == "input" && suggestion.kind == .search
+                    ? max(score, query.contains(where: { $0.isWhitespace }) ? 185 : 160) : score)
+            }.sorted { $0.1 == $1.1 ? $0.0.id < $1.0.id : $0.1 > $1.1 }
+        }
+        var chosen: [Suggestion] = []
+        var keys = Set<String>()
+        var domains: [String: Int] = [:]
+        var kinds: [SuggestionKind: Int] = [:]
+        func take(_ suggestion: Suggestion) -> Bool {
+            let key = suggestion.kind == .search
+                ? "search-query:" + suggestion.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                : canonical(suggestion.destination, kind: suggestion.kind)
+            guard !keys.contains(key), chosen.count < 6 else { return false }
+            let kindLimit: Int
+            switch suggestion.kind {
+            case .history, .favorite, .tab: kindLimit = 2
+            case .site, .search: kindLimit = 3
+            case .page: kindLimit = 2
+            }
+            if kinds[suggestion.kind, default: 0] >= kindLimit { return false }
+            let host = suggestion.siteURL?.host ?? ""
+            let domain = host.isEmpty ? "" : PublicSuffixList.shared.registrableDomain(host)
+            let shortHost = host.lowercased().hasPrefix("www.") ? String(host.dropFirst(4)) : host
+            let domainLimit = domainPrefix.map { shortHost.lowercased().hasPrefix($0) } == true ? 3 : 2
+            if !domain.isEmpty && domains[domain, default: 0] >= domainLimit { return false }
+            chosen.append(suggestion)
+            keys.insert(key)
+            kinds[suggestion.kind, default: 0] += 1
+            if !domain.isEmpty { domains[domain, default: 0] += 1 }
+            return true
+        }
+        for (suggestion, _) in sorted { _ = take(suggestion) }
+
+        if let input = sorted.first(where: { $0.0.id == "input" })?.0,
+            !chosen.contains(where: { $0.id == input.id })
+        {
+            if chosen.count == 6 { chosen.removeLast() }
+            chosen.append(input)
+        }
+        return chosen
+    }
     private func prepareHistory(for store: BrowserStore) {
-        guard historyOwner !== store else { return }
-        historyOwner = store
-        historyObserver = Publishers.CombineLatest(store.application.$profiles, store.$selectedProfileID)
-            .map { profiles, id in
-                HistorySource(profile: id, visits: profiles.first { $0.id == id }?.history ?? [])
-            }
-            .removeDuplicates()
-            .sink { [weak self] source in
-                guard let self else { return }
-                self.historyPreparations += 1
-                let previous = self.preparedProfileID == source.profile ? self.preparedHistoryByID : [:]
-                self.preparedProfileID = source.profile
-                var rows: [PreparedVisit] = []
-                var byID: [UUID: PreparedVisit] = [:]
-                rows.reserveCapacity(source.visits.count)
-                byID.reserveCapacity(source.visits.count)
-                for visit in source.visits {
-                    let row: PreparedVisit
-                    if let cached = previous[visit.id], cached.visit == visit {
-                        row = cached
-                    } else {
-                        row = PreparedVisit(visit)
-                        self.historyRowsPrepared += 1
-                    }
-                    rows.append(row)
-                    byID[visit.id] = row
-                }
-                self.preparedHistory = rows
-                self.preparedHistoryByID = byID
-                self.hostVisits = self.preparedHistory.reduce(into: [:]) { counts, row in
-                    if let host = row.catalogHost { counts[host, default: 0] += 1 }
-                }
-                self.addressVisits = source.visits.reduce(into: [:]) { counts, visit in
-                    counts[visit.address, default: 0] += 1
-                }
-            }
+        let profile = store.profile
+        let profileID = store.selectedProfileID
+        let visits = profile.privateMode ? [] : profile.history
+        let signature = HistorySignature(
+            profile: profileID, count: visits.count, firstID: visits.first?.id, firstDate: visits.first?.date,
+            lastID: visits.last?.id)
+        guard signature != historySignature else { return }
+        historySignature = signature
+        historyPreparationTask?.cancel()
+        historyPreparations += 1
+
+        let previous = preparedProfileID == profileID ? preparedHistoryByID : [:]
+        if preparedProfileID != profileID {
+            preparedHistory = []
+            preparedHistoryByID = [:]
+            hostVisits = [:]
+            addressVisits = [:]
+        }
+        historyPreparationTask = Task {
+            let snapshot = await Task.detached(priority: .utility) {
+                HistorySuggestionWork.prepare(visits, previous: previous)
+            }.value
+            guard !Task.isCancelled, historySignature == signature else { return }
+            preparedProfileID = profileID
+            preparedHistory = snapshot.rows
+            preparedHistoryByID = snapshot.byID
+            hostVisits = snapshot.hostVisits
+            addressVisits = snapshot.addressVisits
+            historyRowsPrepared += snapshot.rowsPrepared
+
+            guard currentStore === store, self.profileID == profileID else { return }
+            update(previousQuery, store: store)
+        }
     }
     static func parse(_ data: Data, provider: SuggestionProvider, searches: Bool, sites: Bool) -> [Suggestion] {
         if provider == .google { return parseGoogle(data, searches: searches, sites: sites) }
@@ -611,7 +838,9 @@ struct Suggestion: Identifiable {
         if parts.path.isEmpty { parts.path = "/" }
         return parts.string ?? destination
     }
-    private func publish(_ values: [Suggestion]) {
+    private func publish(_ values: [Suggestion], remoteUpdate: Bool = false) {
+
+        if remoteUpdate && keyboardSelection { return }
         let old = selectedID
         suggestions = values
         publishedQuery = previousQuery
@@ -666,9 +895,18 @@ struct Suggestion: Identifiable {
         keyboardSelection = true
     }
     func fieldPreview(for prefix: String) -> String? {
-        guard explicitSelection, suggestions.indices.contains(selected), inline(for: prefix) == nil else { return nil }
-        return suggestions[selected].fieldText
+        guard suggestions.indices.contains(selected) else { return nil }
+        let suggestion = suggestions[selected]
+        if prefix == publishedQuery, !prefix.isEmpty, suggestion.id != "input", suggestion.defaultSearchQuery == nil,
+            [.tab, .history, .favorite, .site].contains(suggestion.kind),
+            !suggestion.visibleTitle.isEmpty
+        {
+            return suggestion.visibleTitle
+        }
+        guard explicitSelection, inline(for: prefix) == nil else { return nil }
+        return suggestion.fieldText
     }
+    func holdOrder() { keyboardSelection = true }
     func resetSelection() {
         selectedID = nil
         explicitSelection = false
@@ -731,11 +969,20 @@ struct SuggestionIcon: View {
     }
 }
 struct OmnibarView: View {
+    private enum ModifiedAction {
+        case alternateSearch, newTab, backgroundTab, copyAddress
+    }
+
+    private static let actionModifiers: NSEvent.ModifierFlags = [.command, .option, .shift, .control]
+
     @ObservedObject var store: BrowserStore
     @StateObject private var engine = SuggestionEngine()
     @State private var hoveredID: String?
+    @State private var pointerMovedSinceTyping = false
     @State private var closeHovered = false
     @State private var presentedSuggestionText: String?
+    @State private var heldModifiers: NSEvent.ModifierFlags = []
+    @State private var modifierMonitor: Any?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var suggestionHeight: CGFloat = 320
     var width: CGFloat = 520
@@ -753,7 +1000,7 @@ struct OmnibarView: View {
         let displayed = engine.belongs(to: profileID) ? engine.suggestions : []
         let selectedAction = engine.action(query: query, profile: profileID)
         return VStack(spacing: 0) {
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 Group {
                     if let selectedAction, let presentedSuggestionText, current,
                         presentedSuggestionText == engine.inline(for: query)
@@ -768,32 +1015,7 @@ struct OmnibarView: View {
                     windowID: store.id, text: $store.omnibarQuery,
                     submit: { commit(focusID: focusID, profileID: profileID) },
                     alternateSubmit: { modifiers in
-                        guard ownsSession(focusID, profile: profileID) else { return false }
-                        let redirect = store.preferences.alternateSearch ?? SearchRedirect()
-                        let keys = modifiers.intersection([.command, .option, .shift, .control])
-                        if !(redirect.enabled && redirect.shortcut.matches(modifiers)) {
-                            guard keys == .shift || keys == .option || keys == .control else { return false }
-                            refreshQuery()
-                            let action = engine.action(query: store.omnibarQuery, profile: profileID)
-                            guard let url = store.resolveAddress(action?.destination ?? store.omnibarQuery) else {
-                                return true
-                            }
-                            if keys == .control {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(url.absoluteString, forType: .string)
-                                store.feedback.show(.copied, icon: .check, text: "address copied")
-                            } else {
-                                _ = store.newTab(url: url, showOmnibar: false, activate: keys == .shift)
-                                store.omnibarVisible = false
-                            }
-                            return true
-                        }
-                        let action = engine.action(query: store.omnibarQuery, profile: profileID)
-                        let query =
-                            action?.kind == .search && action?.id != "input"
-                            ? action?.title ?? store.omnibarQuery : store.omnibarQuery
-                        store.performAlternateSearch(query)
-                        return true
+                        submitWithModifiers(modifiers, focusID: focusID, profileID: profileID)
                     },
                     move: { offset in
                         guard ownsSession(focusID, profile: profileID) else { return }
@@ -809,7 +1031,6 @@ struct OmnibarView: View {
                     }, bufferedInput: store.omnibarBufferedInput,
                     inlineCompletion: current ? engine.inline(for: store.omnibarQuery) : nil,
                     actionPreview: current ? engine.fieldPreview(for: store.omnibarQuery) : nil,
-                    actionPreviewID: engine.selectedID,
                     suggestionPresentationChanged: { text in
                         guard ownsSession(focusID, profile: profileID) else { return }
                         presentedSuggestionText = text
@@ -830,12 +1051,18 @@ struct OmnibarView: View {
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: closeHovered)
                     .accessibilityLabel("close wonderbar")
             }.padding(16)
-            if !engine.suggestions.isEmpty {
+            if current && !displayed.isEmpty {
                 Divider()
                 VStack(spacing: 4) {
                     ForEach(Array(displayed.enumerated()), id: \.element.id) { index, suggestion in
                         Button {
-                            commit(suggestion, focusID: focusID, profileID: profileID, queryAtRender: query)
+                            let modifiers = NSApp.currentEvent?.modifierFlags ?? heldModifiers
+                            if !submitWithModifiers(
+                                modifiers, chosen: suggestion, focusID: focusID, profileID: profileID,
+                                queryAtRender: query)
+                            {
+                                commit(suggestion, focusID: focusID, profileID: profileID, queryAtRender: query)
+                            }
                         } label: {
                             HStack(spacing: 8) {
                                 SuggestionIcon(suggestion: suggestion, store: store)
@@ -845,13 +1072,13 @@ struct OmnibarView: View {
                                 ).lineLimit(1).truncationMode(.tail).frame(
                                     minWidth: 0, maxWidth: .infinity, alignment: .leading)
                                 Spacer(minLength: 8)
-                                Text(suggestion.visibleDetail).font(.system(size: 12)).foregroundStyle(.secondary)
+                                Text(actionDetail(for: suggestion)).font(.system(size: 12)).foregroundStyle(.secondary)
                                     .lineLimit(1).frame(maxWidth: 160, alignment: .trailing)
                                 if suggestion.siteURL?.scheme == "http" {
                                     GolzheimIcon(icon: .insecure, size: 12).foregroundStyle(.secondary).help(
                                         "unencrypted connection")
                                 }
-                                GolzheimIcon(icon: suggestion.kind == .tab ? .sidebar : .forward, size: 12)
+                                GolzheimIcon(icon: actionIcon(for: suggestion), size: 12)
                                     .foregroundStyle(.secondary)
                             }.font(.system(size: 13)).padding(.horizontal, 8).frame(height: 32)
                                 .background {
@@ -865,9 +1092,18 @@ struct OmnibarView: View {
                                         )
                                         .transaction { $0.animation = nil }
                                 }
-                        }.buttonStyle(.plain).id(suggestion.id).onHover {
-                            hoveredID = $0 ? suggestion.id : hoveredID == suggestion.id ? nil : hoveredID
-                        }.accessibilityLabel("\(suggestion.visibleTitle), \(suggestion.visibleDetail)")
+                        }.buttonStyle(.plain).id(suggestion.id).onContinuousHover { phase in
+                            switch phase {
+                            case .active:
+                                guard pointerMovedSinceTyping else { return }
+                                if hoveredID != suggestion.id {
+                                    hoveredID = suggestion.id
+                                    engine.holdOrder()
+                                }
+                            case .ended:
+                                if hoveredID == suggestion.id { hoveredID = nil }
+                            }
+                        }.accessibilityLabel("\(suggestion.visibleTitle), \(actionDetail(for: suggestion))")
                     }
                 }.padding(8).frame(
                     height: min(suggestionHeight, CGFloat(engine.suggestions.count) * 36 + 12), alignment: .top
@@ -909,12 +1145,52 @@ struct OmnibarView: View {
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.08)))
         .shadow(color: .black.opacity(0.14), radius: 20, y: 8)
         .onAppear {
+            pointerMovedSinceTyping = false
+            heldModifiers = NSEvent.modifierFlags.intersection(Self.actionModifiers)
+            if modifierMonitor == nil {
+                modifierMonitor = NSEvent.addLocalMonitorForEvents(
+                    matching: [.flagsChanged, .keyDown, .keyUp, .mouseMoved, .leftMouseDown, .rightMouseDown]
+                ) { event in
+                    if event.window === store.nativeWindow {
+                        switch event.type {
+                        case .keyDown:
+                            pointerMovedSinceTyping = false
+                            hoveredID = nil
+                        case .mouseMoved:
+                            pointerMovedSinceTyping = true
+                        default: break
+                        }
+                    }
+                    let modifiers = event.modifierFlags.intersection(Self.actionModifiers)
+                    if modifiers != heldModifiers { heldModifiers = modifiers }
+                    return event
+                }
+            }
             engine.resetSelection()
+        }.onDisappear {
+            if let modifierMonitor { NSEvent.removeMonitor(modifierMonitor) }
+            modifierMonitor = nil
+            heldModifiers = []
+            engine.cancel()
+        }
+        .task(id: focusID) {
+
+            await Task.yield()
+            guard !Task.isCancelled, ownsSession(focusID, profile: profileID) else { return }
             engine.update(store.omnibarQuery, store: store)
-        }.onDisappear { engine.cancel() }
+        }
         .onChange(of: store.omnibarQuery) { _, query in
+            pointerMovedSinceTyping = false
             hoveredID = nil
             engine.update(query, store: store)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            heldModifiers = NSEvent.modifierFlags.intersection(Self.actionModifiers)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            if notification.object as? NSWindow === store.nativeWindow {
+                heldModifiers = NSEvent.modifierFlags.intersection(Self.actionModifiers)
+            }
         }
         .onChange(of: openTabIdentities) { _, _ in engine.update(store.omnibarQuery, store: store) }
     }
@@ -938,6 +1214,69 @@ struct OmnibarView: View {
             engine.update(store.omnibarQuery, store: store)
         }
     }
+    private func modifiedAction(for modifiers: NSEvent.ModifierFlags) -> ModifiedAction? {
+        let keys = modifiers.intersection(Self.actionModifiers)
+        let redirect = store.preferences.alternateSearch ?? SearchRedirect()
+        if redirect.enabled && redirect.shortcut.matches(keys) { return .alternateSearch }
+        switch keys {
+        case .shift: return .newTab
+        case .option: return .backgroundTab
+        case .control: return .copyAddress
+        default: return nil
+        }
+    }
+    private func actionDetail(for suggestion: Suggestion) -> String {
+        switch modifiedAction(for: heldModifiers) {
+        case .alternateSearch:
+            return "search with \((store.preferences.alternateSearch ?? SearchRedirect()).title)"
+        case .newTab:
+            return suggestion.kind == .search ? "search in new tab" : "go to site in new tab"
+        case .backgroundTab:
+            return suggestion.kind == .search ? "search in background tab" : "open in background tab"
+        case .copyAddress:
+            return suggestion.kind == .search ? "copy search URL" : "copy address"
+        case nil:
+            return suggestion.visibleDetail
+        }
+    }
+    private func actionIcon(for suggestion: Suggestion) -> LoafIcon {
+        switch modifiedAction(for: heldModifiers) {
+        case .copyAddress: .copy
+        case nil where suggestion.kind == .tab: .sidebar
+        default: .forward
+        }
+    }
+    private func submitWithModifiers(
+        _ modifiers: NSEvent.ModifierFlags, chosen: Suggestion? = nil, focusID: UUID, profileID: UUID,
+        queryAtRender: String? = nil
+    ) -> Bool {
+        guard ownsSession(focusID, profile: profileID), let action = modifiedAction(for: modifiers) else {
+            return false
+        }
+        guard chosen == nil || queryAtRender == store.omnibarQuery else { return true }
+        if chosen == nil { refreshQuery() }
+        let suggestion = engine.action(for: chosen, query: store.omnibarQuery, profile: profileID)
+        guard chosen == nil || suggestion != nil else { return true }
+        if action == .alternateSearch {
+            let query = suggestion?.kind == .search && suggestion?.id != "input"
+                ? suggestion?.title ?? store.omnibarQuery : store.omnibarQuery
+            store.performAlternateSearch(query)
+            return true
+        }
+        guard let url = store.resolveAddress(suggestion?.destination ?? store.omnibarQuery) else { return true }
+        switch action {
+        case .copyAddress:
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(url.absoluteString, forType: .string)
+            store.feedback.show(.copied, icon: .check, text: "address copied")
+        case .newTab, .backgroundTab:
+            _ = store.newTab(url: url, showOmnibar: false, activate: action == .newTab)
+            store.omnibarVisible = false
+        case .alternateSearch:
+            break
+        }
+        return true
+    }
     private func commit(_ chosen: Suggestion? = nil, focusID: UUID, profileID: UUID, queryAtRender: String? = nil) {
         guard ownsSession(focusID, profile: profileID), chosen == nil || queryAtRender == store.omnibarQuery else {
             return
@@ -945,6 +1284,7 @@ struct OmnibarView: View {
         if chosen == nil { refreshQuery() }
         let suggestion = engine.action(for: chosen, query: store.omnibarQuery, profile: profileID)
         guard chosen == nil || suggestion != nil else { return }
+        if let suggestion { engine.remember(suggestion, query: store.omnibarQuery, store: store) }
         if let id = suggestion?.tabID {
             guard let tab = store.application.runtimes[profileID]?.tabs[id], let owner = tab.store,
                 !tab.isDisposed, store.application.windows.contains(where: { $0 === owner })

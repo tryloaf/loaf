@@ -24,12 +24,11 @@ struct SidebarDock: View {
 struct SidebarDockPane: View {
     @ObservedObject var store: BrowserStore
     var scheme: ColorScheme
-    var floating: Bool
+    private var floating: Bool { !store.sidebarPresented && store.hoveredSidebar }
     var body: some View {
-        SidebarView(store: store, floating: floating)
+        SidebarContentSurface(store: store, floating: floating, scheme: scheme)
             .frame(width: store.preferences.sidebarWidth - (floating ? 6 : 0))
             .fixedSize(horizontal: true, vertical: false)
-            .clipShape(RoundedRectangle(cornerRadius: floating ? 13 : 0, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: floating ? 13 : 0, style: .continuous).strokeBorder(
                     Color.primary.opacity(floating ? 0.12 : 0), lineWidth: 1
@@ -52,19 +51,78 @@ struct SidebarDockPane: View {
     }
 }
 
+
+
+struct SidebarContentSurface: NSViewRepresentable {
+    let store: BrowserStore
+    let floating: Bool
+    let scheme: ColorScheme
+
+    struct Content: View {
+        let store: BrowserStore
+        let floating: Bool
+        let scheme: ColorScheme
+        var body: some View {
+            SidebarView(store: store, floating: floating).environment(\.colorScheme, scheme)
+        }
+    }
+
+    func makeNSView(context: Context) -> ClipView {
+        ClipView(content: .init(store: store, floating: floating, scheme: scheme))
+    }
+    func updateNSView(_ view: ClipView, context: Context) {
+        view.configure(content: .init(store: store, floating: floating, scheme: scheme))
+    }
+
+    final class ClipView: NSView {
+        let content: NSHostingView<Content>
+        override var isFlipped: Bool { true }
+        init(content: Content) {
+            self.content = NSHostingView(rootView: content)
+            self.content.sizingOptions = []
+            self.content.safeAreaRegions = []
+            super.init(frame: .zero)
+            wantsLayer = true
+            layer?.masksToBounds = true
+            layer?.cornerCurve = .continuous
+            layer?.cornerRadius = content.floating ? 13 : 0
+            addSubview(self.content)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        func configure(content value: Content) {
+            let previous = content.rootView
+            guard previous.store !== value.store || previous.floating != value.floating
+                || previous.scheme != value.scheme else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer?.cornerRadius = value.floating ? 13 : 0
+            CATransaction.commit()
+            content.rootView = value
+        }
+        override func layout() {
+            super.layout()
+            if content.frame != bounds { content.frame = bounds }
+        }
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard bounds.contains(convert(point, from: superview)) else { return nil }
+            return super.hitTest(point)
+        }
+    }
+}
+
 struct SidebarDockHost: NSViewRepresentable {
     @ObservedObject var store: BrowserStore
     var scheme: ColorScheme
     var reduceMotion: Bool
     private var pane: SidebarDockPane {
-        .init(store: store, scheme: scheme, floating: !store.sidebarPresented && store.hoveredSidebar)
+        .init(store: store, scheme: scheme)
     }
     func makeNSView(context: Context) -> ContainerView { ContainerView(pane: pane) }
     func updateNSView(_ view: ContainerView, context: Context) {
         let shown = store.sidebarPresented || store.hoveredSidebar
 
         if shown { view.floating = !store.sidebarPresented }
-        view.hostedSidebar.rootView = .init(store: store, scheme: scheme, floating: view.floating)
+        view.updateScheme(scheme, store: store)
         view.configure(
             width: store.preferences.sidebarWidth, shown: shown,
             duration: store.hoveredSidebar ? 0.22 : SidebarMotion.duration, reduceMotion: reduceMotion,
@@ -86,6 +144,7 @@ struct SidebarDockHost: NSViewRepresentable {
             }
         }
         private var sidebarWidth: CGFloat = 0
+        private var scheme: ColorScheme
         private(set) var shown = true
         private(set) var moving = false
         var floating: Bool
@@ -94,9 +153,11 @@ struct SidebarDockHost: NSViewRepresentable {
         private var targetX: CGFloat = 0
         override var isFlipped: Bool { true }
         init(pane: SidebarDockPane) {
-            floating = pane.floating
+            floating = !pane.store.sidebarPresented && pane.store.hoveredSidebar
+            scheme = pane.scheme
             hostedSidebar = NSHostingView(rootView: pane)
             hostedSidebar.sizingOptions = []
+            hostedSidebar.safeAreaRegions = []
             hostedSidebar.wantsLayer = true
             hostedSidebar.layer?.masksToBounds = !floating
             super.init(frame: .zero)
@@ -106,6 +167,11 @@ struct SidebarDockHost: NSViewRepresentable {
             registerForDraggedTypes(BrowserDragTypes.links)
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        func updateScheme(_ value: ColorScheme, store: BrowserStore) {
+            guard scheme != value else { return }
+            scheme = value
+            hostedSidebar.rootView = .init(store: store, scheme: value)
+        }
         func configure(
             width: CGFloat, shown: Bool, duration: Double, reduceMotion: Bool, hiddenOffset: CGFloat
         ) {

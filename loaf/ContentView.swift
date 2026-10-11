@@ -103,6 +103,42 @@ struct BrowserToolbar: View {
     }
 }
 
+private struct WonderbarOverlay: View {
+    @ObservedObject var store: BrowserStore
+    let reduceMotion: Bool
+    @State private var appeared = false
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.06).contentShape(Rectangle()).onTapGesture {
+                store.omnibarVisible = false
+            }.ignoresSafeArea()
+            GeometryReader { geometry in
+                let layout = OmnibarMetrics.layout(in: geometry.size.height)
+                VStack(spacing: 0) {
+                    OmnibarView(
+                        store: store, suggestionHeight: layout.suggestions,
+                        width: OmnibarMetrics.width(in: geometry.size.width))
+                    Spacer(minLength: 0)
+                }.frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.top, layout.top)
+            }
+        }
+        .opacity(appeared ? 1 : 0)
+        .onAppear {
+            if reduceMotion {
+                appeared = true
+            } else {
+
+
+                DispatchQueue.main.async {
+                    withAnimation(.easeOut(duration: 0.10)) { appeared = true }
+                }
+            }
+        }
+        .onDisappear { appeared = false }
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var store: BrowserStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -153,7 +189,7 @@ struct ContentView: View {
                                         }
                                     case .web:
                                         if tab.url == nil {
-                                            StartPage(store: store)
+                                            StartPage(store: store).equatable()
                                         } else {
                                             ZStack(alignment: .top) {
                                                 if let article = tab.readerArticle {
@@ -199,23 +235,17 @@ struct ContentView: View {
                                         && (tab.page != .web || tab.url == nil || tab.readerArticle != nil)
                                         ? store.compactToolbarHeight : 0)
                             }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transaction { $0.animation = nil }
                         } else {
                             BrowserLoadingView()
                         }
-                        if store.compactToolbarHeight > 0 { BrowserToolbar(store: store).zIndex(1) }
+                        if store.compactToolbarHeight > 0 {
+                            BrowserToolbar(store: store).zIndex(1)
+                                .transaction { $0.animation = nil }
+                        }
                         if store.omnibarVisible {
-                            Color.black.opacity(0.06).contentShape(Rectangle()).onTapGesture {
-                                store.omnibarVisible = false
-                            }.ignoresSafeArea().transition(.opacity)
-                            GeometryReader { geometry in
-                                let layout = OmnibarMetrics.layout(in: geometry.size.height)
-                                VStack(spacing: 0) {
-                                    OmnibarView(
-                                        store: store, suggestionHeight: layout.suggestions,
-                                        width: OmnibarMetrics.width(in: geometry.size.width))
-                                    Spacer(minLength: 0)
-                                }.frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.top, layout.top)
-                            }.transition(.opacity).zIndex(3)
+                            WonderbarOverlay(store: store, reduceMotion: reduceMotion)
+                                .transition(.asymmetric(insertion: .identity, removal: .opacity)).zIndex(3)
                         }
                         TabSwitcherView(switcher: store.tabSwitcher, previews: store.application.tabPreviews).frame(
                             maxWidth: .infinity, maxHeight: .infinity
@@ -248,7 +278,6 @@ struct ContentView: View {
                         if let offer = store.passwordOffer { passwordPrompt(offer) }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.omnibarVisible)
-                        .transaction { $0.animation = nil }
                 }
                 SidebarDock(store: store).zIndex(2)
                 BrowserNotificationToast(
@@ -337,13 +366,6 @@ struct ContentView: View {
             Button("ok") { store.error = nil }
         } message: {
             Text(store.error ?? "")
-        }
-        .onOpenURL { url in
-            if let coordinator = store.application.coordinator {
-                coordinator.openReceivedURLs([url])
-            } else {
-                store.openReceivedURL(url)
-            }
         }
     }
     private func pageError(_ error: String, tab: BrowserTab) -> some View {

@@ -5,6 +5,18 @@
 !/loaf/
 !/loaf.xcodeproj/
 
+!/tests/
+/tests/*
+!/tests/ICloudSyncTests.swift
+!/tests/ConsoleLogRegressionTests.swift
+!/scripts/
+/scripts/*
+!/scripts/test-icloud-sync.sh
+!/scripts/test-console-regressions.sh
+!/docs/
+/docs/*
+!/docs/ICLOUD_SYNC.md
+
 .DS_Store
 *.xcuserstate
 xcuserdata/

@@ -97,7 +97,7 @@ enum BrowserAddress {
         engine.url(for: query, customTemplate: customTemplate)
     }
 
-    static func defaultSearchQuery(_ url: URL?) -> String? {
+    nonisolated static func defaultSearchQuery(_ url: URL?) -> String? {
         guard let url, url.scheme == "https" || url.scheme == "http",
             ["www.google.com", "google.com"].contains(url.host?.lowercased() ?? ""),
             url.user == nil, url.password == nil, url.port == nil,
@@ -125,7 +125,7 @@ enum BrowserAddress {
         return !domain.isEmpty && (host == domain || host.hasSuffix("." + domain))
     }
 
-    static func display(_ url: URL?) -> String {
+    nonisolated static func display(_ url: URL?) -> String {
         guard let url else { return "search or surf..." }
         guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), let host = url.host else {
             return url.absoluteString
@@ -134,7 +134,7 @@ enum BrowserAddress {
             + (url.path == "/" ? "" : url.path) + (url.query.map { "?" + $0 } ?? "")
             + (url.fragment.map { "#" + $0 } ?? "")
     }
-    static func suggestionLabel(_ url: URL?) -> String {
+    nonisolated static func suggestionLabel(_ url: URL?) -> String {
         guard let url, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             return display(url)
         }
@@ -326,10 +326,12 @@ nonisolated struct BrowserPreferences: Codable, Sendable {
     var allowsPointerCapture: Bool?
     var weatherCity = ""
     var fahrenheit = true
+    var weatherUsesCurrentLocation: Bool?
     var sidebarWidth = 220.0
     var remoteSites: Bool?
     var alternateSearch: SearchRedirect?
     var developerMenu: Bool?
+    var capitalizeMenus: Bool?
     var inspectorMode: InspectorMode?
     var userAgentMode: UserAgentMode?
     var customUserAgent: String?
@@ -454,7 +456,7 @@ nonisolated struct SiteSettings: Codable, Sendable {
     var userAgent: UserAgentMode = .automatic
     var customUserAgent: String?
 }
-nonisolated struct Personalization: Codable, Sendable {
+nonisolated struct Personalization: Codable, Equatable, Sendable {
     var customTint: ProfileColor?
     var sidebarWeather: Bool?
     var compactSidebarWeather: Bool?

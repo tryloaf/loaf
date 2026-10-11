@@ -54,7 +54,7 @@ nonisolated struct WeatherSnapshot: Codable {
     @Published var attributionURL = URL(string: "https://open-meteo.com/")!
     @Published var attributionMarkLight: NSImage?
     @Published var attributionMarkDark: NSImage?
-    static let freshness: TimeInterval = 30 * 60
+    static let freshness: TimeInterval = 15 * 60
     static let staleLifetime: TimeInterval = 6 * 60 * 60
     typealias ForecastLoader = (WeatherPlace) async throws -> WeatherSnapshot
     private struct Located: Codable {
@@ -126,34 +126,58 @@ nonisolated struct WeatherSnapshot: Codable {
         do {
             if let retry = retries[query], retry > now() { throw URLError(.resourceUnavailable) }
             let place = try await resolve(query)
-            let key = place.key + (preferredProvider == "open-meteo" ? ":open" : ":automatic")
-            let snapshot: WeatherSnapshot
-            if let saved = cache.forecasts[key], fresh(saved.updated, for: Self.freshness) {
-                snapshot = saved
-            } else {
-                do {
-                    snapshot = try await forecast(place, key: key, automatic: preferredProvider != "open-meteo")
-                } catch {
-                    if let saved = cache.forecasts[key], fresh(saved.updated, for: Self.staleLifetime) {
-                        guard requestID == token else { return }
-                        apply(saved, place: place, fahrenheit: fahrenheit)
-                        self.error = "showing saved weather · couldn’t refresh"
-                        return
-                    }
-                    throw error
-                }
-            }
-            guard requestID == token, !Task.isCancelled else { return }
-            apply(snapshot, place: place, fahrenheit: fahrenheit)
+            try await load(place, fahrenheit: fahrenheit, preferredProvider: preferredProvider, token: token)
         } catch {
-            guard requestID == token, !Task.isCancelled else { return }
-            self.error = "weather unavailable. check the city and try again."
-            temperature = nil
-            hours = []
-            city = ""
-            condition = ""
-            updated = nil
+            fail(token)
         }
+    }
+    func fetch(location: CLLocation, fahrenheit: Bool, preferredProvider: String = "automatic") async {
+        let token = UUID()
+        requestID = token
+        let coordinate = location.coordinate
+        let place = WeatherPlace(name: "current location", latitude: coordinate.latitude, longitude: coordinate.longitude)
+        guard place.valid else {
+            fail(token)
+            return
+        }
+        loading = true
+        error = nil
+        defer { if requestID == token { loading = false } }
+        do {
+            try await load(place, fahrenheit: fahrenheit, preferredProvider: preferredProvider, token: token)
+        } catch {
+            fail(token)
+        }
+    }
+    private func load(_ place: WeatherPlace, fahrenheit: Bool, preferredProvider: String, token: UUID) async throws {
+        let key = place.key + (preferredProvider == "open-meteo" ? ":open" : ":automatic")
+        let snapshot: WeatherSnapshot
+        if let saved = cache.forecasts[key], fresh(saved.updated, for: Self.freshness) {
+            snapshot = saved
+        } else {
+            do {
+                snapshot = try await forecast(place, key: key, automatic: preferredProvider != "open-meteo")
+            } catch {
+                if let saved = cache.forecasts[key], fresh(saved.updated, for: Self.staleLifetime) {
+                    guard requestID == token else { return }
+                    apply(saved, place: place, fahrenheit: fahrenheit)
+                    self.error = "showing saved weather · couldn’t refresh"
+                    return
+                }
+                throw error
+            }
+        }
+        guard requestID == token, !Task.isCancelled else { return }
+        apply(snapshot, place: place, fahrenheit: fahrenheit)
+    }
+    private func fail(_ token: UUID) {
+        guard requestID == token, !Task.isCancelled else { return }
+        error = "weather unavailable. check the location and try again."
+        temperature = nil
+        hours = []
+        city = ""
+        condition = ""
+        updated = nil
     }
     private func fresh(_ date: Date, for age: TimeInterval) -> Bool {
         (0..<age).contains(now().timeIntervalSince(date))
@@ -186,7 +210,7 @@ nonisolated struct WeatherSnapshot: Codable {
                     cache.appleRetryAfter = nil
                 } catch {
                     if error is CancellationError { throw error }
-                    cache.appleRetryAfter = now().addingTimeInterval(60 * 60)
+                    cache.appleRetryAfter = now().addingTimeInterval(Self.freshness)
                     persist()
                 }
             }
@@ -355,14 +379,18 @@ nonisolated struct WeatherSnapshot: Codable {
 }
 
 struct WeatherRefresh: ViewModifier {
-    @ObservedObject var store: BrowserStore
+    let store: BrowserStore
     private var identity: String {
         "\(store.preferences.weatherCity):\(store.preferences.fahrenheit):\(store.preferences.weatherProvider ?? "automatic")"
     }
     private func refresh() async {
-        await store.weather.fetch(
-            city: store.preferences.weatherCity, fahrenheit: store.preferences.fahrenheit,
-            preferredProvider: store.preferences.weatherProvider ?? "automatic")
+        if store.preferences.weatherUsesCurrentLocation == true {
+            await store.application.weatherLocation.refreshWeather()
+        } else {
+            await store.weather.fetch(
+                city: store.preferences.weatherCity, fahrenheit: store.preferences.fahrenheit,
+                preferredProvider: store.preferences.weatherProvider ?? "automatic")
+        }
     }
     func body(content: Content) -> some View {
         content.task(id: identity) {
@@ -375,5 +403,130 @@ struct WeatherRefresh: ViewModifier {
         }.onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await refresh() }
         }
+    }
+}
+
+@MainActor final class WeatherLocationRefreshBudget {
+    static let maximumDailyRefreshes = 3
+    static let minimumDistance: CLLocationDistance = 1_000
+    private let defaults: UserDefaults
+    private let calendar: Calendar
+    private let prefix: String
+
+    init(defaults: UserDefaults = .standard, calendar: Calendar = .autoupdatingCurrent, prefix: String = "loaf.weather.location") {
+        self.defaults = defaults
+        self.calendar = calendar
+        self.prefix = prefix
+    }
+    func establishBaseline(_ location: CLLocation) {
+        defaults.set(location.coordinate.latitude, forKey: prefix + ".latitude")
+        defaults.set(location.coordinate.longitude, forKey: prefix + ".longitude")
+    }
+    func consumeIfChanged(to location: CLLocation, now: Date = Date()) -> Bool {
+        let day = calendar.startOfDay(for: now).timeIntervalSince1970
+        if defaults.double(forKey: prefix + ".day") != day {
+            defaults.set(day, forKey: prefix + ".day")
+            defaults.set(0, forKey: prefix + ".count")
+        }
+        let hasBaseline = defaults.object(forKey: prefix + ".latitude") != nil
+            && defaults.object(forKey: prefix + ".longitude") != nil
+        if hasBaseline {
+            let previous = CLLocation(
+                latitude: defaults.double(forKey: prefix + ".latitude"),
+                longitude: defaults.double(forKey: prefix + ".longitude"))
+            guard location.distance(from: previous) >= Self.minimumDistance else { return false }
+        }
+        let count = defaults.integer(forKey: prefix + ".count")
+        guard count < Self.maximumDailyRefreshes else { return false }
+        defaults.set(count + 1, forKey: prefix + ".count")
+        establishBaseline(location)
+        return true
+    }
+}
+
+@MainActor final class WeatherLocationMonitor: NSObject, CLLocationManagerDelegate {
+    private weak var application: BrowserApplication?
+    private let manager = CLLocationManager()
+    private let budget: WeatherLocationRefreshBudget
+    private var lastLocation: CLLocation?
+    private var awaitingInitialLocation = false
+    private var monitoring = false
+
+    init(application: BrowserApplication, defaults: UserDefaults = .standard) {
+        self.application = application
+        budget = WeatherLocationRefreshBudget(defaults: defaults)
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyKilometer
+    }
+    func setEnabled(_ enabled: Bool) {
+        guard enabled else {
+            manager.stopMonitoringSignificantLocationChanges()
+            monitoring = false
+            awaitingInitialLocation = false
+            lastLocation = nil
+            return
+        }
+        switch manager.authorizationStatus {
+        case .notDetermined:
+            manager.requestWhenInUseAuthorization()
+        case .authorized, .authorizedAlways:
+            requestInitialLocation()
+        default:
+            break
+        }
+    }
+    func refreshWeather() async {
+        guard application?.preferences.weatherUsesCurrentLocation == true else { return }
+        if let lastLocation {
+            await fetch(lastLocation)
+        } else {
+            setEnabled(true)
+        }
+    }
+    private func requestInitialLocation() {
+        guard !awaitingInitialLocation else { return }
+        awaitingInitialLocation = true
+        manager.requestLocation()
+    }
+    private func beginMonitoring() {
+        guard !monitoring else { return }
+        monitoring = true
+        manager.startMonitoringSignificantLocationChanges()
+    }
+    private func fetch(_ location: CLLocation) async {
+        guard let application else { return }
+        await application.weather.fetch(
+            location: location, fahrenheit: application.preferences.fahrenheit,
+            preferredProvider: application.preferences.weatherProvider ?? "automatic")
+    }
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard application?.preferences.weatherUsesCurrentLocation == true else { return }
+        switch manager.authorizationStatus {
+        case .authorized, .authorizedAlways:
+            requestInitialLocation()
+        default:
+            break
+        }
+    }
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard application?.preferences.weatherUsesCurrentLocation == true,
+            let location = locations.last(where: { $0.horizontalAccuracy >= 0 })
+        else { return }
+        lastLocation = location
+        if awaitingInitialLocation {
+            awaitingInitialLocation = false
+            budget.establishBaseline(location)
+            beginMonitoring()
+            Task { await fetch(location) }
+            return
+        }
+        beginMonitoring()
+        if budget.consumeIfChanged(to: location) {
+            Task { await fetch(location) }
+        }
+    }
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        if awaitingInitialLocation { awaitingInitialLocation = false }
     }
 }

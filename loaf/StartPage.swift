@@ -1,8 +1,31 @@
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct StartPage: View {
-    @ObservedObject var store: BrowserStore
+@MainActor private struct StartPageSnapshot: Equatable {
+    let profileID: UUID
+    let name: String
+    let emoji: String
+    let tint: Int
+    let privateMode: Bool
+    let personalization: Personalization
+    let sidebarPresented: Bool
+
+    init(store: BrowserStore) {
+        let selectedProfileID = store.selectedProfileID
+        let profile = store.application.profiles.first { $0.id == selectedProfileID } ?? store.profile
+        profileID = selectedProfileID
+        name = profile.name
+        emoji = profile.emoji
+        tint = profile.tint
+        privateMode = profile.privateMode
+        personalization = profile.personalization ?? Personalization()
+        sidebarPresented = store.sidebarPresented
+    }
+}
+
+struct StartPage: View, Equatable {
+    let store: BrowserStore
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -13,10 +36,13 @@ struct StartPage: View {
     @State private var dropPosition: StartWidgetPosition?
     @State private var resizeSizes: [String: StartWidgetSize] = [:]
     @State private var backgroundImage: (url: URL, image: NSImage)?
+    @State private var snapshot: StartPageSnapshot
     init(store: BrowserStore, editing: Bool = false) {
         self.store = store
         _editing = State(initialValue: editing)
+        _snapshot = State(initialValue: StartPageSnapshot(store: store))
     }
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.store === rhs.store }
     private var backgroundURL: URL? {
         guard preferences.background.hasPrefix("image:") else { return nil }
         let name = String(preferences.background.dropFirst(6))
@@ -25,8 +51,11 @@ struct StartPage: View {
         else { return nil }
         return store.directory.appendingPathComponent("Backgrounds").appendingPathComponent(name)
     }
-    private var preferences: Personalization { store.profile.personalization ?? Personalization() }
+    private var preferences: Personalization { snapshot.personalization }
     private var widgets: [String] { preferences.visibleStartWidgets }
+    private var tint: Color {
+        snapshot.privateMode ? PrivateChrome.accent : preferences.customTint?.color ?? profileTint(snapshot.tint)
+    }
     private func update(_ edit: (inout Personalization) -> Void) {
         store.updateCurrent { profile in
             var value = profile.personalization ?? Personalization()
@@ -50,12 +79,12 @@ struct StartPage: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         HStack(spacing: 8) {
-                            EmojiIcon(glyph: store.profile.emoji, size: 16)
+                            EmojiIcon(glyph: snapshot.emoji, size: 16)
                             Text(
-                                store.profile.privateMode && store.profile.name == "private"
-                                    ? "private browsing" : store.profile.name
+                                snapshot.privateMode && snapshot.name == "private"
+                                    ? "private browsing" : snapshot.name
                             ).font(.system(size: 13))
-                            if store.profile.privateMode && store.profile.name != "private" {
+                            if snapshot.privateMode && snapshot.name != "private" {
                                 Text("private").foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -158,20 +187,26 @@ struct StartPage: View {
                                 .system(size: 11)
                             ).foregroundStyle(.secondary)
                         }
-                        if store.profile.privateMode {
+                        if snapshot.privateMode {
                             Text("history stays off. cookies disappear when this private session ends.").font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                    }.frame(width: width).padding(.horizontal, 32).padding(.top, store.sidebarPresented ? 40 : 24)
+                    }.frame(width: width).padding(.horizontal, 32).padding(.top, snapshot.sidebarPresented ? 40 : 24)
                         .padding(.bottom, 32).frame(maxWidth: .infinity)
                 }
             }.clipped()
         }.environment(
             \.colorScheme,
-            preferences.background == "profile" && !store.profile.privateMode
+            preferences.background == "profile" && !snapshot.privateMode
                 ? ProfileColor.surfaceScheme(
-                    profileTint(store.profile), strength: preferences.tintStrength, dark: scheme == .dark) : scheme
+                    tint, strength: preferences.tintStrength, dark: scheme == .dark) : scheme
         )
+        .onReceive(store.objectWillChange) { _ in
+            DispatchQueue.main.async {
+                let next = StartPageSnapshot(store: store)
+                if next != snapshot { snapshot = next }
+            }
+        }
         .onChange(of: dragged) { _, value in
             if value == nil { dropPosition = nil }
         }
@@ -180,7 +215,7 @@ struct StartPage: View {
             guard let url = backgroundURL else { return }
             let image = await StartBackgroundCache.shared.image(for: url)
             if !Task.isCancelled, url == backgroundURL, let image { backgroundImage = (url, image) }
-        }.onChange(of: store.selectedProfileID) { _, _ in
+        }.onChange(of: snapshot.profileID) { _, _ in
             editing = false
             gallery = false
             appearance = false
@@ -197,7 +232,7 @@ struct StartPage: View {
     }
     private var background: some View {
         Group {
-            if store.profile.privateMode {
+            if snapshot.privateMode {
                 LinearGradient(
                     colors: [PrivateChrome.surface, PrivateChrome.base], startPoint: .topLeading,
                     endPoint: .bottomTrailing)
@@ -207,7 +242,7 @@ struct StartPage: View {
             } else {
                 let tint =
                     preferences.background == "profile"
-                    ? profileTint(store.profile) : Color(nsColor: .windowBackgroundColor)
+                    ? tint : Color(nsColor: .windowBackgroundColor)
                 let strength =
                     preferences.background == "profile"
                     ? ProfileColor.surfaceOpacity(preferences.tintStrength) : (scheme == .dark ? 0.32 : 1)
@@ -250,107 +285,37 @@ struct StartPage: View {
         case "checklist":
             StartChecklistWidget(store: store, options: options, showsHeader: !editing).id(store.selectedProfileID)
         case "worldClock": StartWorldClockWidget(options: options, showsHeader: !editing)
+        case "timer", "stopwatch":
+            StartTimingWidget(
+                service: store.application.startTimers, profileID: store.selectedProfileID,
+                privateMode: snapshot.privateMode, stopwatch: widget == "stopwatch", compact: compact,
+                showsHeader: !editing
+            ).id(store.selectedProfileID)
         case "weather":
-            VStack(alignment: .leading, spacing: compact ? 8 : 12) {
-                HStack(spacing: compact ? 8 : 12) {
-                    GolzheimIcon(icon: store.weather.icon, size: compact ? 32 : 40)
-                    Text(store.weather.temperature.map { "\($0)°" } ?? "—").font(
-                        .system(size: compact ? 32 : 40, weight: .light))
-                    Spacer()
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(store.weather.city.isEmpty ? "select a city" : store.weather.city).font(.system(size: 13))
-                        .lineLimit(store.weather.city.isEmpty && !compact ? 3 : 1).fixedSize(
-                            horizontal: false, vertical: true)
-                    Text(store.weather.condition).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                if !compact && !store.weather.hours.isEmpty {
-                    HStack(spacing: 14) {
-                        ForEach(store.weather.hours) { hour in
-                            VStack(spacing: 3) {
-                                Text(hour.date, format: .dateTime.hour())
-                                Text("\(hour.temperature)°").fontWeight(.medium)
-                            }.font(.system(size: 10)).accessibilityElement(children: .combine)
-                        }
-                    }
-                }
-                if store.profile.privateMode {
-                    Button {
-                        NSWorkspace.shared.open(store.weather.attributionURL)
-                    } label: {
-                        Text(store.weather.attribution).font(.system(size: 10)).foregroundStyle(PrivateChrome.accent)
-                    }.buttonStyle(.plain)
-                } else {
-                    Link(destination: store.weather.attributionURL) {
-                        if let mark = scheme == .dark
-                            ? store.weather.attributionMarkDark : store.weather.attributionMarkLight
-                        {
-                            Image(nsImage: mark).resizable().scaledToFit().frame(height: 16)
-                        } else {
-                            Text(store.weather.attribution).font(.system(size: 10)).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            .modifier(WeatherRefresh(store: store))
+            StartWeatherWidget(
+                store: store, weather: store.weather, compact: compact, privateMode: snapshot.privateMode)
         case "notes":
             VStack(alignment: .leading, spacing: 8) {
                 widgetHeader(.book, "notes")
-                TextEditor(
-                    text: Binding(
-                        get: { preferences.notes }, set: { value in update { $0.notes = String(value.prefix(10000)) } })
-                ).font(.system(size: options.largerNotes == true ? 16 : 13)).scrollContentBackground(.hidden)
-                    .scrollIndicators(.hidden).frame(minHeight: 40).accessibilityLabel("local notes")
+                ZStack(alignment: .topLeading) {
+                    if preferences.notes.isEmpty {
+                        Text("write something down…").foregroundStyle(.tertiary)
+                            .padding(.horizontal, 5).padding(.top, 1).allowsHitTesting(false)
+                    }
+                    TextEditor(
+                        text: Binding(
+                            get: { preferences.notes },
+                            set: { value in update { $0.notes = String(value.prefix(10000)) } })
+                    ).scrollContentBackground(.hidden).scrollIndicators(.hidden)
+                        .frame(minHeight: 40).accessibilityLabel("local notes")
+                }.font(.system(size: options.largerNotes == true ? 16 : 13))
             }.frame(maxHeight: .infinity)
-        case "recent":
-            VStack(alignment: .leading, spacing: 12) {
-                widgetHeader(.history, "recent tabs")
-                ForEach(store.tabs.filter { $0.url != nil }.suffix(options.limit).reversed()) { tab in
-                    Button {
-                        store.select(tab)
-                    } label: {
-                        HStack(spacing: 8) {
-                            SiteIcon(tab: tab, size: 16)
-                            Text(BrowserAddress.visible(tab.sidebarTitle)).font(.system(size: 13)).lineLimit(1)
-                            Spacer()
-                        }
-                    }.buttonStyle(LoafButtonStyle())
-                }
-                if store.tabs.allSatisfy({ $0.url == nil }) {
-                    Text("your open pages will appear here").font(.system(size: 13)).foregroundStyle(.secondary)
-                }
-            }
+        case "recent": StartRecentTabsWidget(store: store, limit: options.limit, showsHeader: !editing)
         case "downloads": StartDownloadsWidget(store: store, limit: options.limit)
         default:
-            VStack(alignment: .leading, spacing: 12) {
-                widgetHeader(.favorite, "favorites")
-                if store.profile.favorites.isEmpty {
-                    Text("save a favorite with ⌘D to keep it here").font(.system(size: 13)).foregroundStyle(.secondary)
-                }
-                if preferences.pinStyle == "tiles" {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 64))], spacing: 12) {
-                        ForEach(
-                            Array(
-                                store.profile.favorites.filter { $0.folderID == nil }.prefix(
-                                    options.itemLimit == nil ? store.profile.favorites.count : options.limit))
-                        ) { favorite in favoriteButton(favorite, style: "tiles") }
-                    }
-                } else if preferences.pinStyle == "chips" {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 112))], spacing: 8) {
-                        ForEach(
-                            Array(
-                                store.profile.favorites.filter { $0.folderID == nil }.prefix(
-                                    options.itemLimit == nil ? store.profile.favorites.count : options.limit))
-                        ) { favorite in favoriteButton(favorite, style: "chips") }
-                    }
-                } else {
-                    ForEach(
-                        Array(
-                            store.profile.favorites.filter { $0.folderID == nil }.prefix(
-                                options.itemLimit == nil ? store.profile.favorites.count : options.limit))
-                    ) { favorite in favoriteButton(favorite, style: "list") }
-                }
-            }
+            StartFavoritesWidget(
+                store: store, style: preferences.pinStyle, limit: options.itemLimit == nil ? nil : options.limit,
+                showsHeader: !editing)
         }
     }
     private func clockText(_ date: Date, options: StartWidgetOptions) -> String {
@@ -366,6 +331,118 @@ struct StartPage: View {
             HStack(spacing: 8) {
                 GolzheimIcon(icon: icon, size: 16)
                 Text(name).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct StartWeatherWidget: View {
+    let store: BrowserStore
+    @ObservedObject var weather: WeatherService
+    let compact: Bool
+    let privateMode: Bool
+    @Environment(\.colorScheme) private var scheme
+    var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 8 : 12) {
+            HStack(spacing: compact ? 8 : 12) {
+                GolzheimIcon(icon: weather.icon, size: compact ? 32 : 40)
+                Text(weather.temperature.map { "\($0)°" } ?? "—").font(
+                    .system(size: compact ? 32 : 40, weight: .light))
+                Spacer()
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(weather.city.isEmpty ? "select a city" : weather.city).font(.system(size: 13))
+                    .lineLimit(weather.city.isEmpty && !compact ? 3 : 1).fixedSize(horizontal: false, vertical: true)
+                Text(weather.condition).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            if !compact && !weather.hours.isEmpty {
+                HStack(spacing: 14) {
+                    ForEach(weather.hours) { hour in
+                        VStack(spacing: 3) {
+                            Text(hour.date, format: .dateTime.hour())
+                            Text("\(hour.temperature)°").fontWeight(.medium)
+                        }.font(.system(size: 10)).accessibilityElement(children: .combine)
+                    }
+                }
+            }
+            if privateMode {
+                Button {
+                    NSWorkspace.shared.open(weather.attributionURL)
+                } label: {
+                    Text(weather.attribution).font(.system(size: 10)).foregroundStyle(PrivateChrome.accent)
+                }.buttonStyle(.plain)
+            } else {
+                Link(destination: weather.attributionURL) {
+                    if let mark = scheme == .dark ? weather.attributionMarkDark : weather.attributionMarkLight {
+                        Image(nsImage: mark).resizable().scaledToFit().frame(height: 16)
+                    } else {
+                        Text(weather.attribution).font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }.modifier(WeatherRefresh(store: store))
+    }
+}
+
+private struct StartRecentTabsWidget: View {
+    @ObservedObject var store: BrowserStore
+    let limit: Int
+    let showsHeader: Bool
+    var body: some View {
+        let tabs = store.tabs.filter { $0.url != nil }.sorted { $0.lastActivated > $1.lastActivated }
+        VStack(alignment: .leading, spacing: 12) {
+            if showsHeader {
+                HStack(spacing: 8) {
+                    GolzheimIcon(icon: .history, size: 16)
+                    Text("recent tabs").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                }
+            }
+            ForEach(Array(tabs.prefix(limit))) { tab in
+                Button {
+                    store.select(tab)
+                } label: {
+                    HStack(spacing: 8) {
+                        SiteIcon(tab: tab, size: 16)
+                        Text(BrowserAddress.visible(tab.sidebarTitle)).font(.system(size: 13)).lineLimit(1)
+                        Spacer()
+                    }
+                }.buttonStyle(LoafButtonStyle())
+            }
+            if tabs.isEmpty {
+                Text("your open pages will appear here").font(.system(size: 13)).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct StartFavoritesWidget: View {
+    @ObservedObject var store: BrowserStore
+    let style: String
+    let limit: Int?
+    let showsHeader: Bool
+    var body: some View {
+        let all = store.profile.favorites.filter { $0.folderID == nil }
+        let favorites = limit.map { Array(all.prefix($0)) } ?? all
+        VStack(alignment: .leading, spacing: 12) {
+            if showsHeader {
+                HStack(spacing: 8) {
+                    GolzheimIcon(icon: .favorite, size: 16)
+                    Text("favorites").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                }
+            }
+            if all.isEmpty {
+                Text("save a favorite with ⌘D to keep it here").font(.system(size: 13)).foregroundStyle(.secondary)
+            }
+            if style == "tiles" {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 64))], spacing: 12) {
+                    ForEach(favorites) { favorite in favoriteButton(favorite, style: "tiles") }
+                }
+            } else if style == "chips" {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 112))], spacing: 8) {
+                    ForEach(favorites) { favorite in favoriteButton(favorite, style: "chips") }
+                }
+            } else {
+                ForEach(favorites) { favorite in favoriteButton(favorite, style: "list") }
             }
         }
     }
@@ -479,7 +556,7 @@ struct StartWidgetScrollContent<Content: View>: View {
 }
 
 struct StartWidgetCard<Content: View>: View {
-    @ObservedObject var store: BrowserStore
+    let store: BrowserStore
     let id: String
     let editing: Bool
     let columns: Int
@@ -694,7 +771,8 @@ struct StartWidgetGallery: View {
                             }
                         } label: {
                             HStack(spacing: 12) {
-                                EmojiIcon(glyph: kind.glyph, size: 28).frame(width: 36)
+                                Image(systemName: kind.symbol).font(.system(size: 20, weight: .regular))
+                                    .foregroundStyle(.secondary).frame(width: 36, height: 36)
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(kind.title).font(.system(size: 13, weight: .medium))
                                     Text(kind.detail).font(.system(size: 11)).foregroundStyle(.secondary)

@@ -18,7 +18,8 @@ struct StartWidgetGrid<Content: View>: View {
 }
 
 nonisolated enum StartWidgetKind: String, CaseIterable, Identifiable, Sendable {
-    case pins, clock, weather, recent, notes, calendar, downloads, checklist, worldClock, battery, browsingTime
+    case pins, clock, weather, recent, notes, calendar, downloads, checklist, worldClock, timer, stopwatch, battery,
+        browsingTime
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -33,6 +34,8 @@ nonisolated enum StartWidgetKind: String, CaseIterable, Identifiable, Sendable {
         case .downloads: "downloads"
         case .checklist: "checklist"
         case .worldClock: "world clock"
+        case .timer: "timer"
+        case .stopwatch: "stopwatch"
         }
     }
     var glyph: String {
@@ -47,6 +50,8 @@ nonisolated enum StartWidgetKind: String, CaseIterable, Identifiable, Sendable {
         case .downloads: "↓"
         case .checklist: "☑"
         case .worldClock: "🪐"
+        case .timer: "⏲"
+        case .stopwatch: "⏱"
         }
     }
     var detail: String {
@@ -62,11 +67,30 @@ nonisolated enum StartWidgetKind: String, CaseIterable, Identifiable, Sendable {
         case .downloads: "recent transfers in this profile"
         case .checklist: "a few things to get done, kept locally"
         case .worldClock: "the time in places you choose"
+        case .timer: "a countdown with a chime while loaf is open"
+        case .stopwatch: "keep track of elapsed time"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .pins: "star"
+        case .clock: "clock"
+        case .weather: "cloud.sun"
+        case .recent: "clock.arrow.circlepath"
+        case .notes: "note.text"
+        case .calendar: "calendar"
+        case .downloads: "arrow.down.circle"
+        case .checklist: "checklist"
+        case .worldClock: "globe"
+        case .timer: "timer"
+        case .stopwatch: "stopwatch"
+        case .battery: "battery.75percent"
+        case .browsingTime: "hourglass"
         }
     }
 }
 
-nonisolated enum StartWidgetSize: String, CaseIterable, Codable, Sendable {
+nonisolated enum StartWidgetSize: String, CaseIterable, Codable, Equatable, Sendable {
     case small, square, wide, tall, large
     var columns: Int { self == .wide || self == .large ? 2 : 1 }
     var rows: Int { self == .tall || self == .large ? 2 : 1 }
@@ -116,7 +140,7 @@ struct StartWidgetResizeSession {
     }
 }
 
-nonisolated struct StartWidgetOptions: Codable, Sendable {
+nonisolated struct StartWidgetOptions: Codable, Equatable, Sendable {
     var clock24Hour: Bool?
     var clockSeconds: Bool?
     var itemLimit: Int?
@@ -247,7 +271,9 @@ struct StartWidgetLayout {
                     width: size.width(columnWidth: columnWidth, columns: columns),
                     height: size.height(columnWidth: columnWidth))
                 result.append(Placement(id: id, frame: frame))
-                for index in column..<column + span { bottoms[index] = frame.maxY + 16 }
+
+                let occupiedHeight = max(frame.height, max(176, side))
+                for index in column..<column + span { bottoms[index] = frame.minY + occupiedHeight + 16 }
             }
             self.columns = columns
             self.columnWidth = columnWidth

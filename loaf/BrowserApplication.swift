@@ -14,6 +14,7 @@ import WebKit
     let blocker = ContentBlocker()
     let downloads = DownloadManager()
     let weather = WeatherService()
+    lazy var weatherLocation = WeatherLocationMonitor(application: self)
     private var resourceMonitor: ResourceMonitor?
     var resources: ResourceMonitor {
         if let resourceMonitor { return resourceMonitor }
@@ -21,7 +22,11 @@ import WebKit
         resourceMonitor = monitor
         return monitor
     }
+    lazy var cloudSync = ICloudSync(application: self)
     lazy var notifications = WebNotifications(application: self)
+    lazy var startTimers = StartTimerService(
+        file: directory.appendingPathComponent("start-timers.json"),
+        validProfiles: Set(profiles.filter { !$0.privateMode }.map(\.id)))
     private let suppliedChatGPTAccount: ChatGPTAccount?
     lazy var chatGPTAccount = suppliedChatGPTAccount ?? ChatGPTAccount()
     let favicons: FaviconService
@@ -33,6 +38,7 @@ import WebKit
     private let sessionWriter = SessionWriter()
     private var sleepingTask: Task<Void, Never>?
     private var restoredWindows: [SavedWindow] = []
+    private var didCreateWindow = false
     private var pendingProfileDeletions = Set<UUID>()
     private var observers = Set<AnyCancellable>()
     func setAIFeaturesEnabled(_ enabled: Bool) {
@@ -129,6 +135,7 @@ import WebKit
             preferences.alternateSearch?.provider = .google
         }
         downloads.configure(directory: directory)
+        _ = startTimers
         for publisher in [
             blocker.objectWillChange, downloads.objectWillChange, weather.objectWillChange, sites.objectWillChange,
             tabPreviews.objectWillChange,
@@ -149,10 +156,13 @@ import WebKit
             if prepareServices {
                 let owner = self
                 resources.objectWillChange.sink { [weak owner] in owner?.objectWillChange.send() }.store(in: &observers)
+                await cloudSync.resume()
                 startIdleTabSleeping()
                 TopLevelDomains.shared.start(directory: directory)
                 await sites.refresh(directory: directory, allowNetwork: preferences.remoteSites == true)
-                if !preferences.weatherCity.isEmpty {
+                if preferences.weatherUsesCurrentLocation == true {
+                    weatherLocation.setEnabled(true)
+                } else if !preferences.weatherCity.isEmpty {
                     await weather.fetch(
                         city: preferences.weatherCity, fahrenheit: preferences.fahrenheit,
                         preferredProvider: preferences.weatherProvider ?? "automatic")
@@ -219,6 +229,7 @@ import WebKit
     @discardableResult func makeWindow(profileID: UUID? = nil, saved: SavedWindow? = nil, restore: Bool = true)
         -> BrowserWindowState
     {
+        didCreateWindow = true
         let window = BrowserWindowState(application: self, saved: saved, profileID: profileID)
         windows.append(window)
         if ready && restore { window.restoreTabs(for: window.selectedProfileID) }
@@ -259,6 +270,7 @@ import WebKit
         for window in windows { window.forgetProfile(id) }
         favicons.forgetPrivate(id)
         downloads.forgetPrivate(id)
+        startTimers.forgetProfile(id)
         tabPreviews.forgetProfile(id)
         runtimes.removeValue(forKey: id)
         profiles.removeAll { $0.id == id }
@@ -283,6 +295,7 @@ import WebKit
         coordinator?.forgetProfile(id)
         downloads.forgetProfile(id)
         notifications.forgetProfile(id)
+        startTimers.forgetProfile(id)
         tabPreviews.forgetProfile(id)
         runtimes.removeValue(forKey: id)
         profiles.removeAll { $0.id == id }
@@ -303,6 +316,7 @@ import WebKit
         guard var snapshot = sessionSnapshot() else { throw CocoaError(.fileWriteUnknown) }
         if windows.isEmpty { snapshot.windows = restoredWindows }
         let revision = sessionWriter.reserve()
+        cloudSync.capture(snapshot)
         try sessionWriter.commit(
             try SessionWrite(snapshot: snapshot).encoded(),
             to: directory.appendingPathComponent("session.json"), revision: revision)
@@ -379,6 +393,7 @@ import WebKit
             guard !Task.isCancelled, let self else { return }
             self.saveTask = nil
             guard let snapshot = self.sessionSnapshot() else { return }
+            self.cloudSync.capture(snapshot)
             let payload = SessionWrite(snapshot: snapshot)
             let writer = self.sessionWriter
             let revision = writer.reserve()
@@ -394,10 +409,82 @@ import WebKit
             self.downloads.persist()
         }
     }
+    func persistSyncedSession() throws {
+        saveTask?.cancel()
+        saveTask = nil
+        guard let snapshot = sessionSnapshot() else { throw CocoaError(.fileWriteUnknown) }
+        let revision = sessionWriter.reserve()
+        try sessionWriter.commit(
+            try SessionWrite(snapshot: snapshot).encoded(),
+            to: directory.appendingPathComponent("session.json"), revision: revision)
+    }
+    func reconcileSyncedPins() {
+        for window in windows {
+            window.sidebarEntryCache = nil
+            for (profileID, runtime) in runtimes {
+                guard let profile = profiles.first(where: { $0.id == profileID }), !profile.privateMode else {
+                    continue
+                }
+                for tab in runtime.tabs.values where tab.windowID == window.id {
+                    if let pinID = tab.pinnedShortcutID {
+                        if let pin = profile.pinShortcuts?.first(where: { $0.id == pinID }) {
+                            tab.pinnedTitle = pin.pinnedTitle
+                            tab.pinnedIcon = pin.pinnedIcon
+                            tab.pinPresentation = pin.pinPresentation
+                            tab.pinnedAddress = pin.pinnedAddress ?? pin.address
+                        } else {
+
+                            tab.pinned = false
+                            tab.pinnedShortcutID = nil
+                            tab.pinnedAddress = nil
+                            tab.pinnedTitle = nil
+                            tab.pinnedIcon = nil
+                        }
+                    }
+                    if let memberID = tab.groupMemberID {
+                        if let group = profile.pinnedGroups?.first(where: { $0.id == tab.groupID }),
+                            let member = group.savedTabs?.first(where: { $0.id == memberID })
+                        {
+                            tab.customTitle = member.customTitle
+                            tab.customIcon = member.customIcon
+                            tab.pinnedAddress = member.pinnedAddress ?? member.address
+                        } else {
+                            tab.groupID = nil
+                            tab.groupMemberID = nil
+                            if !tab.pinned { tab.pinnedAddress = nil }
+                        }
+                    }
+                    if let index = window.workspaces[profileID]?.tabs.firstIndex(where: { $0.id == tab.id }) {
+                        window.workspaces[profileID]?.tabs[index] = tab.saved
+                    }
+                }
+            }
+            for (id, preview) in window.pinPreviews
+            where !profiles.contains(where: {
+                $0.id == preview.profileID && ($0.pinShortcuts ?? []).contains(where: { $0.id == id })
+            }) { window.pinPreviews.removeValue(forKey: id)?.dispose() }
+            for (id, preview) in window.groupPreviews
+            where !profiles.contains(where: {
+                $0.id == preview.profileID
+                    && ($0.pinnedGroups ?? []).contains(where: {
+                        ($0.savedTabs ?? []).contains(where: { $0.id == id })
+                    })
+            }) { window.groupPreviews.removeValue(forKey: id)?.dispose() }
+            window.refreshShortcutPreviewsLater()
+            window.syncWindowTitle()
+            window.objectWillChange.send()
+        }
+    }
+    func syncSnapshot() -> BrowserSnapshot? {
+        guard var snapshot = sessionSnapshot() else { return nil }
+
+        if !didCreateWindow { snapshot.windows = restoredWindows }
+        return snapshot
+    }
     private func sessionSnapshot() -> BrowserSnapshot? {
         let persistent = profiles.filter { !$0.privateMode }
         guard let first = persistent.first else { return nil }
-        let records = windows.compactMap { $0.snapshot() }
+        let records = didCreateWindow ? windows.compactMap { $0.snapshot() } : restoredWindows
         return BrowserSnapshot(
             version: 2, profiles: persistent, selectedProfile: records.first?.selectedProfile ?? first.id,
             preferences: preferences, windows: records)
@@ -412,6 +499,7 @@ import WebKit
         saveTask?.cancel()
         saveTask = nil
         guard let snapshot = sessionSnapshot() else { return }
+        cloudSync.capture(snapshot)
         let revision = sessionWriter.reserve()
         do {
             let data = try SessionWrite(snapshot: snapshot).encoded()

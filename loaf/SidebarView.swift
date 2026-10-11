@@ -69,7 +69,12 @@ struct SidebarView: View {
                 .overlay(PinnedTabGrid(store: store)).padding(.horizontal, 8).padding(.top, 10).padding(.bottom, 4)
                 .overlay { PinDropZone(store: store).padding(.horizontal, 8) }
             }
-            TabListView(store: store, position: $drop).offset(x: store.profileResistance)
+            TabListView(store: store, position: $drop)
+                .padding(
+                    .top,
+                    store.gridPinnedTabs.isEmpty && store.draggedTabID == nil && !store.rowPinnedTabs.isEmpty ? 10 : 0
+                )
+                .offset(x: store.profileResistance)
             VStack(spacing: 8) {
                 SidebarMediaPlayers(store: store, collection: store.sidebarMedia)
                 if !store.preferences.weatherCity.isEmpty && store.profile.personalization?.sidebarWeather != false {
@@ -497,13 +502,14 @@ struct TabListContent: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let entries = store.sidebarEntries
-        let layout = TabInsertionLayout(
-            rows: entries.map { .init(id: $0.id, pinned: $0.tab == nil, height: $0.height) })
+        let layout = store.sidebarInsertionLayout
         let first = min(entries.count, max(0, visibleRange?.lowerBound ?? 0))
         let last = min(entries.count, max(first, visibleRange?.upperBound ?? entries.count))
 
         let retained = Set([store.draggedTabID, store.draggedFolderID, store.editingGroupID].compactMap { $0 })
-        let indices = entries.indices.filter { (first..<last).contains($0) || retained.contains(entries[$0].id) }
+        let indices = retained.isEmpty
+            ? Array(first..<last)
+            : entries.indices.filter { (first..<last).contains($0) || retained.contains(entries[$0].id) }
         let mounted = indices.enumerated().map { local, index in
             MountedRow(
                 entry: entries[index], index: index,

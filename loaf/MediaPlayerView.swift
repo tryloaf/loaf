@@ -10,6 +10,10 @@ struct MediaMiniPlayer: View {
     @State private var hovered = false
     @State private var seekPreview: Double?
     @State private var volumePreview: Double?
+    @State private var finishingCollapse = false
+    @State private var compactHoverSuppressed = false
+    @State private var expansionGeneration = 0
+    @Namespace private var playbackTransition
     init(
         tab: BrowserTab, source: MediaSource, store: BrowserStore, initiallyExpanded: Bool = false,
         initiallyVolumeOpen: Bool = false, initiallyHovered: Bool = false
@@ -22,6 +26,7 @@ struct MediaMiniPlayer: View {
         _hovered = State(initialValue: initiallyHovered)
     }
     private var hasDuration: Bool { source.duration.isFinite && source.duration > 0 }
+    private var showsCompactPlayback: Bool { finishingCollapse || (hovered && !compactHoverSuppressed) }
     @State private var volumeOpen = false
     var body: some View {
         VStack(spacing: 4) {
@@ -42,25 +47,27 @@ struct MediaMiniPlayer: View {
                     HStack(spacing: 6) {
                         MarqueeTitle(
                             text: source.title, active: store.nativeWindow?.isKeyWindow == true && !source.paused,
-                            trailingInset: !expanded && hovered ? 26 : 0
+                            trailingInset: !expanded && showsCompactPlayback ? 26 : 0
                         )
                         .frame(height: 18).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain).help(source.title).accessibilityLabel("open " + source.title)
                     .overlay(alignment: .trailing) {
                         if !expanded {
-                            playbackButton.opacity(hovered ? 1 : 0).allowsHitTesting(hovered).accessibilityHidden(
-                                !hovered
-                            )
-                            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
+                            playbackButton
+                                .matchedGeometryEffect(id: "playback", in: playbackTransition)
+                                .opacity(showsCompactPlayback ? 1 : 0)
+                                .allowsHitTesting(hovered && !compactHoverSuppressed && !finishingCollapse)
+                                .accessibilityHidden(!hovered || compactHoverSuppressed)
+                                .transition(.identity)
+                                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: showsCompactPlayback)
                         }
                     }
                 playerButton(
                     expanded ? .collapse : .expand, label: expanded ? "collapse player" : "expand player", size: 12,
                     target: 20
                 ) {
-                    volumeOpen = false
-                    expanded.toggle()
+                    toggleExpanded()
                     LoafHaptics.perform(enabled: store.preferences.haptics != false)
                 }
             }.frame(height: 22)
@@ -84,6 +91,8 @@ struct MediaMiniPlayer: View {
                                 tab.control(source, action: "skip", value: -15)
                             }.disabled(!hasDuration)
                             playbackButton
+                                .matchedGeometryEffect(id: "playback", in: playbackTransition)
+                                .transition(.identity)
                             playerButton(.fastForward, label: "forward 15 seconds", size: 20, target: 24) {
                                 tab.control(source, action: "skip", value: 15)
                             }.disabled(!hasDuration)
@@ -99,25 +108,48 @@ struct MediaMiniPlayer: View {
                     if volumeOpen {
                         MediaVolumeControls(tab: tab, source: source, preview: $volumePreview).transition(.opacity)
                     }
-                }.transition(.opacity)
+                }
+                .transition(
+                    reduceMotion ? .identity : .asymmetric(
+                        insertion: .move(edge: .bottom), removal: .identity
+                    )
+                )
             }
-        }.transaction { $0.animation = nil }
+        }
             .padding(.horizontal, 8).padding(.vertical, expanded ? 8 : 5)
             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.06)))
             .shadow(color: .black.opacity(0.04), radius: 3, y: 1)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: expanded)
             .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: volumeOpen)
-            .onHover { hovered = $0 }
+            .onHover { inside in
+                hovered = inside
+                if !inside { compactHoverSuppressed = false }
+            }
             .contextMenu {
                 Button(expanded ? "compact player" : "expanded player") {
-                    volumeOpen = false
-                    expanded.toggle()
+                    toggleExpanded()
                 }
                 Button(source.muted ? "unmute" : "mute") { tab.control(source, action: "mute") }
                 if source.supportsAirPlay { Button("airplay…") { tab.control(source, action: "airplay") } }
                 Button("hide miniplayer") { tab.dismissedMedia.insert(source.id) }
             }
+    }
+    private func toggleExpanded() {
+        expansionGeneration += 1
+        let generation = expansionGeneration
+        let collapsing = expanded
+        compactHoverSuppressed = collapsing
+        finishingCollapse = collapsing && !reduceMotion
+        volumeOpen = false
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.34), completionCriteria: .logicallyComplete) {
+            expanded.toggle()
+        } completion: {
+            guard collapsing, generation == expansionGeneration, !expanded else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.12)) {
+                finishingCollapse = false
+            }
+        }
     }
     private var metadata: String {
         let detail = source.artist.isEmpty ? (tab.url?.host ?? "playing in this tab") : source.artist
@@ -141,7 +173,8 @@ struct MediaMiniPlayer: View {
         Button {
             tab.control(source, action: "toggle")
         } label: {
-            GolzheimIcon(icon: source.paused ? .play : .pause, size: expanded ? 20 : 16, weight: 200, filled: true)
+            GolzheimIcon(icon: source.paused ? .play : .pause, size: 20, weight: 200, filled: true)
+                .scaleEffect(expanded ? 1 : 0.8)
                 .frame(width: expanded ? 28 : 20, height: expanded ? 28 : 20)
         }.buttonStyle(PlayerActionStyle(outline: false))
             .accessibilityLabel(source.paused ? "play" : "pause").help(source.paused ? "play" : "pause")

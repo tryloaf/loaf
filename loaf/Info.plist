@@ -19,7 +19,7 @@
 	<key>OSAScriptingDefinition</key>
 	<string>loaf.sdef</string>
 	<key>NSLocationUsageDescription</key>
-	<string>Websites can use your location only when you allow it in website settings.</string>
+	<string>loaf can use your location for current-location weather when you enable it. Websites can use your location only when you allow them in website settings.</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -54,9 +54,21 @@
 	<dict>
 		<key>NSAllowsArbitraryLoadsInWebContent</key>
 		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
 	</dict>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>loaf profile drag payload</string>
+			<key>UTTypeIdentifier</key>
+			<string>app.tryloaf.loaf.profile</string>
+		</dict>
 		<dict>
 			<key>UTTypeConformsTo</key>
 			<array>

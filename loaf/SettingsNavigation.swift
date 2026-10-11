@@ -3,7 +3,7 @@ import SwiftUI
 
 nonisolated enum SettingsNavigation {
     static let sections = [
-        "general", "appearance", "search", "profiles", "websites", "privacy", "passwords", "extensions", "advanced",
+        "general", "appearance", "search", "profiles", "websites", "privacy", "passwords", "extensions", "advanced", "sync",
     ]
     enum Shortcut: Equatable {
         case search
@@ -50,11 +50,22 @@ extension NSHostingView: FixedSettingsContent {
         }
     }
     override var contentView: NSView? {
-        didSet {
-            (contentView as? FixedSettingsContent)?.keepWindowSize()
+        get { super.contentView }
+        set {
+            titlebarMaterial.removeFromSuperview()
+            materialFrame = .zero
+            if let newValue, let hosting = newValue as? FixedSettingsContent {
+                hosting.keepWindowSize()
+                let container = NSView(frame: newValue.frame)
+                newValue.frame = container.bounds
+                newValue.autoresizingMask = [.width, .height]
+                container.addSubview(newValue)
+                super.contentView = container
+            } else {
+                super.contentView = newValue
+            }
             contentMinSize = NSSize(width: 820, height: 680)
             contentMaxSize = contentMinSize
-            titlebarMaterial.removeFromSuperview()
             updateTitlebarMaterial()
         }
     }
@@ -63,15 +74,18 @@ extension NSHostingView: FixedSettingsContent {
         updateTitlebarMaterial()
     }
     func updateTitlebarMaterial() {
-        guard let contentView, let container = contentView.superview else { return }
-        if titlebarMaterial.superview !== container {
+        guard let contentView else { return }
+        if titlebarMaterial.superview !== contentView {
             titlebarMaterial.removeFromSuperview()
-            container.addSubview(titlebarMaterial, positioned: .above, relativeTo: contentView)
+
+
+            contentView.addSubview(titlebarMaterial, positioned: .above, relativeTo: nil)
             titlebarMaterial.autoresizingMask = [.width, .minYMargin]
         }
         guard let anchor = titlebarContentAnchor, anchor.window === self, anchor.isDescendant(of: contentView),
             anchor.bounds.width > 0
         else {
+            materialFrame = .zero
             titlebarMaterial.frame = .zero
             return
         }
@@ -81,10 +95,9 @@ extension NSHostingView: FixedSettingsContent {
         let layout = contentView.convert(contentLayoutRect, from: nil)
         let height = max(
             0, contentView.isFlipped ? layout.minY - contentView.bounds.minY : contentView.bounds.maxY - layout.maxY)
-        let next = container.convert(
-            NSRect(
-                x: leading, y: contentView.isFlipped ? contentView.bounds.minY : contentView.bounds.maxY - height,
-                width: width, height: height), from: contentView)
+        let next = NSRect(
+            x: leading, y: contentView.isFlipped ? contentView.bounds.minY : contentView.bounds.maxY - height,
+            width: width, height: height)
         guard materialFrame != next else { return }
         materialFrame = next
         titlebarMaterial.frame = next.offsetBy(dx: 0, dy: titlebarPromoted ? 0 : 6)

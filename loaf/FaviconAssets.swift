@@ -24,13 +24,19 @@ actor FaviconAssets {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             return await Self.decodeVector(data)
         }
-        guard
-            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-            let width = properties[kCGImagePropertyPixelWidth] as? Int,
-            let height = properties[kCGImagePropertyPixelHeight] as? Int,
-            width > 0, height > 0, width <= 16384, height <= 16384,
+        var best: (index: Int, pixels: Int)?
+        for index in 0..<min(CGImageSourceGetCount(source), 32) {
+            guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
+                let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                let height = properties[kCGImagePropertyPixelHeight] as? Int,
+                width > 0, height > 0, width <= 16384, height <= 16384
+            else { continue }
+            let pixels = min(width, height, 128)
+            if pixels > (best?.pixels ?? 0) { best = (index, pixels) }
+        }
+        guard let best,
             let image = CGImageSourceCreateThumbnailAtIndex(
-                source, 0,
+                source, best.index,
                 [
                     kCGImageSourceCreateThumbnailFromImageAlways: true,
                     kCGImageSourceCreateThumbnailWithTransform: true,

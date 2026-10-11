@@ -193,3 +193,56 @@ struct SiteSettingsAnchor: NSViewRepresentable {
     }
     final class AnchorView: NSView { override func hitTest(_ point: NSPoint) -> NSView? { nil } }
 }
+
+
+struct SiteControlToggle: View {
+    let title: String
+    @Binding var isOn: Bool
+
+    init(_ title: String, isOn: Binding<Bool>) {
+        self.title = title
+        _isOn = isOn
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title).frame(maxWidth: .infinity, alignment: .leading)
+            Toggle(title, isOn: $isOn).labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                .fixedSize().accessibilityLabel(title)
+        }.frame(minHeight: 26)
+    }
+}
+
+struct SiteControlPicker<Value: Hashable, Choices: View>: View {
+    let title: String
+    @Binding var selection: Value
+    @ViewBuilder let choices: () -> Choices
+
+    init(_ title: String, selection: Binding<Value>, @ViewBuilder choices: @escaping () -> Choices) {
+        self.title = title
+        _selection = selection
+        self.choices = choices
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title).frame(maxWidth: .infinity, alignment: .leading)
+            Picker(title, selection: $selection, content: choices)
+                .labelsHidden().pickerStyle(.menu).controlSize(.small)
+                .fixedSize().accessibilityLabel(title)
+        }.frame(minHeight: 26)
+    }
+}
+
+struct SiteControlSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                .padding(.bottom, 2)
+            content()
+        }
+    }
+}

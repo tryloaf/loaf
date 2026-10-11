@@ -123,16 +123,24 @@ struct CookieManagerView: View {
             }.frame(maxWidth: 600).padding(.horizontal, 28).padding(.vertical, 16)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
-                    Text("\(cookies.count.formatted()) \(cookies.count == 1 ? "cookie" : "cookies") · \(store.profile.name)")
-                        .font(.system(size: 12)).foregroundStyle(.secondary).padding(.bottom, 8)
+                    Text(
+                        "\(cookies.count.formatted()) \(cookies.count == 1 ? "cookie" : "cookies") · \(store.profile.name)"
+                    )
+                    .font(.system(size: 12)).foregroundStyle(.secondary).padding(.bottom, 8)
                     if filtered.isEmpty {
-                        emptyLibrary(icon: .cookie, title: query.isEmpty ? "no cookies saved" : "no matching cookies",
-                            detail: query.isEmpty ? "cookies saved by sites in this profile will appear here." : "try another domain or cookie name.")
+                        emptyLibrary(
+                            icon: .cookie, title: query.isEmpty ? "no cookies saved" : "no matching cookies",
+                            detail: query.isEmpty
+                                ? "cookies saved by sites in this profile will appear here."
+                                : "try another domain or cookie name.")
                     }
                     ForEach(domains, id: \.self) { domain in
                         let domainCookies = filtered.filter { $0.domain == domain }
                         HStack(spacing: 8) {
-                            WebsiteIcon(url: URL(string: "https://" + domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))), store: store)
+                            WebsiteIcon(
+                                url: URL(
+                                    string: "https://" + domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))),
+                                store: store)
                             Text(domain).font(.system(size: 12, weight: .medium)).textSelection(.enabled)
                             Spacer(minLength: 8)
                             Text(domainCookies.count.formatted()).font(.system(size: 11)).foregroundStyle(.secondary)
@@ -144,22 +152,36 @@ struct CookieManagerView: View {
                             HStack(spacing: 10) {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(cookie.name).font(.system(size: 12)).lineLimit(1)
-                                    Text(cookie.path + (cookie.isSecure ? " · secure" : "") + (cookie.isHTTPOnly ? " · HTTP only" : ""))
-                                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                                    Text(
+                                        cookie.path + (cookie.isSecure ? " · secure" : "")
+                                            + (cookie.isHTTPOnly ? " · HTTP only" : "")
+                                    )
+                                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                                 }
                                 Spacer(minLength: 8)
-                                Text(cookie.expiresDate.map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "session")
-                                    .font(.system(size: 11)).foregroundStyle(.tertiary)
+                                Text(
+                                    cookie.expiresDate.map { $0.formatted(date: .abbreviated, time: .omitted) }
+                                        ?? "session"
+                                )
+                                .font(.system(size: 11)).foregroundStyle(.tertiary)
                             }.padding(.horizontal, 12).padding(.vertical, 10)
-                                .background(Color.accentColor.opacity(selectedCookies.contains(cookieID(cookie)) ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 8))
+                                .background(
+                                    Color.accentColor.opacity(selectedCookies.contains(cookieID(cookie)) ? 0.12 : 0),
+                                    in: RoundedRectangle(cornerRadius: 8)
+                                )
                                 .contentShape(Rectangle()).onTapGesture {
                                     let id = cookieID(cookie)
                                     if NSEvent.modifierFlags.contains(.command) {
                                         if !selectedCookies.insert(id).inserted { selectedCookies.remove(id) }
-                                    } else { selectedCookies = [id] }
+                                    } else {
+                                        selectedCookies = [id]
+                                    }
                                 }.accessibilityAddTraits(selectedCookies.contains(cookieID(cookie)) ? .isSelected : [])
                                 .contextMenu {
-                                    Button("Delete Cookie") { selectedCookies = [cookieID(cookie)]; deleteSelectedCookies() }
+                                    Button("Delete Cookie") {
+                                        selectedCookies = [cookieID(cookie)]
+                                        deleteSelectedCookies()
+                                    }
                                     Button("Delete Domain Cookies") { deleteDomain(domain) }
                                 }
                         }
@@ -171,13 +193,19 @@ struct CookieManagerView: View {
                 }.frame(maxWidth: 600).padding(.horizontal, 28).padding(.bottom, 24).frame(maxWidth: .infinity)
             }.scrollIndicators(.hidden)
         }.background(LibraryDeleteKey(enabled: !selectedCookies.isEmpty, delete: deleteSelectedCookies))
-            .task(id: store.selectedProfileID) { selectedCookies = []; await refresh() }
+            .task(id: store.selectedProfileID) {
+                selectedCookies = []
+                await refresh()
+            }
             .onChange(of: query) { _, _ in selectedCookies.formIntersection(Set(filtered.map(cookieID))) }
     }
     private func deleteDomain(_ domain: String) {
         let jar = store.runtime.dataStore.httpCookieStore
         let selected = cookies.filter { $0.domain.lowercased() == domain.lowercased() }
-        Task { for cookie in selected { await jar.deleteCookie(cookie) }; await refresh() }
+        Task {
+            for cookie in selected { await jar.deleteCookie(cookie) }
+            await refresh()
+        }
     }
     private func cookieID(_ cookie: HTTPCookie) -> String { cookie.domain + "\n" + cookie.path + "\n" + cookie.name }
     private func deleteSelectedCookies() {
@@ -210,24 +238,25 @@ struct SiteSettingsView: View {
     private func binding<Value>(_ key: WritableKeyPath<SiteSettings, Value>) -> Binding<Value> {
         Binding(get: { session.settings[keyPath: key] }, set: { session.set(key, $0) })
     }
-    private func row(_ glyph: String, _ title: String) -> some View {
-        HStack(spacing: 8) {
-            EmojiIcon(glyph: glyph, size: 16)
-            Text(title)
-        }
-    }
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 8) {
-                if let url = session.url {
-                    WebsiteIcon(url: url, store: store, size: 20)
-                } else {
-                    GolzheimIcon(icon: .info, size: 20).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    if let url = session.url {
+                        WebsiteIcon(url: url, store: store, size: 20)
+                    } else {
+                        GolzheimIcon(icon: .info, size: 20).foregroundStyle(.secondary)
+                    }
+                    Text(session.origin.map { BrowserAddress.visible($0) } ?? "no website selected")
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button(action: close) { GolzheimIcon(icon: .close, size: 12).frame(width: 20, height: 20) }
+                        .buttonStyle(PlayerActionStyle(outline: false))
+                        .help("close website settings").accessibilityLabel("close website settings")
+                        .keyboardShortcut(.cancelAction)
                 }
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(session.origin.map { BrowserAddress.visible($0) } ?? "no website selected").font(
-                        .system(size: 13, weight: .medium)
-                    ).lineLimit(1).textSelection(.enabled)
                     if let url = session.url, session.origin != nil {
                         Label {
                             Text(
@@ -241,19 +270,14 @@ struct SiteSettingsView: View {
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                     Text(session.profile?.name ?? "profile closed").font(.system(size: 10)).foregroundStyle(.secondary)
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                Button(action: close) { GolzheimIcon(icon: .close, size: 12).frame(width: 20, height: 20) }.buttonStyle(
-                    PlayerActionStyle(outline: false)
-                ).help("close website settings").accessibilityLabel("close website settings").keyboardShortcut(
-                    .cancelAction)
+                }
             }.padding(12)
+            Divider().padding(.horizontal, 12)
             if let url = session.url, let host = url.host, session.origin != nil {
-                Divider().padding(.horizontal, 12)
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            caption("privacy")
-                            Toggle(
+                    VStack(alignment: .leading, spacing: 8) {
+                        SiteControlSection(title: "privacy") {
+                            SiteControlToggle(
                                 "block ads and trackers",
                                 isOn: Binding(
                                     get: {
@@ -262,7 +286,7 @@ struct SiteSettingsView: View {
                                     }, set: { _ in if session.valid { store.toggleBlockerForSite() } })
                             ).disabled(session.profile?.blockerEnabled != true)
                                 .help("enable the blocker in privacy settings to use website exceptions")
-                            Toggle(
+                            SiteControlToggle(
                                 "offer to save passwords",
                                 isOn: Binding(
                                     get: { session.settings.savePasswords != false },
@@ -273,33 +297,33 @@ struct SiteSettingsView: View {
                                 Text("cookies")
                                 Spacer()
                                 Text(cookieCount.map { String($0) + " saved" } ?? "…").foregroundStyle(.secondary)
-                            }
-                            Button(clearing ? "clearing…" : "clear website data…", role: .destructive) {
-                                confirm = true
-                            }.disabled(clearing)
-                        }.padding(14).background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-                        VStack(alignment: .leading, spacing: 10) {
-                            caption("permissions")
-                            Toggle(
+                                Button(clearing ? "clearing…" : "clear data…", role: .destructive) {
+                                    confirm = true
+                                }.disabled(clearing).help("clear cookies and website data")
+                            }.frame(minHeight: 26)
+                        }
+                        Divider()
+                        SiteControlSection(title: "permissions") {
+                            SiteControlToggle(
                                 "allow downloads",
                                 isOn: Binding(
                                     get: { session.settings.downloads != false },
                                     set: { session.set(\.downloads, $0) })
                             ).help("applies to this exact site. new sites ask first when download prompts are enabled.")
-                            Picker("camera", selection: binding(\.camera)) { permissionChoices }
-                            Picker("microphone", selection: binding(\.microphone)) { permissionChoices }
-                            Picker(
+                            SiteControlPicker("camera", selection: binding(\.camera)) { permissionChoices }
+                            SiteControlPicker("microphone", selection: binding(\.microphone)) { permissionChoices }
+                            SiteControlPicker(
                                 "location",
                                 selection: Binding(
                                     get: { session.settings.location ?? "deny" }, set: { session.set(\.location, $0) })
                             ) { permissionChoices }
-                            Picker(
+                            SiteControlPicker(
                                 "notifications",
                                 selection: Binding(
                                     get: { session.settings.notifications ?? "ask" },
                                     set: { session.set(\.notifications, $0) })
                             ) { permissionChoices }
-                            Picker(
+                            SiteControlPicker(
                                 "pointer capture",
                                 selection: Binding(
                                     get: { session.settings.pointerLock ?? "allow" },
@@ -308,7 +332,7 @@ struct SiteSettingsView: View {
                                 .help(
                                     "press Escape twice to release the pointer. macOS camera and microphone permissions still apply."
                                 )
-                            Toggle(
+                            SiteControlToggle(
                                 "automatic pop-ups",
                                 isOn: Binding(
                                     get: { session.settings.automaticPopups == true },
@@ -326,9 +350,10 @@ struct SiteSettingsView: View {
                                     }
                                 }
                             }
-                        }.padding(14).background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+                        }
+                        Divider()
                         DisclosureGroup("page preferences") {
-                            VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 4) {
                                 HStack {
                                     Text("zoom")
                                     Spacer()
@@ -341,20 +366,21 @@ struct SiteSettingsView: View {
                                         get: { session.settings.zoom },
                                         set: { if session.valid { store.setPageZoom($0) } }), in: 0.5...3, step: 0.1
                                 ).accessibilityLabel("website zoom")
-                                Toggle("javascript", isOn: binding(\.javascript))
-                                Toggle("autoplay", isOn: binding(\.autoplay)).disabled(
+                                SiteControlToggle("javascript", isOn: binding(\.javascript))
+                                SiteControlToggle("autoplay", isOn: binding(\.autoplay)).disabled(
                                     !WebKitAdapter.supportsSiteAutoplay)
-                                Picker("browser identity", selection: binding(\.userAgent)) {
+                                SiteControlPicker("browser identity", selection: binding(\.userAgent)) {
                                     Text("desktop Safari").tag(UserAgentMode.desktop)
                                     Text("automatic").tag(UserAgentMode.automatic)
                                 }
                                 Text("reload to apply javascript, autoplay and pop-up changes").font(.system(size: 10))
                                     .foregroundStyle(.secondary)
                                 Button("reset website overrides") { session.reset() }
-                            }.padding(.top, 8)
+                                    .padding(.top, 6)
+                            }.padding(.top, 4)
                         }
-                    }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                }.scrollIndicators(.hidden).font(.system(size: 12)).controlSize(.small).toggleStyle(.switch)
+                    }.padding(.horizontal, 12).padding(.top, 4).padding(.bottom, 12)
+                }.scrollIndicators(.hidden).font(.system(size: 12)).controlSize(.small)
                     .confirmationDialog("clear website data?", isPresented: $confirm, titleVisibility: .visible) {
                         Button("clear data", role: .destructive) {
                             guard session.valid else { return }
@@ -394,9 +420,6 @@ struct SiteSettingsView: View {
         }.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)).overlay(
             RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.08))
         ).clipShape(RoundedRectangle(cornerRadius: 12))
-    }
-    private func caption(_ text: String) -> some View {
-        Text(text).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
     }
     @ViewBuilder private var permissionChoices: some View {
         Text("ask").tag("ask")

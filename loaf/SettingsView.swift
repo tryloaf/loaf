@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var selectedSetting: String?
     @FocusState private var searchFocused: Bool
     @FocusState private var sidebarFocused: Bool
+    @FocusState private var websiteSearchFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var city = ""
@@ -23,6 +24,8 @@ struct SettingsView: View {
     @State private var draggedProfileID: UUID?
     @State private var profileDropPosition: ProfileDropPosition?
     @State private var extensionAddress = ""
+    @State private var websiteSearch = ""
+    @State private var expandedWebsites: Set<String> = []
     @State private var appearanceDemo: AppearancePreviewOption?
     @AppStorage("loaf.appearance") private var appearance = "system"
     @ObservedObject private var systemAppearance = LoafAppearance.shared
@@ -35,6 +38,7 @@ struct SettingsView: View {
     }
     private func icon(_ section: String) -> LoafIcon {
         switch section {
+        case "sync": .globe
         case "general": .settings
         case "appearance": .sun
         case "search": .search
@@ -48,6 +52,7 @@ struct SettingsView: View {
     }
     private var subtitle: String {
         switch section {
+        case "sync": "your profiles, pins and preferences across Macs"
         case "general": "startup and browsing preferences"
         case "appearance": "color, surfaces and window controls"
         case "search": "what appears when you search or surf"
@@ -75,7 +80,7 @@ struct SettingsView: View {
                     GolzheimIcon(icon: .search, size: 14).foregroundStyle(.secondary)
                     TextField("search settings", text: $query).textFieldStyle(.plain)
                         .focused($searchFocused)
-                        .onSubmit { if let result = SettingsSearch.results(for: query).first { select(result) } }
+                        .onSubmit { if let result = settingsSearchResults.first { select(result) } }
                         .onExitCommand { query = "" }
                     if !query.isEmpty {
                         Button {
@@ -156,7 +161,7 @@ struct SettingsView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 8) {
                             sectionHeading
-                            let matches = SettingsSearch.results(for: query)
+                            let matches = settingsSearchResults
                             if matches.isEmpty { Text("no settings found").foregroundStyle(.secondary).padding(16) }
                             ForEach(matches) { result in
                                 Button {
@@ -194,6 +199,7 @@ struct SettingsView: View {
                                 }
                             }
                             switch section {
+                            case "sync": ICloudSyncSettingsView(store: store)
                             case "general": general
                             case "appearance": appearanceSettings
                             case "search": search
@@ -231,6 +237,13 @@ struct SettingsView: View {
         }.navigationSplitViewStyle(.balanced)
             .onChange(of: section) { _, _ in headingPassed = false }
             .onChange(of: query) { _, _ in headingPassed = false }
+            .onChange(of: websiteSearchFocused) { _, focused in
+                if focused { sidebarFocused = false; searchFocused = false }
+            }
+            .onChange(of: store.selectedProfileID) { _, _ in
+                websiteSearch = ""
+                expandedWebsites.removeAll()
+            }
             .onChange(of: headingPassed) { _, passed in
                 headingRemoval?.cancel()
                 if passed {
@@ -263,7 +276,13 @@ struct SettingsView: View {
                     switch shortcut {
                     case .search:
                         sidebarFocused = false
-                        searchFocused = true
+                        if section == "websites", query.isEmpty {
+                            searchFocused = false
+                            websiteSearchFocused = true
+                        } else {
+                            websiteSearchFocused = false
+                            searchFocused = true
+                        }
                     case .section(let section): chooseSection(section)
                     }
                 }
@@ -272,6 +291,12 @@ struct SettingsView: View {
                 if let editing { ProfileEditor(store: store, profileID: editing) }
             }
             .sheet(isPresented: $importVisible) { ProfileImportView(store: store) }
+    }
+    private var savedWebsiteOrigins: [String] {
+        Array((store.profile.siteSettings ?? [:]).keys).sorted()
+    }
+    private var settingsSearchResults: [SettingsSearchResult] {
+        SettingsSearch.results(for: query, websiteOrigins: savedWebsiteOrigins)
     }
     private var compactHeading: some View {
         SettingsCompactHeading(title: query.isEmpty ? section : "search results", visible: headingPassed)
@@ -294,6 +319,10 @@ struct SettingsView: View {
     private func select(_ result: SettingsSearchResult) {
         section = result.section
         selectedSetting = result.id
+        if let origin = result.websiteOrigin {
+            websiteSearch = ""
+            expandedWebsites.insert(origin)
+        }
         query = ""
         searchFocused = false
         sidebarFocused = true
@@ -390,11 +419,22 @@ struct SettingsView: View {
                                 $0.personalization?.compactSidebarWeather = value
                             }
                         }))
+                Toggle(
+                    "use current location",
+                    isOn: Binding(
+                        get: { store.preferences.weatherUsesCurrentLocation == true },
+                        set: { value in
+                            store.preferences.weatherUsesCurrentLocation = value
+                            store.persistSoon()
+                            store.application.weatherLocation.setEnabled(value)
+                            refreshWeather()
+                        }))
+                    .id("weather-current-location")
                 HStack {
                     TextField("city", text: $city).onSubmit { applyWeatherCity() }
                     Button("apply") { applyWeatherCity() }.settingDisabled(
                         city.trimmingCharacters(in: .whitespacesAndNewlines) == store.preferences.weatherCity)
-                }.id("weather")
+                }.settingDisabled(store.preferences.weatherUsesCurrentLocation == true).id("weather")
                 Picker("temperature", selection: $store.preferences.fahrenheit) {
                     Text("Fahrenheit · °F").tag(true)
                     Text("Celsius · °C").tag(false)
@@ -404,7 +444,7 @@ struct SettingsView: View {
                     Text("Open-Meteo").tag("open-meteo")
                 }.onChange(of: store.preferences.weatherProvider) { _, _ in refreshWeather() }
                 Text(
-                    "automatic uses Apple Weather when available, with Open-Meteo as a fallback. forecasts refresh at most every 30 minutes; changing units uses the saved forecast. city lookup never uses your device location."
+                    "automatic uses Apple Weather when available, with Open-Meteo as a fallback. forecasts refresh at most every 15 minutes. current location is optional; significant moves can refresh immediately up to three times per day."
                 ).font(.caption).foregroundStyle(.secondary)
                 Link(store.weather.attribution, destination: store.weather.attributionURL)
             }
@@ -425,6 +465,38 @@ struct SettingsView: View {
     }
     private var appearanceSettings: some View {
         Group {
+            Section("\(store.profile.name) · profile color") {
+                ProfileThemeControls(
+                    tint: Binding(
+                        get: { store.profile.tint }, set: { value in store.updateCurrent { $0.tint = value } }),
+                    customTint: Binding(
+                        get: { store.profile.personalization?.customTint },
+                        set: { value in
+                            store.updateCurrent {
+                                $0.personalization = $0.personalization ?? Personalization()
+                                $0.personalization?.customTint = value
+                            }
+                        }),
+                    strength: Binding(
+                        get: { store.profile.personalization?.tintStrength ?? 0.06 },
+                        set: { value in
+                            store.updateCurrent {
+                                $0.personalization = $0.personalization ?? Personalization()
+                                $0.personalization?.tintStrength = ProfileColor.surfaceStrength(value)
+                            }
+                        }),
+                    transparency: Binding(
+                        get: { store.profile.personalization?.windowTransparency ?? 0 },
+                        set: { value in
+                            store.updateCurrent {
+                                $0.personalization = $0.personalization ?? Personalization()
+                                $0.personalization?.windowTransparency = ProfileTransparency.bounded(value)
+                            }
+                        }), showsPreviews: false, compact: true, previewHeight: 144,
+                    previewSettings: AppearancePreviewSettings(store.preferences), demonstration: appearanceDemo
+                )
+                .id("profile-color")
+            }
             Section("window") {
                 Picker("theme", selection: $appearance) {
                     Text("system").tag("system")
@@ -459,37 +531,11 @@ struct SettingsView: View {
                     AppearancePreviewHover(option: .wonderbarTint, selection: $appearanceDemo)
                 ).id("tint-wonderbar")
             }
-            Section("\(store.profile.name) · profile color") {
-                ProfileThemeControls(
-                    tint: Binding(
-                        get: { store.profile.tint }, set: { value in store.updateCurrent { $0.tint = value } }),
-                    customTint: Binding(
-                        get: { store.profile.personalization?.customTint },
-                        set: { value in
-                            store.updateCurrent {
-                                $0.personalization = $0.personalization ?? Personalization()
-                                $0.personalization?.customTint = value
-                            }
-                        }),
-                    strength: Binding(
-                        get: { store.profile.personalization?.tintStrength ?? 0.06 },
-                        set: { value in
-                            store.updateCurrent {
-                                $0.personalization = $0.personalization ?? Personalization()
-                                $0.personalization?.tintStrength = ProfileColor.surfaceStrength(value)
-                            }
-                        }),
-                    transparency: Binding(
-                        get: { store.profile.personalization?.windowTransparency ?? 0 },
-                        set: { value in
-                            store.updateCurrent {
-                                $0.personalization = $0.personalization ?? Personalization()
-                                $0.personalization?.windowTransparency = ProfileTransparency.bounded(value)
-                            }
-                        }), showsPreviews: false, compact: true, previewHeight: 144,
-                    previewSettings: AppearancePreviewSettings(store.preferences), demonstration: appearanceDemo
-                )
-                .id("profile-color")
+            Section("menus") {
+                Toggle("capitalize menu items", isOn: optional(\.capitalizeMenus, fallback: true))
+                    .id("capitalize-menus")
+                Text("use standard capitalization for menu bar and context menu commands.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -500,9 +546,13 @@ struct SettingsView: View {
     }
     private func refreshWeather() {
         Task {
-            await store.weather.fetch(
-                city: store.preferences.weatherCity, fahrenheit: store.preferences.fahrenheit,
-                preferredProvider: store.preferences.weatherProvider ?? "automatic")
+            if store.preferences.weatherUsesCurrentLocation == true {
+                await store.application.weatherLocation.refreshWeather()
+            } else {
+                await store.weather.fetch(
+                    city: store.preferences.weatherCity, fahrenheit: store.preferences.fahrenheit,
+                    preferredProvider: store.preferences.weatherProvider ?? "automatic")
+            }
         }
     }
     private func redirectBinding<Value>(_ key: WritableKeyPath<SearchRedirect, Value>) -> Binding<Value> {
@@ -646,6 +696,44 @@ struct SettingsView: View {
 
     private var websites: some View {
         Group {
+            Section("\(store.profile.name) · saved website decisions") {
+                HStack(spacing: 8) {
+                    GolzheimIcon(icon: .search, size: 14).foregroundStyle(.secondary)
+                    TextField("", text: $websiteSearch, prompt: Text("search saved websites"))
+                        .labelsHidden().textFieldStyle(.plain).multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity)
+                        .focused($websiteSearchFocused)
+                        .accessibilityLabel("search saved websites")
+                        .onExitCommand { websiteSearch = "" }
+                    if !websiteSearch.isEmpty {
+                        Button {
+                            websiteSearch = ""
+                        } label: {
+                            GolzheimIcon(icon: .close, size: 12)
+                        }.buttonStyle(.plain).accessibilityLabel("clear website search")
+                    }
+                }
+                .padding(10)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                if (store.profile.siteSettings ?? [:]).isEmpty {
+                    Text("use the lock beside an address to set permissions, zoom, javascript and browser identity.")
+                        .foregroundStyle(.secondary)
+                } else if filteredWebsiteOrigins.isEmpty {
+                    Text("no saved websites found").foregroundStyle(.secondary)
+                }
+                ForEach(filteredWebsiteOrigins, id: \.self) { origin in
+                    SavedWebsiteSettingsRow(
+                        store: store, origin: origin,
+                        expanded: Binding(
+                            get: { expandedWebsites.contains(origin) },
+                            set: { expanded in
+                                if expanded { expandedWebsites.insert(origin) }
+                                else { expandedWebsites.remove(origin) }
+                            })).id(origin)
+                }
+                Text("macOS permissions remain authoritative for camera and microphone access.").font(.caption)
+                    .foregroundStyle(.secondary)
+            }.id("websites")
             Section("website interaction") {
                 Toggle(
                     "ask before downloading from a new site", isOn: optional(\.asksBeforeDownloading, fallback: true)
@@ -679,42 +767,13 @@ struct SettingsView: View {
                     "games capture the pointer automatically while their page is active. escape releases it. individual sites can be blocked or set to ask using the lock beside their address."
                 ).font(.caption).foregroundStyle(.secondary)
             }
-            Section("\(store.profile.name) · saved website decisions") {
-                if (store.profile.siteSettings ?? [:]).isEmpty {
-                    Text("use the lock beside an address to set permissions, zoom, javascript and browser identity.")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach((store.profile.siteSettings ?? [:]).keys.sorted(), id: \.self) { origin in
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .top, spacing: 12) {
-                            WebsiteIcon(url: URL(string: origin), store: store)
-                            Text(BrowserAddress.visible(origin)).font(.system(size: 13, weight: .medium))
-                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Button("reset") { store.updateCurrent { $0.siteSettings?.removeValue(forKey: origin) } }
-                                .controlSize(.small)
-                        }
-                        Toggle(
-                            "downloads",
-                            isOn: Binding(
-                                get: { store.profile.siteSettings?[origin]?.downloads != false },
-                                set: { allowed in store.updateCurrent { $0.siteSettings?[origin]?.downloads = allowed }
-                                }
-                            )
-                        ).toggleStyle(.switch).controlSize(.small)
-                        if let settings = store.profile.siteSettings?[origin] {
-                            Text(
-                                "JavaScript \(settings.javascript ? "on" : "off") · zoom \(Int(settings.zoom * 100))% · \(settings.userAgent.title)"
-                            )
-                            .font(.caption).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }.padding(.vertical, 4)
-
-                }
-                Text("macOS permissions remain authoritative for camera and microphone access.").font(.caption)
-                    .foregroundStyle(.secondary)
-            }.id("websites")
+        }
+    }
+    private var filteredWebsiteOrigins: [String] {
+        let query = websiteSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (store.profile.siteSettings ?? [:]).keys.sorted().filter {
+            query.isEmpty || BrowserAddress.visible($0).localizedStandardContains(query)
+                || $0.localizedStandardContains(query)
         }
     }
     private var privacy: some View {
@@ -992,4 +1051,180 @@ struct DisabledSettingRenderer: TextRenderer {
 }
 private extension View {
     func settingDisabled(_ disabled: Bool) -> some View { modifier(DisabledSetting(disabled: disabled)) }
+}
+
+private struct SavedWebsiteSettingsRow: View {
+    @ObservedObject var store: BrowserStore
+    let origin: String
+    @Binding var expanded: Bool
+    @State private var confirmClear = false
+    @State private var clearing = false
+
+    private var settings: SiteSettings { store.profile.siteSettings?[origin] ?? SiteSettings() }
+    private var host: String? { URL(string: origin)?.host }
+
+    private func binding<Value>(_ key: WritableKeyPath<SiteSettings, Value>) -> Binding<Value> {
+        Binding(get: { settings[keyPath: key] }, set: { update(key, $0) })
+    }
+
+    private func optionalPermission(_ key: WritableKeyPath<SiteSettings, String?>, fallback: String) -> Binding<String> {
+        Binding(get: { settings[keyPath: key] ?? fallback }, set: { update(key, $0) })
+    }
+
+    private func update<Value>(_ key: WritableKeyPath<SiteSettings, Value>, _ value: Value) {
+        store.updateCurrent { profile in
+            guard var settings = profile.siteSettings?[origin] else { return }
+            settings[keyPath: key] = value
+            profile.siteSettings?[origin] = settings
+        }
+        applyToOpenTabs()
+    }
+
+    private func applyToOpenTabs() {
+        for tab in store.runtime.tabs.values {
+            guard let url = tab.url, BrowserAddress.websiteOrigin(url) == origin else { continue }
+            tab.applySiteSettings(url)
+            WebKitAdapter.applyPointerLockPolicy(tab)
+        }
+    }
+
+    private func reset() {
+        let hadBlockerException = host.map { store.profile.allowedSites.contains($0) } ?? false
+        store.updateCurrent { profile in
+            profile.siteSettings?.removeValue(forKey: origin)
+            if let host { profile.allowedSites.removeAll { $0 == host } }
+        }
+        applyToOpenTabs()
+        if hadBlockerException {
+            store.applyBlocker()
+            for tab in store.runtime.tabs.values where tab.url?.host == host { tab.reload() }
+        }
+    }
+
+    private func toggleBlocker(_ blocked: Bool) {
+        guard let host else { return }
+        store.updateCurrent { profile in
+            profile.allowedSites.removeAll { $0 == host }
+            if !blocked { profile.allowedSites.append(host) }
+        }
+        store.applyBlocker()
+        for tab in store.runtime.tabs.values where tab.url?.host == host { tab.reload() }
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 4) {
+                heading("privacy")
+                SiteControlToggle("block ads and trackers", isOn: Binding(
+                    get: {
+                        store.profile.blockerEnabled && !(host.map { store.profile.allowedSites.contains($0) } ?? true)
+                    }, set: { toggleBlocker($0) }))
+                    .disabled(!store.profile.blockerEnabled)
+                SiteControlToggle("offer to save passwords", isOn: Binding(
+                    get: { settings.savePasswords != false }, set: { update(\.savePasswords, $0) }))
+                    .disabled(!store.preferences.savePasswords)
+
+                Divider().padding(.vertical, 8)
+                heading("permissions")
+                SiteControlToggle("allow downloads", isOn: Binding(
+                    get: { settings.downloads != false }, set: { update(\.downloads, $0) }))
+                SiteControlPicker("camera", selection: binding(\.camera)) { permissionChoices }
+                SiteControlPicker("microphone", selection: binding(\.microphone)) { permissionChoices }
+                SiteControlPicker("location", selection: optionalPermission(\.location, fallback: "deny")) { permissionChoices }
+                SiteControlPicker("notifications", selection: optionalPermission(\.notifications, fallback: "ask")) { permissionChoices }
+                SiteControlPicker("pointer capture", selection: optionalPermission(\.pointerLock, fallback: "allow")) {
+                    permissionChoices
+                }.disabled(store.preferences.allowsPointerCapture == false)
+                SiteControlToggle("automatic pop-ups", isOn: Binding(
+                    get: { settings.automaticPopups == true }, set: { update(\.automaticPopups, $0) }))
+                    .disabled(!WebKitAdapter.supportsSitePopups)
+
+                Divider().padding(.vertical, 8)
+                heading("page preferences")
+                HStack {
+                    Text("zoom")
+                    Spacer()
+                    Text("\(Int((settings.zoom * 100).rounded()))%")
+                        .monospacedDigit().foregroundStyle(.secondary)
+                    Button("reset") { update(\.zoom, 1.0) }
+                }
+                Slider(value: binding(\.zoom), in: 0.5...3, step: 0.1)
+                    .accessibilityLabel("website zoom")
+                SiteControlToggle("javascript", isOn: binding(\.javascript))
+                SiteControlToggle("autoplay", isOn: binding(\.autoplay))
+                    .disabled(!WebKitAdapter.supportsSiteAutoplay)
+                SiteControlPicker("browser identity", selection: binding(\.userAgent)) {
+                    Text("desktop Safari").tag(UserAgentMode.desktop)
+                    Text("automatic").tag(UserAgentMode.automatic)
+                }
+                Text("reload to apply javascript, autoplay and pop-up changes")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                Divider()
+                HStack {
+                    Button("reset website overrides", role: .destructive) { reset() }
+                    Spacer()
+                    Button(clearing ? "clearing…" : "clear website data…", role: .destructive) {
+                        confirmClear = true
+                    }.disabled(clearing)
+                }
+            }
+            .padding(.top, 10)
+            .controlSize(.small)
+            .toggleStyle(.switch)
+        } label: {
+            HStack(spacing: 10) {
+                WebsiteIcon(url: URL(string: origin), store: store)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(BrowserAddress.visible(origin))
+                        .font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    Text(summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.vertical, 4)
+        .confirmationDialog("clear website data?", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("clear data", role: .destructive) {
+                guard let url = URL(string: origin) else { return }
+                let profileID = store.selectedProfileID
+                clearing = true
+                Task {
+                    await store.clearSite(url, profileID: profileID)
+                    clearing = false
+                }
+            }
+        } message: {
+            Text("this can sign you out of this site and its subdomains in \(store.profile.name).")
+        }
+    }
+
+    private var summary: String {
+        var details: [String] = []
+        if settings.downloads == false { details.append("downloads blocked") }
+        if settings.camera != "ask" { details.append("camera " + (settings.camera == "allow" ? "allowed" : "blocked")) }
+        if settings.microphone != "ask" {
+            details.append("microphone " + (settings.microphone == "allow" ? "allowed" : "blocked"))
+        }
+        if let location = settings.location, location != "deny" { details.append("location " + location) }
+        if let notifications = settings.notifications, notifications != "ask" {
+            details.append("notifications " + notifications)
+        }
+        if settings.pointerLock == "deny" { details.append("pointer blocked") }
+        if !settings.javascript { details.append("javascript off") }
+        if settings.zoom != 1 { details.append("\(Int((settings.zoom * 100).rounded()))% zoom") }
+        if settings.savePasswords == false { details.append("password saving off") }
+        if details.isEmpty { return "saved page preferences" }
+        return details.joined(separator: " · ")
+    }
+
+    private func heading(_ title: String) -> some View {
+        Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder private var permissionChoices: some View {
+        Text("ask").tag("ask")
+        Text("allow").tag("allow")
+        Text("deny").tag("deny")
+    }
 }

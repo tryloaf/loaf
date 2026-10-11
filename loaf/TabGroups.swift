@@ -37,6 +37,7 @@ import SwiftUI
     }
     let key: Key
     let entries: [SidebarEntry]
+    let layout: TabInsertionLayout
 }
 
 extension BrowserWindowState {
@@ -86,8 +87,16 @@ extension BrowserWindowState {
                 return looseByID[id].map { [SidebarEntry.tab($0)] } ?? []
             }
         let visible = result.filter { browserSplit?.right != $0.id }
-        sidebarEntryCache = SidebarEntryCache(key: key, entries: visible)
+        sidebarEntryCache = SidebarEntryCache(
+            key: key, entries: visible,
+            layout: TabInsertionLayout(rows: visible.map {
+                .init(id: $0.id, pinned: $0.tab == nil, height: $0.height, containerID: $0.tab?.groupID)
+            }))
         return visible
+    }
+    var sidebarInsertionLayout: TabInsertionLayout {
+        _ = sidebarEntries
+        return sidebarEntryCache?.layout ?? TabInsertionLayout(rows: [])
     }
     func groupTabs(_ group: TabGroup) -> [BrowserTab] {
         guard application.profiles.contains(where: { $0.id == selectedProfileID }) else { return [] }

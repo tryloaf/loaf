@@ -36,6 +36,9 @@ import WebKit
         controller = WKWebExtensionController(configuration: config)
         super.init()
         controller.delegate = self
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(contextErrorsDidUpdate(_:)),
+            name: WKWebExtensionContext.errorsDidUpdateNotification, object: nil)
     }
 
     func restore() async {
@@ -199,6 +202,7 @@ import WebKit
         }
         guard !isDisposed else { throw CancellationError() }
         application.updateProfile(profileID) { $0.extensions.append(record) }
+        if let context = contexts[record.id] { recordContextDiagnostics(context) }
         application.persistSoon()
     }
 
@@ -288,10 +292,42 @@ import WebKit
         }
         try controller.load(context)
         contexts[record.id] = context
+        recordContextDiagnostics(context)
         store?.objectWillChange.send()
     }
+
+    @objc private func contextErrorsDidUpdate(_ notification: Notification) {
+        guard let context = notification.object as? WKWebExtensionContext else { return }
+        recordContextDiagnostics(context)
+    }
+
+    private func recordContextDiagnostics(_ context: WKWebExtensionContext) {
+        guard !isDisposed, let application,
+            let id = contexts.first(where: { $0.value === context })?.key,
+            let record = application.profiles.first(where: { $0.id == profileID })?.extensions.first(where: { $0.id == id })
+        else { return }
+        let known = record.diagnostics ?? []
+        var additions: [String] = []
+        let remaining = max(0, 5 - known.filter { $0.hasPrefix("WebKit error: ") }.count)
+        for error in context.errors where additions.count < remaining {
+            let error = error as NSError
+            let diagnostic = "WebKit error: \(String(error.localizedDescription.prefix(512))) [\(error.domain):\(error.code)]"
+            if !known.contains(diagnostic), !additions.contains(diagnostic) { additions.append(diagnostic) }
+        }
+        guard !additions.isEmpty else { return }
+        application.updateProfile(profileID) { profile in
+            guard let index = profile.extensions.firstIndex(where: { $0.id == id }) else { return }
+            profile.extensions[index].diagnostics = known + additions
+            if profile.extensions[index].enabled {
+                profile.extensions[index].status = "installed · runtime errors · see diagnostics"
+            }
+        }
+        application.persistSoon()
+    }
+
     func shutDown() {
         isDisposed = true
+        NotificationCenter.default.removeObserver(self, name: WKWebExtensionContext.errorsDidUpdateNotification, object: nil)
         popupPanel?.close()
         popupPanel = nil
         popupRecordID = nil
@@ -323,7 +359,9 @@ import WebKit
                     p.extensions[index].enabled = enabled
                     p.extensions[index].status =
                         enabled
-                        ? ((p.extensions[index].diagnostics ?? []).contains { $0.hasPrefix("Background error: ") }
+                        ? ((p.extensions[index].diagnostics ?? []).contains {
+                            $0.hasPrefix("Background error: ") || $0.hasPrefix("WebKit error: ")
+                        }
                             ? "installed · runtime errors · see diagnostics" : "installed · compatibility unverified")
                         : "installed · disabled"
                 }

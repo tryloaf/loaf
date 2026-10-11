@@ -25,8 +25,13 @@ struct WidgetTaskRow<Content: View>: View {
                     }
                 ) { Image(systemName: "trash").frame(width: 36, height: 26) }
             }.buttonStyle(.borderless).opacity(abs(translation) > 4 ? 1 : 0)
+                .allowsHitTesting(abs(translation) > 4)
             content().frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 3).background(Color(nsColor: .textBackgroundColor))
+                .padding(.vertical, 3)
+                .background(
+                    Color(nsColor: .textBackgroundColor).opacity(abs(translation) > 4 ? 1 : 0),
+                    in: RoundedRectangle(cornerRadius: 6)
+                )
                 .offset(x: translation)
                 .background(
                     WidgetTaskSwipeTarget(
