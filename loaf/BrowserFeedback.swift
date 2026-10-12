@@ -102,9 +102,6 @@ private struct AddressNoticeMotion: ViewModifier {
     }
 }
 
-
-
-
 struct BrowserNotificationToast: NSViewRepresentable {
     @ObservedObject var feedback: BrowserFeedback
     var enabled = true
@@ -261,9 +258,6 @@ struct BrowserNotificationToast: NSViewRepresentable {
         }
     }
 }
-
-
-
 
 final class BrowserNotificationCardView: NSView {
     let label = NSTextField(wrappingLabelWithString: "")

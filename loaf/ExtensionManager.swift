@@ -19,6 +19,15 @@ import WebKit
     private var popupPanel: ExtensionPopupPanel?
     private var popupRecordID: UUID?
     private var loadRevisions: [UUID: UUID] = [:]
+    private var userScripts: [UUID: ExtensionUserScripts] = [:]
+
+    func attachUserScripts(to view: WKWebView) {
+        for scripts in userScripts.values { scripts.attach(view) }
+    }
+
+    func detachUserScripts(from view: WKWebView) {
+        for scripts in userScripts.values { scripts.detach(view) }
+    }
     private var folder: URL {
         application!.directory.appendingPathComponent("Extensions/\(profileID.uuidString)", isDirectory: true)
     }
@@ -170,7 +179,9 @@ import WebKit
             }
             guard response == .alertFirstButtonReturn else { return }
         }
-        guard !isDisposed, application.profiles.contains(where: { $0.id == profileID }) else { throw CancellationError() }
+        guard !isDisposed, application.profiles.contains(where: { $0.id == profileID }) else {
+            throw CancellationError()
+        }
         guard storeID == nil || !profile.extensions.contains(where: { $0.storeID == storeID }) else {
             throw PackageError(reason: "This extension is already installed in this profile.")
         }
@@ -226,6 +237,21 @@ import WebKit
         let revision = loadRevisions[record.id]
         let root = folder.appendingPathComponent(record.id.uuidString)
         let runtime = root.appendingPathComponent("runtime")
+        if record.storeID == ExtensionCompatibility.tampermonkeyID,
+            FileManager.default.fileExists(atPath: root.appendingPathComponent("original").path),
+            !FileManager.default.fileExists(
+                atPath: runtime.appendingPathComponent(ExtensionCompatibility.tampermonkeyMarker).path)
+        {
+            let diagnostic = try ExtensionCompatibility.prepareTampermonkey(
+                runtime, original: root.appendingPathComponent("original"))
+            application?.updateProfile(profileID) { profile in
+                if let index = profile.extensions.firstIndex(where: { $0.id == record.id }),
+                    !(profile.extensions[index].diagnostics ?? []).contains(diagnostic)
+                {
+                    profile.extensions[index].diagnostics = (profile.extensions[index].diagnostics ?? []) + [diagnostic]
+                }
+            }
+        }
         if record.storeID == ExtensionCompatibility.vimiumID,
             FileManager.default.fileExists(atPath: root.appendingPathComponent("original").path),
             !FileManager.default.fileExists(
@@ -255,12 +281,20 @@ import WebKit
             }
         }
 
+        let restored =
+            application?.profiles.first(where: { $0.id == profileID })?.extensions.contains(where: {
+                $0.id == record.id
+            }) == true
+        let bridgeSource =
+            record.permissions.contains("userScripts")
+            ? "globalThis.__loafExtensionRestored = \(restored ? "true" : "false");\n" + ExtensionCompatibility.script
+            : ExtensionCompatibility.script
         for name in ["_loaf_bridge.js"] {
             let bridge = runtime.appendingPathComponent(name)
             if FileManager.default.fileExists(atPath: bridge.path),
-                (try String(contentsOf: bridge, encoding: .utf8)) != ExtensionCompatibility.script
+                (try String(contentsOf: bridge, encoding: .utf8)) != bridgeSource
             {
-                try Data(ExtensionCompatibility.script.utf8).write(to: bridge, options: .atomic)
+                try Data(bridgeSource.utf8).write(to: bridge, options: .atomic)
             }
         }
         let resourceFolder = FileManager.default.fileExists(atPath: runtime.path) ? runtime : root
@@ -290,8 +324,34 @@ import WebKit
         if FileManager.default.fileExists(atPath: runtime.path) {
             context.setPermissionStatus(.grantedExplicitly, for: .init(rawValue: "nativeMessaging"))
         }
-        try controller.load(context)
+        if record.permissions.contains("userScripts") {
+            context.setPermissionStatus(.grantedExplicitly, for: .init(rawValue: "scripting"))
+            userScripts[record.id] = try ExtensionUserScripts(record: record, context: context, root: root)
+        }
+        do { try controller.load(context) } catch {
+            userScripts.removeValue(forKey: record.id)?.stop()
+            throw error
+        }
         contexts[record.id] = context
+        if let scripts = userScripts[record.id] {
+            for tab in application?.runtimes[profileID]?.tabs.values ?? Dictionary<UUID, BrowserTab>().values {
+                if let view = tab.existingWebView { scripts.attach(view) }
+            }
+
+            if ext.manifest["background"] != nil {
+                do { try await context.loadBackgroundContent() } catch {
+                    if contexts[record.id] === context {
+                        userScripts.removeValue(forKey: record.id)?.stop()
+                        contexts.removeValue(forKey: record.id)
+                        try? controller.unload(context)
+                    }
+                    throw error
+                }
+                guard !isDisposed, loadRevisions[record.id] == revision, contexts[record.id] === context else {
+                    throw CancellationError()
+                }
+            }
+        }
         recordContextDiagnostics(context)
         store?.objectWillChange.send()
     }
@@ -304,14 +364,17 @@ import WebKit
     private func recordContextDiagnostics(_ context: WKWebExtensionContext) {
         guard !isDisposed, let application,
             let id = contexts.first(where: { $0.value === context })?.key,
-            let record = application.profiles.first(where: { $0.id == profileID })?.extensions.first(where: { $0.id == id })
+            let record = application.profiles.first(where: { $0.id == profileID })?.extensions.first(where: {
+                $0.id == id
+            })
         else { return }
         let known = record.diagnostics ?? []
         var additions: [String] = []
         let remaining = max(0, 5 - known.filter { $0.hasPrefix("WebKit error: ") }.count)
         for error in context.errors where additions.count < remaining {
             let error = error as NSError
-            let diagnostic = "WebKit error: \(String(error.localizedDescription.prefix(512))) [\(error.domain):\(error.code)]"
+            let diagnostic =
+                "WebKit error: \(String(error.localizedDescription.prefix(512))) [\(error.domain):\(error.code)]"
             if !known.contains(diagnostic), !additions.contains(diagnostic) { additions.append(diagnostic) }
         }
         guard !additions.isEmpty else { return }
@@ -327,12 +390,15 @@ import WebKit
 
     func shutDown() {
         isDisposed = true
-        NotificationCenter.default.removeObserver(self, name: WKWebExtensionContext.errorsDidUpdateNotification, object: nil)
+        NotificationCenter.default.removeObserver(
+            self, name: WKWebExtensionContext.errorsDidUpdateNotification, object: nil)
         popupPanel?.close()
         popupPanel = nil
         popupRecordID = nil
         actionOwner = nil
         controller.delegate = nil
+        for scripts in userScripts.values { scripts.stop() }
+        userScripts.removeAll()
         for context in contexts.values { try? controller.unload(context) }
         contexts.removeAll()
     }
@@ -351,6 +417,7 @@ import WebKit
                 try await load(record)
             } else if let context = contexts[record.id] {
                 try controller.unload(context)
+                userScripts.removeValue(forKey: record.id)?.stop()
                 contexts.removeValue(forKey: record.id)
             }
             guard loadRevisions[record.id] == revision else { return }
@@ -392,6 +459,7 @@ import WebKit
         do {
             if let context = contexts[record.id] {
                 try controller.unload(context)
+                userScripts.removeValue(forKey: record.id)?.stop()
                 contexts.removeValue(forKey: record.id)
             }
 
@@ -526,11 +594,38 @@ import WebKit
         coordinator.alert(alert, for: owner) { completion($0 == .alertFirstButtonReturn) }
     }
     func webExtensionController(
+        _ controller: WKWebExtensionController, connectUsing port: WKWebExtension.MessagePort,
+        for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void
+    ) {
+        guard port.applicationIdentifier == ExtensionUserScriptBridge.host,
+            let scripts = userScripts.values.first(where: { $0.context === context })
+        else {
+            completionHandler(PackageError(reason: "loaf does not allow arbitrary native messaging hosts"))
+            return
+        }
+        scripts.connect(port)
+        completionHandler(nil)
+    }
+
+    func webExtensionController(
         _ controller: WKWebExtensionController, sendMessage message: Any,
         toApplicationWithIdentifier identifier: String?, for context: WKWebExtensionContext,
         replyHandler: @escaping (Any?, Error?) -> Void
     ) {
         func deny(_ reason: String) { replyHandler(nil, PackageError(reason: reason)) }
+        if identifier == ExtensionCompatibility.host,
+            let message = message as? [String: Any], let operation = message["operation"] as? String,
+            operation.hasPrefix("userScripts."),
+            let scripts = userScripts.values.first(where: { $0.context === context })
+        {
+            do {
+                let result = try scripts.handle(
+                    String(operation.dropFirst("userScripts.".count)),
+                    args: message["args"] as? [String: Any] ?? [:])
+                replyHandler(["value": result], nil)
+            } catch { replyHandler(nil, error) }
+            return
+        }
         guard identifier == ExtensionCompatibility.host,
             let installed = contexts.first(where: { $0.value === context }),
             let record = application?.profiles.first(where: { $0.id == profileID })?.extensions.first(where: {
@@ -721,6 +816,7 @@ nonisolated enum ExtensionPermissionText {
             "tabCapture": "capture audio and video from a tab",
             "desktopCapture": "capture screen content with your permission",
             "scripting": "run scripts on permitted websites",
+            "userScripts": "run user-provided scripts on permitted websites",
             "cookies": "read and change cookies on permitted websites",
             "history": "read and change browsing history", "bookmarks": "read and change bookmarks",
             "downloads": "start and manage downloads", "notifications": "show notifications",

@@ -1,5 +1,6 @@
 import CoreText
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PersonalIcon: Identifiable {
     let glyph: String
@@ -33,8 +34,8 @@ struct PersonalIcon: Identifiable {
         return scalar.properties.isEmoji || (0x2600...0x27BF).contains(code) && !(0x2794...0x27BF).contains(code)
     }
     static let catalog: [PersonalIcon] = {
-        guard let font = Golzheim.font else { return [] }
-        let characters = CTFontCopyCharacterSet(CTFontCreateWithName(font.fontName as CFString, 20, nil))
+        guard let font = Golzheim.iconFont(size: 20) else { return [] }
+        let characters = CTFontCopyCharacterSet(font)
         var result: [PersonalIcon] = []
         for code in Array(0x21...0x7E) + Array(0xA1...0xFF) + Array(0x2000...0x2BFF) + Array(0x1F000...0x1FFFF) {
             guard let scalar = UnicodeScalar(code), CFCharacterSetIsLongCharacterMember(characters, UInt32(code)) else {
@@ -116,6 +117,10 @@ struct ProfileEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var icon = "🌱"
+    @State private var customIconPNG: Data?
+    @State private var choosingIcon = false
+    @State private var importingIcon = false
+    @State private var iconError: String?
     @State private var tint = 0
     @State private var strength = 0.06
     @State private var transparency = 0.0
@@ -126,7 +131,7 @@ struct ProfileEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                EmojiIcon(glyph: icon, size: 32)
+                ProfileIcon(glyph: icon, customIconPNG: customIconPNG, size: 32)
                 TextField("profile name", text: $name).font(.system(size: 24)).textFieldStyle(.plain)
                 Spacer()
             }
@@ -136,7 +141,21 @@ struct ProfileEditor: View {
                         tint: $tint, customTint: $customTint, strength: $strength, transparency: $transparency)
                     Divider()
                     Text("profile icon").fontWeight(.medium)
-                    GolzheimPicker(selection: $icon)
+                    HStack {
+                        Button(customIconPNG == nil ? "import PNG or SVG…" : "replace image…") {
+                            choosingIcon = true
+                        }
+                        if customIconPNG != nil {
+                            Button("remove image") { customIconPNG = nil }
+                        }
+                        if importingIcon { ProgressView().controlSize(.small) }
+                    }.disabled(importingIcon)
+                    if let iconError { Text(iconError).font(.callout).foregroundStyle(.red) }
+                    GolzheimPicker(selection: Binding(get: { icon }, set: {
+                        icon = $0
+                        customIconPNG = nil
+                        iconError = nil
+                    })).disabled(importingIcon)
                 }
             }.frame(maxHeight: 580)
             if let deletionError { Text(deletionError).font(.callout).foregroundStyle(.red) }
@@ -156,6 +175,7 @@ struct ProfileEditor: View {
                     store.updateProfile(profileID) {
                         $0.name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
                         $0.emoji = icon
+                        $0.customIconPNG = customIconPNG
                         $0.tint = tint
                         $0.personalization = $0.personalization ?? Personalization()
                         $0.personalization?.tintStrength = ProfileColor.surfaceStrength(strength)
@@ -164,10 +184,25 @@ struct ProfileEditor: View {
                     }
                     dismiss()
                 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(
-                    name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    importingIcon || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }.disabled(deleting).padding(24).frame(width: 520).interactiveDismissDisabled(deleting)
-            .confirmationDialog("delete \(name)?", isPresented: $confirmDeletion, titleVisibility: .visible) {
+            .fileImporter(isPresented: $choosingIcon, allowedContentTypes: [.png, .svg]) { result in
+                guard case .success(let url) = result else {
+                    if case .failure(let error) = result { iconError = error.localizedDescription }
+                    return
+                }
+                importingIcon = true
+                iconError = nil
+                Task { @MainActor in
+                    defer { importingIcon = false }
+                    do { customIconPNG = try await ProfileIconAsset.importPNG(from: url) }
+                    catch {
+                        iconError = "Couldn’t read this icon. Use a PNG up to 1 MB or a self-contained SVG up to 128 KB."
+                    }
+                }
+            }
+            .confirmationDialog("delete \(store.profileFor(profileID).name)?", isPresented: $confirmDeletion, titleVisibility: .visible) {
                 Button("delete profile", role: .destructive) {
                     deleting = true
                     Task {
@@ -185,11 +220,12 @@ struct ProfileEditor: View {
                 }
                 Button("cancel", role: .cancel) {}
             } message: {
-                Text("This deletes this profile’s tabs, history, bookmarks, cookies, saved passwords, and extensions from this Mac. It cannot be undone. Downloaded files stay where they are.")
+                Text((store.application.cloudSync.enabled ? "Deleting this synced profile also removes it from your other syncing Macs. " : "") + "This deletes this profile’s tabs, history, bookmarks, cookies, saved passwords, and extensions from this Mac. It cannot be undone. Downloaded files stay where they are.")
             }.onAppear {
             let profile = store.profileFor(profileID)
             name = profile.name
             icon = profile.emoji
+            customIconPNG = profile.customIconPNG
             tint = profile.tint
             strength = profile.personalization?.tintStrength ?? 0.06
             customTint = profile.personalization?.customTint

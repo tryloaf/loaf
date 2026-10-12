@@ -42,7 +42,9 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     private var pendingConfiguration: WKWebViewConfiguration?
     private(set) var isDisposed = false
     private var requestedURL: URL?
+    private var authenticationNavigationURL: URL?
     private var activeNavigation: WKNavigation?
+    var contextMenuWindowURL: URL?
     var lastActivated = Date()
     var sleepState: Any?
     var sleepScrollPosition: CGPoint?
@@ -65,6 +67,14 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     @Published var url: URL?
     @Published var page: BrowserPage
     private(set) var existingChatGPTSearch: ChatGPTSearch?
+    private(set) var existingSideChat: SideChatState?
+    var sideChat: SideChatState {
+        if let existingSideChat { return existingSideChat }
+        guard let store, !isDisposed else { preconditionFailure("Cannot create a chat for a closed tab") }
+        let state = SideChatState(tab: self, account: store.application.chatGPTAccount)
+        existingSideChat = state
+        return state
+    }
     var chatGPTSearch: ChatGPTSearch {
         if let existingChatGPTSearch { return existingChatGPTSearch }
         guard let store, !isDisposed else { preconditionFailure("Cannot create a search for a closed tab") }
@@ -141,6 +151,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     private var faviconTask: Task<Void, Never>?
     private var faviconOrigin: String?
     private var faviconLinks: [URL] = []
+    private var faviconRefreshNavigation: WKNavigation?
     var saved: SavedTab {
         SavedTab(
             id: id, title: title, address: url?.user == nil ? url?.absoluteString : nil, pinned: pinned, page: page,
@@ -236,6 +247,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         if url?.scheme?.hasSuffix("-extension") == true { extensionThemeObservation = ExtensionTheme.bind(webView) }
         webView.browserTab = self
         existingWebView = webView
+        store.runtime(for: profileID).extensions.attachUserScripts(to: webView)
         finder.webView = webView
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -346,9 +358,11 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
     func load(_ url: URL) {
         guard !isDisposed, ["https", "http", "webkit-extension"].contains(url.scheme) else { return }
+        faviconRefreshNavigation = nil
         existingChatGPTSearch?.clear()
         existingChatGPTSearch = nil
         navigationID = UUID()
+        existingSideChat?.pageChanged()
         clearHoveredLink()
         prepareFavicon(for: url, fetch: true)
         if store?.selectedTab?.id == id || store?.passwordFillOffer?.tabID == id { store?.cancelPasswordFill() }
@@ -367,6 +381,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         readerDocument = nil
         let view = webView
         requestedURL = url
+        authenticationNavigationURL = url
         view.stopLoading()
         view.pauseAllMediaPlayback(completionHandler: nil)
         media = []
@@ -385,6 +400,12 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         } else {
             existingWebView?.reload()
         }
+    }
+
+    func reloadFromOrigin() {
+        guard !isDisposed, page == .web, let navigation = webView.reloadFromOrigin() else { return }
+        activeNavigation = navigation
+        faviconRefreshNavigation = navigation
     }
 
     func applySiteSettings(_ url: URL) {
@@ -462,11 +483,13 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                     source: PageScripts.passwordCapture, injectionTime: .atDocumentEnd, forMainFrameOnly: true,
                     in: PageScripts.passwordWorld))
         }
-
+        store.runtime(for: profileID).extensions.attachUserScripts(to: webView)
     }
 
     func dispose() {
         guard !isDisposed else { return }
+        existingSideChat?.clear()
+        existingSideChat = nil
         existingChatGPTSearch?.clear()
         existingChatGPTSearch = nil
         isDisposed = true
@@ -496,6 +519,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         chromeColorObservation?.invalidate()
         chromeColorObservation = nil
         guard let webView = existingWebView else { return }
+        store?.application.runtimes[profileID]?.extensions.detachUserScripts(from: webView)
         existingWebView = nil
         extensionThemeObservation = nil
         activeNavigation = nil
@@ -578,6 +602,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             return
         }
         if action.targetFrame?.isMainFrame == true {
+            authenticationNavigationURL = target
             sleepEligibleNavigation =
                 (action.request.httpMethod ?? "GET") == "GET" && ["http", "https"].contains(scheme)
             if pendingLoginUsername?.origin != BrowserAddress.origin(target) { pendingLoginUsername = nil }
@@ -632,9 +657,16 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
         store.map { $0.downloads.add(download, owner: $0, profileID: profileID, source: webView) }
     }
+
+    @objc(_webView:contextMenuDidCreateDownload:)
+    func contextMenuDidCreateDownload(_ webView: WKWebView, download: WKDownload) {
+        guard !isDisposed, existingWebView === webView, let store else { return }
+        store.downloads.add(download, owner: store, profileID: profileID, source: webView)
+    }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         guard existingWebView === webView, page == .web else { return }
         if requestedURL != nil, let activeNavigation, let navigation, activeNavigation !== navigation { return }
+        if faviconRefreshNavigation !== navigation { faviconRefreshNavigation = nil }
         webViewHost?.invalidatePreparedResizeSnapshot()
         activeNavigation = navigation
         clearHoveredLink()
@@ -646,6 +678,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         finder.webView = existingWebView
         if store?.selectedTab?.id == id || store?.passwordFillOffer?.tabID == id { store?.cancelPasswordFill() }
         navigationID = UUID()
+        existingSideChat?.pageChanged()
         navigationError = nil
         readerArticle = nil
         readerDocument = nil
@@ -671,7 +704,9 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 self.defaultUserAgent = value
             }
         }
-        loadFavicon()
+        let forceFaviconRefresh = faviconRefreshNavigation != nil && faviconRefreshNavigation === navigation
+        faviconRefreshNavigation = nil
+        loadFavicon(forceRefresh: forceFaviconRefresh)
         webViewHost?.prepareResizeSnapshot()
         if sleepScrollPosition == nil { restoringFromSleep = false }
         if let point = sleepScrollPosition, webView.url == sleepRestoreURL {
@@ -694,6 +729,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         guard existingWebView === webView, page == .web else { return }
         if let activeNavigation, let navigation, activeNavigation !== navigation { return }
+        authenticationNavigationURL = nil
         requestedURL = nil
         if let committed = webView.url {
             url = committed
@@ -704,6 +740,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         guard existingWebView === webView, page == .web else { return }
         if let activeNavigation, let navigation, activeNavigation !== navigation { return }
+        authenticationNavigationURL = nil
         handle(error)
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -735,8 +772,11 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             completionHandler(.performDefaultHandling, nil)
             return
         }
-        guard challenge.previousFailureCount < 2 else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
+        guard !isDisposed, existingWebView === webView, page == .web,
+            store?.selectedTab?.id == id, store?.selectedProfileID == profileID,
+            Self.shouldPromptForAuthentication(challenge, navigationURL: authenticationNavigationURL)
+        else {
+            completionHandler(.rejectProtectionSpace, nil)
             return
         }
         let alert = NSAlert()
@@ -765,12 +805,43 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         }
     }
 
+    nonisolated static func shouldPromptForAuthentication(
+        _ challenge: URLAuthenticationChallenge, navigationURL: URL?
+    ) -> Bool {
+        let space = challenge.protectionSpace
+        guard !space.isProxy(), challenge.previousFailureCount < 2,
+            [NSURLAuthenticationMethodHTTPBasic, NSURLAuthenticationMethodHTTPDigest, NSURLAuthenticationMethodNTLM]
+                .contains(space.authenticationMethod),
+            let navigationURL, ["http", "https"].contains(navigationURL.scheme?.lowercased() ?? ""),
+            navigationURL.host?.lowercased() == space.host.lowercased(),
+            navigationURL.scheme?.lowercased() == space.protocol?.lowercased(),
+            (navigationURL.port ?? (navigationURL.scheme == "https" ? 443 : 80)) == space.port
+        else { return false }
+
+        guard let responseURL = challenge.failureResponse?.url else { return false }
+        var response = URLComponents(url: responseURL, resolvingAgainstBaseURL: false)
+        var destination = URLComponents(url: navigationURL, resolvingAgainstBaseURL: false)
+        response?.fragment = nil
+        destination?.fragment = nil
+        if response?.path.isEmpty == true { response?.path = "/" }
+        if destination?.path.isEmpty == true { destination?.path = "/" }
+        return response?.url == destination?.url
+    }
+
     func webView(
         _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
         guard action.targetFrame == nil, let store else { return nil }
-
+        if let expected = contextMenuWindowURL {
+            contextMenuWindowURL = nil
+            if expected == action.request.url, let coordinator = store.application.coordinator {
+                let window = coordinator.newWindow(profileID: profileID, configuration: configuration)
+                guard let tab = window.selectedTab else { return nil }
+                tab.loaded = true
+                return tab.webView
+            }
+        }
         let tab = store.newTab(profileID: profileID, showOmnibar: false, configuration: configuration)
         store.joinBrowsingTrail(tab, source: self)
         tab.loaded = true
@@ -855,7 +926,34 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             completion(.abort)
             return
         }
-        coordinator.alert(alert, for: store, completion: completion)
+        let token = navigationID
+        let valid = { [weak self, weak store] in
+            guard let self, let store else { return false }
+            return !self.isDisposed && self.navigationID == token
+                && store.selectedTab?.id == self.id && store.selectedProfileID == self.profileID
+                && self.authenticationNavigationURL != nil
+        }
+        coordinator.enqueueSheet(for: store, cancel: { completion(.abort) }) { done in
+            guard valid(), let window = store.nativeWindow else {
+                completion(.abort)
+                done()
+                return
+            }
+            var observation: AnyCancellable?
+            observation = self.objectWillChange.merge(with: store.objectWillChange).sink { _ in
+                DispatchQueue.main.async {
+                    if !valid(), alert.window.sheetParent === window {
+                        window.endSheet(alert.window, returnCode: .abort)
+                    }
+                }
+            }
+            alert.beginSheetModal(for: window) { response in
+                observation?.cancel()
+                observation = nil
+                completion(valid() ? response : .abort)
+                done()
+            }
+        }
     }
     func webView(
         _ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo,
@@ -1188,8 +1286,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             if let image { favicon = image }
         }
     }
-    private func updateFavicon(for source: URL, declared: [URL]) {
-        guard let store, !declared.isEmpty, declared != faviconLinks else { return }
+    private func updateFavicon(for source: URL, declared: [URL], forceRefresh: Bool = false) {
+        guard let store, forceRefresh || (!declared.isEmpty && declared != faviconLinks) else { return }
         faviconLinks = declared
         faviconTask?.cancel()
         let token = navigationID
@@ -1198,14 +1296,14 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         faviconTask = Task { [weak self] in
             let image = await store.application.favicons.image(
                 for: source, privateID: privateID,
-                declared: declared, refresh: true, discoverPage: false)
+                declared: declared, refresh: true, forceRefresh: forceRefresh, discoverPage: false)
             guard let self, !Task.isCancelled, !isDisposed, navigationID == token,
                 url == source, existingWebView === view, view?.url == source
             else { return }
             if let image { favicon = image }
         }
     }
-    private func loadFavicon() {
+    private func loadFavicon(forceRefresh: Bool = false) {
         guard let source = url, let view = existingWebView else { return }
         let token = navigationID
 
@@ -1237,7 +1335,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                         return nil
                     }
                     return link
-                })
+                }, forceRefresh: forceRefresh)
         }
     }
 

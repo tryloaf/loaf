@@ -283,8 +283,27 @@ nonisolated struct ICloudSyncJournal: Codable {
             journal.baseline[name] = nil
             journal.dirty.insert(name)
         }
+        for name in Array(journal.documents.keys) where name.hasPrefix("chat.") {
+            let parts = name.split(separator: ".")
+            if parts.count == 3 && !profiles.contains(where: { $0.id.uuidString == parts[1] }) {
+                journal.documents[name] = SyncDocument(deleted: true)
+                journal.baseline[name] = nil
+                journal.dirty.insert(name)
+            }
+        }
         for profile in profiles {
             try journal.edit("profile." + profile.id.uuidString, values: ICloudSyncProjection.profile(profile))
+        }
+        if snapshot.preferences.syncSideChats == true, let application {
+            for profile in profiles {
+                let values = try application.chatArchive.syncValues(profileID: profile.id)
+
+                for (id, data) in values { try journal.edit("chat." + profile.id.uuidString + "." + id, values: ["conversation": data]) }
+                let prefix = "chat." + profile.id.uuidString + "."
+                for name in Array(journal.baseline.keys) where name.hasPrefix(prefix) && values[String(name.dropFirst(prefix.count))] == nil {
+                    try journal.edit(name, values: [:])
+                }
+            }
         }
         var preferences = try ICloudSyncProjection.preferences(snapshot.preferences)
         preferences["profileOrder"] = try ICloudSyncProjection.data(profiles.map { $0.id.uuidString })
@@ -360,7 +379,7 @@ nonisolated struct ICloudSyncJournal: Codable {
     private func receive(_ record: CKRecord) throws {
         let name = record.recordID.recordName
         guard record.recordID.zoneID == Self.zoneID, record.recordType == Self.recordType else { return }
-        guard name == "preferences" || name.hasPrefix("profile.") || name.hasPrefix("mac."),
+        guard name == "preferences" || name.hasPrefix("profile.") || name.hasPrefix("mac.") || name.hasPrefix("chat."),
             let data = record.encryptedValues["payloadV1"] as? Data, data.count <= 700_000
         else { throw ICloudSyncFailure.invalidData }
         try journal.merge(name, document: JSONDecoder().decode(SyncDocument.self, from: data))
@@ -403,6 +422,16 @@ nonisolated struct ICloudSyncJournal: Codable {
         if let blob = journal.documents["preferences"]?.fields["appearanceMode"]?.value {
             let value = try ICloudSyncProjection.value(blob)
             if let mode = value as? String, ["system", "light", "dark"].contains(mode) { appearanceMode = mode }
+        }
+        if application.preferences.syncSideChats == true {
+            for (name, document) in journal.documents where name.hasPrefix("chat.") && !document.deleted {
+                let parts = name.split(separator: ".")
+                guard parts.count == 3, let profileID = UUID(uuidString: String(parts[1])),
+                    let chatID = UUID(uuidString: String(parts[2])), profiles.contains(where: { $0.id == profileID && !$0.privateMode }) else { continue }
+                if let field = document.fields["conversation"] {
+                    try application.chatArchive.merge(profileID: profileID, document: SyncDocument(fields: [chatID.uuidString: field]))
+                }
+            }
         }
         application.profiles = profiles
         application.preferences = preferences

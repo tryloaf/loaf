@@ -90,6 +90,36 @@ nonisolated struct ProfileColor: Codable, Equatable, Sendable {
             hue: 0, red: Double(rgb.redComponent), green: Double(rgb.greenComponent), blue: Double(rgb.blueComponent))
     }
 }
+extension BrowserWindowState {
+    var profileSwipeTarget: Profile? {
+        guard profileSwipeDistance != 0,
+            let index = profiles.firstIndex(where: { $0.id == selectedProfileID })
+        else { return nil }
+        let target = index + (profileSwipeDistance > 0 ? 1 : -1)
+        return profiles.indices.contains(target) ? profiles[target] : nil
+    }
+    var profileSwipeProgress: CGFloat {
+        min(1, abs(profileSwipeDistance) / max(1, preferences.sidebarWidth))
+    }
+    func profileSwipeColor(_ color: (Profile) -> Color) -> Color {
+        let current = NSColor(color(profile))
+        guard let target = profileSwipeTarget else { return Color(nsColor: current) }
+        return Color(nsColor: current.blended(withFraction: profileSwipeProgress, of: NSColor(color(target))) ?? current)
+    }
+    var profileSwipeTransparency: Double {
+        let current = ProfileTransparency.bounded(profile.personalization?.windowTransparency ?? 0)
+        guard let target = profileSwipeTarget else { return current }
+        let next = ProfileTransparency.bounded(target.personalization?.windowTransparency ?? 0)
+        return current + (next - current) * Double(profileSwipeProgress)
+    }
+    func profileSwipeSurface(dark: Bool) -> Color {
+        profileSwipeColor { profile in
+            profile.privateMode ? PrivateChrome.base : ProfileColor.surfaceColor(
+                profileTint(profile), strength: profile.personalization?.tintStrength ?? 0.06, dark: dark)
+        }
+    }
+}
+
 func profileTint(_ profile: Profile) -> Color {
     profile.privateMode ? PrivateChrome.accent : profile.personalization?.customTint?.color ?? profileTint(profile.tint)
 }
@@ -378,12 +408,11 @@ struct ProfileColorPad: View {
 }
 
 enum AppearancePreviewOption: String, CaseIterable {
-    case titlebar, pageMargins, resizing, wonderbarTint
+    case titlebar, pageMargins, wonderbarTint
     var title: String {
         switch self {
         case .titlebar: "sidebar-only titlebar"
         case .pageMargins: "page margins"
-        case .resizing: "soft resizing"
         case .wonderbarTint: "wonderbar tint"
         }
     }
@@ -392,13 +421,11 @@ enum AppearancePreviewOption: String, CaseIterable {
 struct AppearancePreviewSettings: Equatable {
     var sidebarOnlyTitlebar = true
     var pageMargins = true
-    var softenResizing = true
     var tintWonderbar = false
     init() {}
     init(_ preferences: BrowserPreferences) {
         sidebarOnlyTitlebar = preferences.sidebarOnlyChrome != false
         pageMargins = preferences.insetCollapsedPage != false
-        softenResizing = preferences.resizeTransition != false
         tintWonderbar = preferences.tintWonderbar == true
     }
     func demonstrating(_ option: AppearancePreviewOption?, enabled: Bool) -> Self {
@@ -408,7 +435,6 @@ struct AppearancePreviewSettings: Equatable {
         case .pageMargins:
             value.sidebarOnlyTitlebar = true
             value.pageMargins = enabled
-        case .resizing: value.softenResizing = enabled
         case .wonderbarTint: value.tintWonderbar = enabled
         case nil: break
         }
@@ -443,7 +469,6 @@ struct ProfileThemePreview: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var demoEnabled = true
     @State private var sidebarCollapsed = false
-    @State private var pageBlurred = false
     private struct Playback: Equatable {
         let option: AppearancePreviewOption?
         let reduced: Bool
@@ -461,7 +486,6 @@ struct ProfileThemePreview: View {
     }
     private var caption: String {
         guard let demonstration else { return dark ? "dark" : "light" }
-        if demonstration == .resizing && reduceMotion { return "soft resizing · Reduce Motion" }
         return demonstration.title + " · " + (demoEnabled ? "on" : "off")
     }
     private var windowControls: some View {
@@ -582,7 +606,7 @@ struct ProfileThemePreview: View {
                                     ForEach(0..<3) { _ in RoundedRectangle(cornerRadius: 4).fill(base).frame(height: 22)
                                     }
                                 }
-                            }.padding(12).blur(radius: pageBlurred ? 3 : 0).opacity(pageBlurred ? 0.45 : 1)
+                            }.padding(12)
                         }.clipShape(RoundedRectangle(cornerRadius: pageInset == 0 ? 0 : 6)).padding(
                             [.top, .trailing, .bottom], pageInset
                         )
@@ -602,35 +626,19 @@ struct ProfileThemePreview: View {
             Text(caption).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
         }.frame(maxWidth: .infinity).accessibilityElement(children: .ignore)
             .accessibilityLabel("\(dark ? "dark" : "light") appearance preview").accessibilityValue(caption)
-            .animation(reduceMotion || demonstration == .resizing ? nil : .smooth(duration: 0.4), value: resolved)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: resolved)
             .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: demonstration)
             .task(id: Playback(option: demonstration, reduced: reduceMotion)) { await playDemonstration() }
     }
     private func playDemonstration() async {
         demoEnabled = true
-        pageBlurred = false
         sidebarCollapsed =
-            demonstration == .pageMargins || demonstration == .titlebar || (reduceMotion && demonstration == .resizing)
-        guard let demonstration, !reduceMotion else { return }
+            demonstration == .pageMargins || demonstration == .titlebar
+        guard demonstration != nil, !reduceMotion else { return }
         do {
             while !Task.isCancelled {
-                if demonstration == .resizing {
-                    for enabled in [true, false] {
-                        demoEnabled = enabled
-                        for collapsed in [true, false] {
-                            withAnimation(.easeInOut(duration: 0.26)) {
-                                sidebarCollapsed = collapsed
-                                pageBlurred = enabled
-                            }
-                            try await Task.sleep(for: .milliseconds(300))
-                            withAnimation(.easeOut(duration: 0.16)) { pageBlurred = false }
-                            try await Task.sleep(for: .milliseconds(1400))
-                        }
-                    }
-                } else {
-                    try await Task.sleep(for: .milliseconds(1800))
-                    demoEnabled.toggle()
-                }
+                try await Task.sleep(for: .milliseconds(1800))
+                demoEnabled.toggle()
             }
         } catch {}
     }

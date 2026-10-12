@@ -10,8 +10,6 @@ struct SettingsView: View {
     @State private var section: String
     @State private var query = ""
     @State private var headingPassed = false
-    @State private var headingPresented = false
-    @State private var headingRemoval: Task<Void, Never>?
     @State private var selectedSetting: String?
     @FocusState private var searchFocused: Bool
     @FocusState private var sidebarFocused: Bool
@@ -21,11 +19,16 @@ struct SettingsView: View {
     @State private var city = ""
     @State private var importVisible = false
     @State private var editing: UUID?
+    @State private var confirmTrackingDeletion = false
+    @State private var extensionDeletion: InstalledExtension?
+    @State private var extensionDeletionProfileID: UUID?
+    @State private var extensionDeletionProfileName = ""
     @State private var draggedProfileID: UUID?
     @State private var profileDropPosition: ProfileDropPosition?
     @State private var extensionAddress = ""
     @State private var websiteSearch = ""
     @State private var expandedWebsites: Set<String> = []
+    @State private var expandedExtensions: Set<UUID> = []
     @State private var appearanceDemo: AppearancePreviewOption?
     @AppStorage("loaf.appearance") private var appearance = "system"
     @ObservedObject private var systemAppearance = LoafAppearance.shared
@@ -140,7 +143,7 @@ struct SettingsView: View {
                     }
                 } label: {
                     HStack(spacing: 8) {
-                        EmojiIcon(glyph: store.profile.emoji, size: 16)
+                        ProfileIcon(profile: store.profile, size: 16)
                         Text(store.profile.name).font(.system(size: 12)).lineLimit(1)
                         Spacer()
                         GolzheimIcon(icon: .disclosureDown, size: 12)
@@ -215,7 +218,11 @@ struct SettingsView: View {
                                 .top, 0, for: .scrollContent
                             )
                             .listRowBackground(Color(nsColor: .controlBackgroundColor))
-                            .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+                            .listRowInsets(
+                                EdgeInsets(
+                                    top: section == "websites" || section == "extensions" ? 5 : 12, leading: 16,
+                                    bottom: section == "websites" || section == "extensions" ? 5 : 12, trailing: 16)
+                            )
                             .padding(.horizontal, 8).frame(maxWidth: 780).frame(
                                 maxWidth: .infinity, maxHeight: .infinity
                             )
@@ -238,32 +245,14 @@ struct SettingsView: View {
             .onChange(of: section) { _, _ in headingPassed = false }
             .onChange(of: query) { _, _ in headingPassed = false }
             .onChange(of: websiteSearchFocused) { _, focused in
-                if focused { sidebarFocused = false; searchFocused = false }
+                if focused {
+                    sidebarFocused = false
+                    searchFocused = false
+                }
             }
             .onChange(of: store.selectedProfileID) { _, _ in
                 websiteSearch = ""
                 expandedWebsites.removeAll()
-            }
-            .onChange(of: headingPassed) { _, passed in
-                headingRemoval?.cancel()
-                if passed {
-                    headingPresented = true
-                } else {
-                    headingRemoval = Task { @MainActor in
-                        do { try await Task.sleep(for: .milliseconds(reduceMotion ? 0 : 180)) } catch { return }
-                        headingPresented = false
-                    }
-                }
-            }
-            .toolbar {
-                if headingPresented {
-                    if #available(macOS 26, *) {
-                        ToolbarItem(id: "loaf.settings.sectionTitle", placement: .principal) { compactHeading }
-                            .sharedBackgroundVisibility(.hidden)
-                    } else {
-                        ToolbarItem(id: "loaf.settings.sectionTitle", placement: .principal) { compactHeading }
-                    }
-                }
             }
             .background(NativeWindowAppearance(scheme: systemAppearance.colorScheme(for: appearance)))
             .preferredColorScheme(systemAppearance.colorScheme(for: appearance))
@@ -291,15 +280,31 @@ struct SettingsView: View {
                 if let editing { ProfileEditor(store: store, profileID: editing) }
             }
             .sheet(isPresented: $importVisible) { ProfileImportView(store: store) }
+            .confirmationDialog("delete browsing-time data?", isPresented: $confirmTrackingDeletion, titleVisibility: .visible) {
+                Button("delete browsing-time data", role: .destructive) { store.application.resources.deleteTrackingData() }
+                Button("cancel", role: .cancel) {}
+            } message: {
+                Text("This deletes recorded browsing time for every profile on this Mac. It cannot be undone.")
+            }
+            .confirmationDialog("remove \(extensionDeletion?.name ?? "extension")?",
+                isPresented: Binding(get: { extensionDeletion != nil }, set: { if !$0 { extensionDeletion = nil } }),
+                titleVisibility: .visible) {
+                Button("remove extension", role: .destructive) {
+                    guard let record = extensionDeletion, let id = extensionDeletionProfileID,
+                          store.profiles.contains(where: { $0.id == id }) else { return }
+                    store.runtime(for: id).extensions.remove(record)
+                    extensionDeletion = nil
+                }
+                Button("cancel", role: .cancel) { extensionDeletion = nil }
+            } message: {
+                Text("This removes the extension and its saved data from \(extensionDeletionProfileName). You can disable it to keep its data.")
+            }
     }
     private var savedWebsiteOrigins: [String] {
         Array((store.profile.siteSettings ?? [:]).keys).sorted()
     }
     private var settingsSearchResults: [SettingsSearchResult] {
         SettingsSearch.results(for: query, websiteOrigins: savedWebsiteOrigins)
-    }
-    private var compactHeading: some View {
-        SettingsCompactHeading(title: query.isEmpty ? section : "search results", visible: headingPassed)
     }
     private var sectionHeading: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -330,6 +335,7 @@ struct SettingsView: View {
     private var general: some View {
         Group {
             Section("tabs & startup") {
+                Toggle("add new tabs at the top", isOn: optional(\.newTabsAtTop, fallback: true)).id("new-tabs-at-top")
                 Picker("pinned tabs", selection: optional(\.pinnedLayout, fallback: "grid")) {
                     Text("grid").tag("grid")
                     Text("list").tag("list")
@@ -377,12 +383,41 @@ struct SettingsView: View {
                     "browsing-time")
                 Text("records focused-page and playing-media time by site, on this Mac. private browsing is excluded.")
                     .font(.caption).foregroundStyle(.secondary)
-                Button("delete browsing-time data", role: .destructive) {
-                    store.application.resources.deleteTrackingData()
+                Button("delete browsing-time data…", role: .destructive) { confirmTrackingDeletion = true }
+            }
+            Section("downloads") {
+                Picker("remove cached transfers after", selection: optional(\.downloadCacheDays, fallback: 7)) {
+                    Text("1 day").tag(1)
+                    Text("7 days").tag(7)
+                    Text("30 days").tag(30)
+                    Text("never").tag(0)
+                    Text("custom…").tag(
+                        [0, 1, 7, 30].contains(store.preferences.downloadCacheDays ?? 7)
+                            ? 14 : store.preferences.downloadCacheDays ?? 14)
+                }.id("download-cache").onChange(of: store.preferences.downloadCacheDays) { _, days in
+                    store.downloads.cleanupCache(olderThanDays: days ?? 7)
                 }
+                if let days = store.preferences.downloadCacheDays, ![0, 1, 7, 30].contains(days) {
+                    HStack {
+                        Text("days to keep cached transfers")
+                        Spacer()
+                        TextField(
+                            "days",
+                            value: Binding(
+                                get: { store.preferences.downloadCacheDays ?? 14 },
+                                set: {
+                                    store.preferences.downloadCacheDays = min(36500, max(1, $0))
+                                    store.persistSoon()
+                                }), format: .number
+                        ).textFieldStyle(.roundedBorder).frame(width: 70)
+                    }
+                }
+                Text("only unfinished cached transfers are removed. saved files stay in their chosen folder.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("everyday browsing") {
                 Button("show welcome to loaf…") { store.application.onboardingVisible = true }
+                Toggle("warn before closing tabs in other profiles", isOn: optional(\.warnBeforeClosingOtherProfiles, fallback: true)).id("other-profile-close-warning")
                 Toggle("warn before quitting", isOn: optional(\.warnBeforeQuitting, fallback: false)).id("quit-warning")
                 Toggle("show link preview on hover", isOn: optional(\.showLinkPreview, fallback: true))
                     .id("link-preview")
@@ -428,8 +463,9 @@ struct SettingsView: View {
                             store.persistSoon()
                             store.application.weatherLocation.setEnabled(value)
                             refreshWeather()
-                        }))
-                    .id("weather-current-location")
+                        })
+                )
+                .id("weather-current-location")
                 HStack {
                     TextField("city", text: $city).onSubmit { applyWeatherCity() }
                     Button("apply") { applyWeatherCity() }.settingDisabled(
@@ -524,18 +560,9 @@ struct SettingsView: View {
                     ).id("page-margins")
             }
             Section("page transitions") {
-                Toggle("soften sidebar resizing", isOn: optional(\.resizeTransition, fallback: true)).modifier(
-                    AppearancePreviewHover(option: .resizing, selection: $appearanceDemo)
-                ).id("resize-transition")
                 Toggle("tint wonderbar with profile color", isOn: optional(\.tintWonderbar, fallback: false)).modifier(
                     AppearancePreviewHover(option: .wonderbarTint, selection: $appearanceDemo)
                 ).id("tint-wonderbar")
-            }
-            Section("menus") {
-                Toggle("capitalize menu items", isOn: optional(\.capitalizeMenus, fallback: true))
-                    .id("capitalize-menus")
-                Text("use standard capitalization for menu bar and context menu commands.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -596,7 +623,8 @@ struct SettingsView: View {
             Picker("provider", selection: redirectBinding(\.provider)) {
                 ForEach(
                     SearchRedirect.availableProviders.filter {
-                        $0 != .appleIntelligence || AppleIntelligence.visibleProviders.contains(.onDevice)
+                        ($0 != .appleIntelligence || AppleIntelligence.visibleProviders.contains(.onDevice))
+                            && (store.preferences.aiFeaturesEnabled != false || ![.chatgpt, .appleIntelligence, .perplexity, .googleAIOverview].contains($0))
                     }, id: \.self
                 ) {
                     Text(
@@ -650,6 +678,16 @@ struct SettingsView: View {
                 "this provider answers questions inside loaf. the alternate search shortcut uses its own provider above. Apple Intelligence retrieves web sources and summarizes them on this Mac. ChatGPT searches through OpenAI. Queries are sent only when submitted."
             ).font(.caption).foregroundStyle(.secondary)
         }
+        if store.preferences.aiFeaturesEnabled != false {
+            Section("saved chats") {
+                Toggle("sync chat transcripts with iCloud", isOn: optional(\.syncSideChats, fallback: false))
+                Text("Chats are encrypted on this Mac with a Keychain key. Sync requires iCloud sync and iCloud Keychain. Image attachments stay on this Mac. Private chats are never saved.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if store.preferences.syncSideChats == true && !store.application.cloudSync.enabled {
+                    Text("enable iCloud sync to sync chats").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
         if store.preferences.aiFeaturesEnabled != false
             && (store.preferences.aiProvider == nil || store.preferences.aiProvider == .chatgpt
                 || store.preferences.alternateSearch?.provider == .chatgpt)
@@ -668,7 +706,7 @@ struct SettingsView: View {
                     draggedID: $draggedProfileID, position: $profileDropPosition
                 ) {
                     HStack(spacing: 12) {
-                        EmojiIcon(glyph: profile.emoji, size: 24)
+                        ProfileIcon(profile: profile, size: 24)
                         VStack(alignment: .leading) {
                             Text(profile.name)
                             Text(
@@ -727,9 +765,9 @@ struct SettingsView: View {
                         expanded: Binding(
                             get: { expandedWebsites.contains(origin) },
                             set: { expanded in
-                                if expanded { expandedWebsites.insert(origin) }
-                                else { expandedWebsites.remove(origin) }
-                            })).id(origin)
+                                if expanded { expandedWebsites.insert(origin) } else { expandedWebsites.remove(origin) }
+                            })
+                    ).id(origin)
                 }
                 Text("macOS permissions remain authoritative for camera and microphone access.").font(.caption)
                     .foregroundStyle(.secondary)
@@ -820,9 +858,6 @@ struct SettingsView: View {
                                 await runtime.dataStore.httpCookieStore.setCookiePolicy(allowed ? .allow : .disallow)
                             }
                         }))
-                Text("choose whether sites can save cookies in this profile. remove existing cookies below.").font(
-                    .caption
-                ).foregroundStyle(.secondary)
                 Button("manage cookies…") {
                     store.showPage(.cookies)
                     store.application.coordinator?.activateBrowser()
@@ -835,24 +870,50 @@ struct SettingsView: View {
     private var extensions: some View {
         Section("extensions · \(store.profile.name)") {
             ForEach(store.profile.extensions) { record in
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text(record.name)
-                        Spacer()
-                        Toggle(
-                            "enabled",
-                            isOn: Binding(
-                                get: { record.enabled },
-                                set: { enabled in Task { await store.runtime.extensions.setEnabled(record, enabled) } })
-                        ).labelsHidden()
-                        Button("remove") { store.runtime.extensions.remove(record) }
-                    }
-                    Text(record.hosts.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
-                    if let status = record.status { Text(status).font(.caption).foregroundStyle(.secondary) }
-                    ForEach(record.diagnostics ?? [], id: \.self) {
-                        Text($0).font(.caption).foregroundStyle(.secondary)
+                DisclosureGroup(
+                    isExpanded: Binding(
+                        get: { expandedExtensions.contains(record.id) },
+                        set: {
+                            if $0 { expandedExtensions.insert(record.id) } else { expandedExtensions.remove(record.id) }
+                        }
+                    )
+                ) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if !record.hosts.isEmpty {
+                            Text(record.hosts.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+                        }
+                        if let status = record.status { Text(status).font(.caption).foregroundStyle(.secondary) }
+                        ForEach(record.diagnostics ?? [], id: \.self) {
+                            Text($0).font(.caption).foregroundStyle(.secondary)
+                        }
+                        HStack {
+                            Toggle(
+                                "enabled",
+                                isOn: Binding(
+                                    get: { record.enabled },
+                                    set: { enabled in
+                                        Task { await store.runtime.extensions.setEnabled(record, enabled) }
+                                    }))
+                            Spacer()
+                            Button("remove…", role: .destructive) {
+                                extensionDeletionProfileID = store.selectedProfileID
+                                extensionDeletionProfileName = store.profile.name
+                                extensionDeletion = record
+                            }
+                        }
+                    }.padding(.top, 8).controlSize(.small)
+                } label: {
+                    HStack(spacing: 10) {
+                        GolzheimIcon(icon: .extensionPuzzle, size: 16).foregroundStyle(.secondary)
+                        Text(record.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        Spacer(minLength: 0)
+                        if !record.enabled {
+                            Text("disabled").font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
                     }
                 }
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+
             }
             Button("load unpacked folder…") { Task { await store.runtime.extensions.install(owner: store) } }
                 .settingDisabled(store.profile.privateMode || store.runtime.extensions.installing).id(
@@ -870,6 +931,10 @@ struct SettingsView: View {
     }
     private var advanced: some View {
         Group {
+            Section("menus") {
+                Toggle("capitalize menu labels", isOn: optional(\.capitalizeMenus, fallback: true))
+                    .id("capitalize-menus")
+            }
             Section("development") {
                 Toggle("allow JavaScript from AppleScript", isOn: optional(\.allowsScriptJavaScript, fallback: false))
                     .id("applescript")
@@ -887,7 +952,6 @@ struct SettingsView: View {
                     Text("separate window").tag(InspectorMode.detached)
                     Text("inline").tag(InspectorMode.inline)
                 }.settingDisabled(store.preferences.developerMenu != true).id("inspector-mode")
-                Text("choose where the inspector opens.").font(.caption).foregroundStyle(.secondary)
                 Picker("default browser identity", selection: optional(\.userAgentMode, fallback: .automatic)) {
                     ForEach(UserAgentMode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }.id("identity")
@@ -916,20 +980,6 @@ private struct SettingsSidebarMaterial: NSViewRepresentable {
         return view
     }
     func updateNSView(_ view: NSVisualEffectView, context: Context) {}
-}
-
-private struct SettingsCompactHeading: View {
-    let title: String
-    let visible: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var appeared = false
-    var body: some View {
-        Text(title).font(.system(size: 13, weight: .semibold))
-            .opacity(visible && appeared ? 1 : 0)
-            .offset(y: visible && appeared || reduceMotion ? 0 : -6)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: visible && appeared)
-            .onAppear { appeared = true }
-    }
 }
 
 private struct SettingsTitlebarState: NSViewRepresentable {
@@ -962,7 +1012,7 @@ private struct SettingsTitlebarState: NSViewRepresentable {
                 window.title = title
                 window.titlebarContentAnchor = self
                 window.updateTitlebarMaterial()
-                window.setTitlebarPromoted(promoted)
+                window.setTitlebarPromoted(promoted, title: title)
             }
         }
     }
@@ -1058,6 +1108,9 @@ private struct SavedWebsiteSettingsRow: View {
     let origin: String
     @Binding var expanded: Bool
     @State private var confirmClear = false
+    @State private var confirmReset = false
+    @State private var actionProfileID: UUID?
+    @State private var actionProfileName = ""
     @State private var clearing = false
 
     private var settings: SiteSettings { store.profile.siteSettings?[origin] ?? SiteSettings() }
@@ -1067,7 +1120,8 @@ private struct SavedWebsiteSettingsRow: View {
         Binding(get: { settings[keyPath: key] }, set: { update(key, $0) })
     }
 
-    private func optionalPermission(_ key: WritableKeyPath<SiteSettings, String?>, fallback: String) -> Binding<String> {
+    private func optionalPermission(_ key: WritableKeyPath<SiteSettings, String?>, fallback: String) -> Binding<String>
+    {
         Binding(get: { settings[keyPath: key] ?? fallback }, set: { update(key, $0) })
     }
 
@@ -1115,29 +1169,45 @@ private struct SavedWebsiteSettingsRow: View {
         DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: 4) {
                 heading("privacy")
-                SiteControlToggle("block ads and trackers", isOn: Binding(
-                    get: {
-                        store.profile.blockerEnabled && !(host.map { store.profile.allowedSites.contains($0) } ?? true)
-                    }, set: { toggleBlocker($0) }))
-                    .disabled(!store.profile.blockerEnabled)
-                SiteControlToggle("offer to save passwords", isOn: Binding(
-                    get: { settings.savePasswords != false }, set: { update(\.savePasswords, $0) }))
-                    .disabled(!store.preferences.savePasswords)
+                SiteControlToggle(
+                    "block ads and trackers",
+                    isOn: Binding(
+                        get: {
+                            store.profile.blockerEnabled
+                                && !(host.map { store.profile.allowedSites.contains($0) } ?? true)
+                        }, set: { toggleBlocker($0) })
+                )
+                .disabled(!store.profile.blockerEnabled)
+                SiteControlToggle(
+                    "offer to save passwords",
+                    isOn: Binding(
+                        get: { settings.savePasswords != false }, set: { update(\.savePasswords, $0) })
+                )
+                .disabled(!store.preferences.savePasswords)
 
                 Divider().padding(.vertical, 8)
                 heading("permissions")
-                SiteControlToggle("allow downloads", isOn: Binding(
-                    get: { settings.downloads != false }, set: { update(\.downloads, $0) }))
+                SiteControlToggle(
+                    "allow downloads",
+                    isOn: Binding(
+                        get: { settings.downloads != false }, set: { update(\.downloads, $0) }))
                 SiteControlPicker("camera", selection: binding(\.camera)) { permissionChoices }
                 SiteControlPicker("microphone", selection: binding(\.microphone)) { permissionChoices }
-                SiteControlPicker("location", selection: optionalPermission(\.location, fallback: "deny")) { permissionChoices }
-                SiteControlPicker("notifications", selection: optionalPermission(\.notifications, fallback: "ask")) { permissionChoices }
+                SiteControlPicker("location", selection: optionalPermission(\.location, fallback: "deny")) {
+                    permissionChoices
+                }
+                SiteControlPicker("notifications", selection: optionalPermission(\.notifications, fallback: "ask")) {
+                    permissionChoices
+                }
                 SiteControlPicker("pointer capture", selection: optionalPermission(\.pointerLock, fallback: "allow")) {
                     permissionChoices
                 }.disabled(store.preferences.allowsPointerCapture == false)
-                SiteControlToggle("automatic pop-ups", isOn: Binding(
-                    get: { settings.automaticPopups == true }, set: { update(\.automaticPopups, $0) }))
-                    .disabled(!WebKitAdapter.supportsSitePopups)
+                SiteControlToggle(
+                    "automatic pop-ups",
+                    isOn: Binding(
+                        get: { settings.automaticPopups == true }, set: { update(\.automaticPopups, $0) })
+                )
+                .disabled(!WebKitAdapter.supportsSitePopups)
 
                 Divider().padding(.vertical, 8)
                 heading("page preferences")
@@ -1162,11 +1232,17 @@ private struct SavedWebsiteSettingsRow: View {
 
                 Divider()
                 HStack {
-                    Button("reset website overrides", role: .destructive) { reset() }
+                    Button("reset website overrides…", role: .destructive) {
+                        actionProfileID = store.selectedProfileID
+                        actionProfileName = store.profile.name
+                        confirmReset = true
+                    }
                     Spacer()
                     Button(clearing ? "clearing…" : "clear website data…", role: .destructive) {
+                        actionProfileID = store.selectedProfileID
+                        actionProfileName = store.profile.name
                         confirmClear = true
-                    }.disabled(clearing)
+                    }.disabled(clearing || store.application.busyProfileIDs.contains(store.selectedProfileID))
                 }
             }
             .padding(.top, 10)
@@ -1178,24 +1254,36 @@ private struct SavedWebsiteSettingsRow: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(BrowserAddress.visible(origin))
                         .font(.system(size: 13, weight: .medium)).lineLimit(1)
-                    Text(summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    if !summary.isEmpty {
+                        Text(summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 0)
             }
         }
-        .padding(.vertical, 4)
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
         .confirmationDialog("clear website data?", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("clear data", role: .destructive) {
-                guard let url = URL(string: origin) else { return }
-                let profileID = store.selectedProfileID
+                guard let url = URL(string: origin), let profileID = actionProfileID,
+                      store.profiles.contains(where: { $0.id == profileID }) else { return }
                 clearing = true
                 Task {
                     await store.clearSite(url, profileID: profileID)
                     clearing = false
                 }
             }
+            Button("cancel", role: .cancel) {}
         } message: {
-            Text("this can sign you out of this site and its subdomains in \(store.profile.name).")
+            Text("this can sign you out of this site and its subdomains in \(actionProfileName). It cannot be undone.")
+        }
+        .confirmationDialog("reset website overrides?", isPresented: $confirmReset, titleVisibility: .visible) {
+            Button("reset overrides", role: .destructive) {
+                guard actionProfileID == store.selectedProfileID else { return }
+                reset()
+            }
+            Button("cancel", role: .cancel) {}
+        } message: {
+            Text("This restores default permissions and page preferences for this website in \(actionProfileName).")
         }
     }
 
@@ -1214,7 +1302,7 @@ private struct SavedWebsiteSettingsRow: View {
         if !settings.javascript { details.append("javascript off") }
         if settings.zoom != 1 { details.append("\(Int((settings.zoom * 100).rounded()))% zoom") }
         if settings.savePasswords == false { details.append("password saving off") }
-        if details.isEmpty { return "saved page preferences" }
+        if details.isEmpty { return "" }
         return details.joined(separator: " · ")
     }
 

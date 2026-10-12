@@ -8,6 +8,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
     let cornerRadius: CGFloat
     let sidebarPresented: Bool
     let reduceMotion: Bool
+    var trailing: CGFloat = 0
     @ViewBuilder let content: () -> Content
     @Environment(\.self) private var environment
 
@@ -18,7 +19,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         view.host.rootView = Root(content: content(), environment: environment)
         view.configure(
             leading: leading, edge: edge, radius: cornerRadius,
-            sidebarPresented: sidebarPresented, reduceMotion: reduceMotion)
+            sidebarPresented: sidebarPresented, reduceMotion: reduceMotion, trailing: trailing)
     }
     static func dismantleNSView(_ view: Container, coordinator: ()) {
         view.surface.layer?.removeAllAnimations()
@@ -37,6 +38,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         let contentSurface = NSView()
         private var leading: CGFloat = 0
         private var edge: CGFloat = 0
+        private var trailing: CGFloat = 0
         private var radius: CGFloat = 0
         private var initialized = false
         private var sidebarPresented = true
@@ -53,7 +55,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             surface.layer?.masksToBounds = true
             surface.layer?.cornerCurve = .continuous
             contentSurface.wantsLayer = true
-            contentSurface.layer?.masksToBounds = false
+            contentSurface.layer?.masksToBounds = true
             contentSurface.addSubview(host)
             surface.addSubview(contentSurface)
             addSubview(surface)
@@ -62,11 +64,12 @@ struct PageViewport<Content: View>: NSViewRepresentable {
 
         func configure(
             leading: CGFloat, edge: CGFloat, radius: CGFloat,
-            sidebarPresented: Bool, reduceMotion: Bool
+            sidebarPresented: Bool, reduceMotion: Bool, trailing: CGFloat = 0
         ) {
             let changed = initialized && self.sidebarPresented != sidebarPresented
             self.leading = leading
             self.edge = edge
+            self.trailing = trailing
             self.radius = radius
             self.sidebarPresented = sidebarPresented
             initialized = true
@@ -78,7 +81,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             super.layout()
             let target = NSRect(
                 x: leading, y: edge,
-                width: max(0, bounds.width - leading - edge), height: max(0, bounds.height - 2 * edge))
+                width: max(0, bounds.width - leading - edge - trailing), height: max(0, bounds.height - 2 * edge))
             let previous = surface.layer?.presentation()?.frame ?? surface.frame
             let previousRadius = surface.layer?.presentation()?.cornerRadius ?? surface.layer?.cornerRadius ?? radius
             let animate = animateNextLayout && previous.width > 0 && previous.height > 0 && target != surface.frame

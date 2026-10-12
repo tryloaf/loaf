@@ -27,7 +27,7 @@ enum PageScripts {
         })();
         """#
     static let faviconLinks = #"""
-        Array.from(document.head?.querySelectorAll('link[rel~=icon],link[rel~=apple-touch-icon],link[rel~=apple-touch-icon-precomposed]') || [])
+        Array.from(document.head?.querySelectorAll('link[rel~=icon i],link[rel~=apple-touch-icon i],link[rel~=apple-touch-icon-precomposed i]') || [])
           .filter(i => !i.media || matchMedia(i.media).matches)
           .sort((a,b) => (b.sizes?.value.includes('32') ? 1 : 0) - (a.sizes?.value.includes('32') ? 1 : 0))
           .slice(0,16).map(i => i.href)
@@ -56,7 +56,7 @@ enum PageScripts {
             schedule();
           };
           const rootObserver = new MutationObserver(() => { attach(); if (head) rootObserver.disconnect(); });
-          rootObserver.observe(document.documentElement, {childList:true});
+          rootObserver.observe(document, {childList:true, subtree:true});
           attach();
           document.addEventListener('DOMContentLoaded', () => { attach(); schedule(); }, {once:true});
           globalThis.loafReportFavicon = report;

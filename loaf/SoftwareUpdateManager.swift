@@ -36,7 +36,7 @@ final class UpdateInstallationState: @unchecked Sendable {
             UserDefaults.standard.set(automaticallyChecksForUpdates, forKey: "SUEnableAutomaticChecks")
             if !automaticallyChecksForUpdates { automaticallyInstallsUpdates = false }
             #if canImport(Sparkle)
-                controller?.updater.automaticallyChecksForUpdates = automaticallyChecksForUpdates
+                if enabled { controller?.updater.automaticallyChecksForUpdates = automaticallyChecksForUpdates }
             #endif
         }
     }
@@ -46,12 +46,13 @@ final class UpdateInstallationState: @unchecked Sendable {
             UserDefaults.standard.set(automaticallyInstallsUpdates, forKey: "SUAutomaticallyUpdate")
             if automaticallyInstallsUpdates { automaticallyChecksForUpdates = true }
             #if canImport(Sparkle)
-                controller?.updater.automaticallyDownloadsUpdates = automaticallyInstallsUpdates
+                if enabled { controller?.updater.automaticallyDownloadsUpdates = automaticallyInstallsUpdates }
             #endif
         }
     }
     private var started = false
     let enabled: Bool
+    private let supportsUpdateChecks: Bool
     #if canImport(Sparkle)
         private var controller: SPUStandardUpdaterController?
         private var observation: AnyCancellable?
@@ -64,13 +65,15 @@ final class UpdateInstallationState: @unchecked Sendable {
         #else
             enabled = Bundle.main.bundleIdentifier == "app.tryloaf.loaf"
         #endif
+        supportsUpdateChecks = Bundle.main.bundleIdentifier == "app.tryloaf.loaf"
         super.init()
         configureUpdater()
     }
 
     #if DEBUG
-        init(enabledForTesting: Bool) {
+        init(enabledForTesting: Bool, manualChecksForTesting: Bool? = nil) {
             enabled = enabledForTesting
+            supportsUpdateChecks = manualChecksForTesting ?? enabledForTesting
             super.init()
             configureUpdater()
         }
@@ -84,18 +87,20 @@ final class UpdateInstallationState: @unchecked Sendable {
 
     private func configureUpdater() {
         #if canImport(Sparkle)
-            guard enabled else { return }
+            guard supportsUpdateChecks else { return }
             let controller = SPUStandardUpdaterController(
                 startingUpdater: false, updaterDelegate: self, userDriverDelegate: self)
             self.controller = controller
-            controller.updater.automaticallyChecksForUpdates = automaticallyChecksForUpdates
-            controller.updater.automaticallyDownloadsUpdates = automaticallyInstallsUpdates
-            controller.updater.updateCheckInterval = 6 * 60 * 60
+            if enabled {
+                controller.updater.automaticallyChecksForUpdates = automaticallyChecksForUpdates
+                controller.updater.automaticallyDownloadsUpdates = automaticallyInstallsUpdates
+                controller.updater.updateCheckInterval = 6 * 60 * 60
+            }
             settingsObservation = Publishers.CombineLatest(
                 controller.updater.publisher(for: \.automaticallyChecksForUpdates),
                 controller.updater.publisher(for: \.automaticallyDownloadsUpdates)
             ).receive(on: RunLoop.main).sink { [weak self, weak controller] _, _ in
-                guard let self, let updater = controller?.updater else { return }
+                guard let self, self.enabled, let updater = controller?.updater else { return }
                 self.automaticallyChecksForUpdates = updater.automaticallyChecksForUpdates
                 self.automaticallyInstallsUpdates = updater.automaticallyDownloadsUpdates
             }
@@ -107,7 +112,7 @@ final class UpdateInstallationState: @unchecked Sendable {
 
     func startAfterAgreement() {
         #if canImport(Sparkle)
-            guard enabled, !started, LegalAcceptance.shared.isAccepted else { return }
+            guard supportsUpdateChecks, !started, LegalAcceptance.shared.isAccepted else { return }
             do {
                 try controller?.updater.start()
                 started = true
@@ -115,12 +120,30 @@ final class UpdateInstallationState: @unchecked Sendable {
         #endif
     }
 
+    private func focusUpdateWindow() {
+        Task { @MainActor in
+            for _ in 0..<12 {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard let window = NSApp.windows.first(where: {
+                    $0.isVisible && !($0 is LoafBrowserWindow)
+                    && $0.windowController.map { String(reflecting: type(of: $0)).contains("Sparkle") || Bundle(for: type(of: $0)).bundleIdentifier?.contains("Sparkle") == true } == true
+                }) else { continue }
+                NSApp.activate()
+                window.makeKeyAndOrderFront(nil)
+                return
+            }
+        }
+    }
+
     func checkForUpdates() {
+        guard supportsUpdateChecks else { return }
         #if canImport(Sparkle)
-            guard enabled, canCheckForUpdates else { return }
+            startAfterAgreement()
+            guard controller?.updater.canCheckForUpdates == true else { return }
             BrowserScripting.coordinator?.prepareForUpdatePresentation()
             if !NSApp.isActive { NSApp.activate() }
             controller?.checkForUpdates(nil)
+            focusUpdateWindow()
         #endif
     }
 }
@@ -137,17 +160,25 @@ final class UpdateInstallationState: @unchecked Sendable {
             let userInitiated = state.userInitiated
             let version = update.displayVersionString
             Task { @MainActor [weak self] in
-                self?.availableVersion = userInitiated ? nil : version
+                self?.availableVersion = version
+                if userInitiated { self?.focusUpdateWindow() }
             }
         }
         nonisolated func standardUserDriverDidReceiveUserAttention(forUpdate update: SUAppcastItem) {
-            Task { @MainActor [weak self] in self?.availableVersion = nil }
+            Task { @MainActor [weak self] in self?.focusUpdateWindow() }
         }
         nonisolated func standardUserDriverWillFinishUpdateSession() {
-            Task { @MainActor [weak self] in self?.availableVersion = nil }
+            Task { @MainActor [weak self] in self?.focusUpdateWindow() }
         }
     }
     extension SoftwareUpdateManager: SPUUpdaterDelegate {
+        func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
+            guard enabled || updateCheck == .updates else {
+                throw NSError(
+                    domain: "loaf.updates", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "development builds only support manual update checks"])
+            }
+        }
         nonisolated func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
             UpdateInstallationState.shared.begin()
 

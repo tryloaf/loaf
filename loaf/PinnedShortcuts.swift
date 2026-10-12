@@ -77,6 +77,12 @@ extension BrowserWindowState {
             tab.pinnedAddress = pin.pinnedAddress ?? pin.address ?? tab.pinnedAddress ?? tab.saved.address
             return
         }
+        let profile = profileFor(tab.profileID)
+        if tab.pinPresentation != "row",
+            (profile.pinShortcuts ?? []).filter({ $0.pinPresentation != "row" }).count >= PinGridLayout.maximumItems
+        {
+            tab.pinPresentation = "row"
+        }
         let id = UUID()
         tab.pinnedShortcutID = id
         tab.groupID = nil
@@ -160,13 +166,34 @@ extension BrowserWindowState {
         tab.pinned = false
         tab.pinnedShortcutID = nil
     }
+    var pinReplacementTarget: BrowserTab? {
+        guard pinDropPreview?.row == false, gridPinnedTabs.count >= PinGridLayout.maximumItems,
+            !gridPinnedTabs.contains(where: { $0.id == draggedTabID }),
+            let target = pinDropPreview?.position?.target
+        else { return nil }
+        return gridPinnedTabs.first { $0.id == target }
+    }
     func setPinPresentation(_ preview: BrowserTab, row: Bool) {
+        if !row, preview.pinPresentation == "row" || !preview.pinned,
+            gridPinnedTabs.count >= PinGridLayout.maximumItems
+        {
+            error = "the pin grid holds up to 15 items. drag onto a pin to replace it."
+            return
+        }
         let tab = preview.pinned ? openPinned(preview) : openGroupMember(preview)
         if !tab.pinned { togglePin(tab) }
         tab.pinPresentation = row ? "row" : nil
         tabChanged(tab)
         sidebarEntryCache = nil
         objectWillChange.send()
+    }
+    func pinCurrentPage(_ tab: BrowserTab) {
+        guard tab.pinned, !tab.isDisposed, tab.page == .web, let address = tab.saved.address,
+            let url = URL(string: address), ["http", "https"].contains(url.scheme?.lowercased()),
+            url.user == nil, url.password == nil else { return }
+        tab.pinnedAddress = address
+        tabChanged(tab)
+        application.persistSoon()
     }
     func returnToPin(_ tab: BrowserTab) {
         let open = tab.pinned ? openPinned(tab) : openGroupMember(tab)
@@ -231,5 +258,17 @@ extension BrowserWindowState {
         tab.groupID = groupID
         tabChanged(tab)
         persistSoon()
+    }
+}
+
+nonisolated extension Profile {
+    mutating func limitPinGrid() {
+        guard var pins = pinShortcuts else { return }
+        var gridCount = 0
+        for index in pins.indices where pins[index].pinPresentation != "row" {
+            gridCount += 1
+            if gridCount > PinGridLayout.maximumItems { pins[index].pinPresentation = "row" }
+        }
+        pinShortcuts = pins
     }
 }

@@ -525,17 +525,24 @@ struct PointerCapturePosition {
         let selected =
             hit?.responds(to: NSSelectorFromString("isSelected")) == true
             && (hit?.value(forKey: "selected") as? Bool == true)
-        let replacements = ["search", "openlinkinnewwindow", "openlinkinnewtab", "reload", "goback", "goforward"]
+        let replacements = ["search", "openlinkinnewwindow", "openlinkinnewtab", "openimageinnewwindow", "openmediainnewwindow", "reload", "goback", "goforward"]
         let replacedIdentifiers: Set<String> = [
             "WKMenuItemIdentifierOpenLinkInNewWindow", "WKMenuItemIdentifierOpenLinkInNewTab",
+            "WKMenuItemIdentifierOpenImageInNewWindow", "WKMenuItemIdentifierOpenMediaInNewWindow",
             "WKMenuItemIdentifierDownloadLinkedFile", "WKMenuItemIdentifierCopyLink", "WKMenuItemIdentifierReload",
             "WKMenuItemIdentifierGoBack", "WKMenuItemIdentifierGoForward", "WKMenuItemIdentifierSearchWeb",
             "WKMenuItemIdentifierInspectElement",
         ]
 
+        var nativeWindowActions: [(NSMenuItem, URL)] = []
         menu.allowsContextMenuPlugIns = false
         for item in menu.items {
             let action = item.action.map(NSStringFromSelector)?.lowercased() ?? ""
+            let windowURL = action.contains("openimageinnewwindow") || item.identifier?.rawValue == "WKMenuItemIdentifierOpenImageInNewWindow" ? image
+                : action.contains("openmediainnewwindow") || item.identifier?.rawValue == "WKMenuItemIdentifierOpenMediaInNewWindow" ? media : nil
+            if let windowURL, !["http", "https"].contains(windowURL.scheme), item.action != nil {
+                nativeWindowActions.append((item, windowURL))
+            }
             if replacedIdentifiers.contains(item.identifier?.rawValue ?? "")
                 || replacements.contains(where: { action.contains($0) })
                 || item.title.lowercased().contains("search with") || item.title.lowercased().contains("search the web")
@@ -550,6 +557,14 @@ struct PointerCapturePosition {
             item.representedObject = handler
             item.isEnabled = enabled
             menu.addItem(item)
+        }
+        for (item, address) in nativeWindowActions {
+            let target = item.target
+            let selector = item.action!
+            add(item.title) {
+                tab.contextMenuWindowURL = address
+                NSApp.sendAction(selector, to: target, from: item)
+            }
         }
         menu.autoenablesItems = false
         if !menu.items.isEmpty { menu.addItem(.separator()) }
@@ -577,16 +592,24 @@ struct PointerCapturePosition {
         }
         if let image, ["https", "http"].contains(image.scheme) {
             add("open image in new tab") { _ = tab.store?.newTab(url: image, showOmnibar: false) }
-            add("download image") {
-                tab.webView.startDownload(using: URLRequest(url: image)) { download in
-                    if let owner = tab.store {
-                        owner.downloads.add(download, owner: owner, profileID: tab.profileID, source: tab.webView)
+            add("open image in new window") {
+                _ = tab.store?.application.coordinator?.newWindow(profileID: tab.profileID, url: image)
+            }
+            if !menu.items.contains(where: { $0.identifier?.rawValue == "WKMenuItemIdentifierDownloadImage" }) {
+                add("download image") {
+                    tab.webView.startDownload(using: URLRequest(url: image)) { download in
+                        if let owner = tab.store {
+                            owner.downloads.add(download, owner: owner, profileID: tab.profileID, source: tab.webView)
+                        }
                     }
                 }
             }
         }
         if let media, ["https", "http"].contains(media.scheme) {
             add("open media in new tab") { _ = tab.store?.newTab(url: media, showOmnibar: false) }
+            add("open media in new window") {
+                _ = tab.store?.application.coordinator?.newWindow(profileID: tab.profileID, url: media)
+            }
         }
         if let media,
             !menu.items.contains(where: {

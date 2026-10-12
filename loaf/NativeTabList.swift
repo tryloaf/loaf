@@ -77,6 +77,7 @@ struct TabDragArea: NSViewRepresentable {
         private var previewStarted: CFTimeInterval = 0
         private var previewAnchor: CGFloat = 0.5
         private var previewLink: CADisplayLink?
+        private var cachedPreviewImages: [Bool: NSImage] = [:]
         private final class PreviewTick: NSObject {
             weak var view: DragView?
             init(_ view: DragView) { self.view = view }
@@ -93,6 +94,7 @@ struct TabDragArea: NSViewRepresentable {
                 height: SidebarTabMetrics.rowHeight)
         }
         private func image(size: NSSize, grid: Bool) -> NSImage {
+            if let image = cachedPreviewImages[grid], image.size == size { return image }
             guard let tab, let store else { return NSImage(size: size) }
             let preview = NSHostingView(
                 rootView: TabDragPreview(tab: tab, store: store, grid: grid)
@@ -105,6 +107,7 @@ struct TabDragArea: NSViewRepresentable {
                 preview.cacheDisplay(in: preview.bounds, to: bitmap)
                 image.addRepresentation(bitmap)
             }
+            cachedPreviewImages[grid] = image
             return image
         }
         func updateDraggingPreview(grid: Bool) {
@@ -264,6 +267,7 @@ struct TabDragArea: NSViewRepresentable {
             self.session = nil
             sourceWindow = nil
             previewImage = nil
+            cachedPreviewImages.removeAll()
             previewStartImage = nil
             previewTargetImage = nil
             mouseOrigin = nil
@@ -372,7 +376,7 @@ struct TabListView: NSViewRepresentable {
         if view.appearance?.name != appearance?.name { view.appearance = appearance }
         view.store = store
         view.getPosition = { position }
-        view.setPosition = { position = $0 }
+        view.setPosition = { if position != $0 { position = $0 } }
         view.refreshVisibleRows()
         view.revealChangedSelection()
         view.needsLayout = true

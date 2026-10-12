@@ -29,12 +29,18 @@ struct ProfileImportView: View {
     @State private var browsers: [ImportBrowser] = []
     @State private var selectedBrowser: ImportBrowser?
     @State private var scanning = false
+    @State private var active = false
     @State private var importAll = false
     @State private var previews: [ProfileImportPreview] = []
     @State private var selected = 0
     @State private var name = ""
     @State private var step = 0
     @State private var busy = false
+    @State private var committing = false
+    @State private var confirmImport = false
+    @State private var operationID = UUID()
+    @State private var destinationID: UUID
+    @State private var completedNames: [String] = []
     @State private var error: String?
     @State private var newProfile = true
     @State private var history = true
@@ -44,14 +50,18 @@ struct ProfileImportView: View {
     @State private var requestingAccess = false
     @State private var checkingAccess = false
     @State private var selectedFolderURL: URL?
+    @State private var authorizedFolderURLs: [URL] = []
     @State private var dataAccess: BrowserImportDiscovery.DataAccess?
     @State private var sourcePanel: NSOpenPanel?
     @State private var contentHeight: CGFloat = 360
     @State private var advancedAccessHelp = false
     @State private var importerWindow = ImportWindowReference()
-    init(store: BrowserStore, initialPreview: ProfileImportPreview? = nil) {
+    init(store: BrowserStore, initialPreview: ProfileImportPreview? = nil, preferNewProfile: Bool = true) {
         self.store = store
+        _destinationID = State(initialValue: store.selectedProfileID)
+        _newProfile = State(initialValue: preferNewProfile && store.profiles.count < 8)
         if let initialPreview {
+            let initialPreview = ProfileImport.sanitize(initialPreview)
             _previews = State(initialValue: [initialPreview])
             _name = State(initialValue: initialPreview.name)
             _step = State(initialValue: 1)
@@ -76,11 +86,11 @@ struct ProfileImportView: View {
                 }.accessibilityElement(children: .ignore).accessibilityLabel("import step \(step + 1) of 3")
                 Spacer()
                 Button {
-                    dismiss()
+                    cancelImport()
                 } label: {
                     GolzheimIcon(icon: .close, size: 14)
                 }
-                .buttonStyle(.plain).accessibilityLabel("close import").disabled(busy || sourcePanel != nil)
+                .buttonStyle(.plain).accessibilityLabel("close import").disabled(committing || sourcePanel != nil)
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text(
@@ -96,7 +106,7 @@ struct ProfileImportView: View {
                             : "read your browsing data, then choose what to bring over."
                         : step == 1
                             ? "choose what to bring into loaf. your source data stays where it is."
-                            : "your selected data is saved in this profile."
+                            : "your selected data is saved in loaf."
                 ).font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             FocusRingSafeScrollView {
@@ -184,10 +194,11 @@ struct ProfileImportView: View {
                             }
                             Toggle("create a new profile", isOn: $newProfile).disabled(
                                 importAll || store.profiles.count >= 8)
+                                .onChange(of: newProfile) { _, value in if !value && !importAll { cookies = false } }
                             if newProfile && !importAll {
                                 TextField("profile name", text: $name).textFieldStyle(.roundedBorder)
                             } else if !importAll {
-                                Text("importing into \(store.profile.name)").font(.system(size: 12)).foregroundStyle(
+                                Text("importing into \(store.profileFor(destinationID).name)").font(.system(size: 12)).foregroundStyle(
                                     .secondary)
                             }
                             Divider()
@@ -205,7 +216,11 @@ struct ProfileImportView: View {
                                 "cookies",
                                 detail:
                                     "\(cookieCount.formatted()) readable \(cookieCount == 1 ? "cookie" : "cookies")",
-                                icon: .cookie, selection: $cookies, enabled: cookieCount > 0)
+                                icon: .cookie, selection: $cookies, enabled: cookieCount > 0 && (importAll || newProfile))
+                            if cookieCount > 0 && !importAll && !newProfile {
+                                Text("create a new profile to import cookies and keep existing sign-ins untouched.")
+                                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
                             importRow(
                                 "import saved tabs",
                                 detail:
@@ -223,12 +238,12 @@ struct ProfileImportView: View {
                                     .small)
                             }
                             if cookies {
-                                Text("cookies can keep you signed in to websites in this profile.").font(
+                                Text("cookies can sign you in to websites in the new profile.").font(
                                     .system(size: 11)
                                 )
                                 .foregroundStyle(.secondary)
                             }
-                            ForEach(preview.warnings, id: \.self) {
+                            ForEach(Array(Set(importSources.flatMap(\.warnings))).sorted(), id: \.self) {
                                 Text($0).font(.system(size: 11)).foregroundStyle(.secondary)
                             }
                             if selectedBrowser != nil
@@ -243,7 +258,7 @@ struct ProfileImportView: View {
                             }
                         }.disabled(busy)
                     } else if step == 2 {
-                        Label("ready in \(store.profile.name)", systemImage: "checkmark.circle.fill").font(
+                        Label("ready in " + completedNames.joined(separator: ", "), systemImage: "checkmark.circle.fill").font(
                             .system(size: 16)
                         ).foregroundStyle(profileTint(store.profile)).padding(.vertical, 8)
                     }
@@ -259,8 +274,7 @@ struct ProfileImportView: View {
             if let error, step != 0 || selectedBrowser == nil {
                 Text(error).font(.system(size: 12)).foregroundStyle(.red).accessibilityLabel("import error: " + error)
             }
-            if busy || step > 0 || selectedBrowser != nil {
-                HStack {
+            HStack {
                     if busy {
                         ProgressView().controlSize(.small)
                         Text(step == 0 ? "reading your data…" : "bringing it over…").font(.system(size: 12))
@@ -269,8 +283,12 @@ struct ProfileImportView: View {
                         Button("back") { resetSource() }.buttonStyle(.plain)
                     }
                     Spacer()
+                    if step < 2 {
+                        Button("cancel") { cancelImport() }.keyboardShortcut(.cancelAction)
+                            .disabled(committing || sourcePanel != nil)
+                    }
                     if step == 1 {
-                        Button("import selected data") { performImport() }.buttonStyle(.borderedProminent).controlSize(
+                        Button("import selected data…") { confirmImport = true }.buttonStyle(.borderedProminent).controlSize(
                             .large
                         )
                         .disabled(busy || !canImport).keyboardShortcut(.defaultAction)
@@ -280,18 +298,26 @@ struct ProfileImportView: View {
                                 .defaultAction)
                     }
                 }
-            }
         }.padding(24).frame(width: 520).background(Color(nsColor: .windowBackgroundColor))
             .background(ImportWindowReader(reference: importerWindow))
-            .interactiveDismissDisabled(busy || sourcePanel != nil).onAppear {
-                newProfile = store.profiles.count < 8
+            .interactiveDismissDisabled(committing || sourcePanel != nil).onAppear {
+                active = true
+                if store.profiles.count >= 8 { newProfile = false }
                 discover()
             }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 if step == 0 { discover() }
                 if requestingAccess { checkAccess() }
             }
+            .confirmationDialog("import selected data?", isPresented: $confirmImport, titleVisibility: .visible) {
+                Button("import data") { performImport() }
+                Button("cancel", role: .cancel) {}
+            } message: {
+                Text(importSummary)
+            }
             .onDisappear {
+                active = false
+                operationID = UUID()
                 sourcePanel?.cancel(nil)
                 sourcePanel = nil
                 releaseFolderAccess()
@@ -396,7 +422,7 @@ struct ProfileImportView: View {
             }
             Divider()
             HStack {
-                Button("close") { requestingAccess = false }
+                Button("cancel") { requestingAccess = false }.keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("check source access") { checkAccess() }.disabled(checkingAccess || busy)
                 if dataAccess == .readable || dataAccess == .partial, let browser = selectedBrowser {
@@ -425,15 +451,19 @@ struct ProfileImportView: View {
     private func checkAccess() {
         guard !checkingAccess, let browser = selectedBrowser else { return }
         checkingAccess = true
+        let operation = operationID
         Task {
-            dataAccess = await Task.detached(priority: .userInitiated) {
+            let result = await Task.detached(priority: .userInitiated) {
                 BrowserImportDiscovery.requestDataAccess(browser)
             }.value
+            guard active, operationID == operation else { checkingAccess = false; return }
+            dataAccess = result
             checkingAccess = false
         }
     }
     private func releaseFolderAccess() {
-        selectedFolderURL?.stopAccessingSecurityScopedResource()
+        for folder in authorizedFolderURLs { folder.stopAccessingSecurityScopedResource() }
+        authorizedFolderURLs = []
         selectedFolderURL = nil
     }
     private func chooseBrowserFolder(_ browser: ImportBrowser) {
@@ -444,7 +474,9 @@ struct ProfileImportView: View {
         panel.showsHiddenFiles = true
         panel.directoryURL = browser.suggestedFolder
         panel.message =
-            "choose \(browser.name)’s data folder or a profile inside it. loaf reads this folder only for importing."
+            browser.isSafari
+            ? "choose the Safari folder in your home Library for history and bookmarks. cookies are read separately from Safari’s container."
+            : "choose \(browser.name)’s data folder or a profile inside it. loaf reads this folder only for importing."
         panel.prompt = "allow and preview"
         presentSourcePanel(panel) { folder in
             guard let folder else { return }
@@ -479,10 +511,25 @@ struct ProfileImportView: View {
         }
     }
     private var canImport: Bool {
-        guard preview != nil else { return false }
-        return (importAll || !newProfile || !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        guard preview != nil, store.profiles.contains(where: { $0.id == destinationID && !$0.privateMode }),
+              !store.application.busyProfileIDs.contains(destinationID),
+              !(importAll || newProfile) || importSources.count <= 8 - store.profiles.count else { return false }
+        return (!cookies || importAll || newProfile)
+            && (importAll || !newProfile || !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             && (tabs && tabCount > 0 || history && historyCount > 0 || bookmarks && bookmarkCount > 0
                 || cookies && cookieCount > 0)
+    }
+    private var importSummary: String {
+        let target = importAll ? "\(importSources.count) new profiles" : newProfile ? "a new profile named \(name)" : store.profileFor(destinationID).name
+        var text = "Import into \(target). Existing bookmarks, history and sign-in cookies are kept. Source files stay untouched."
+        if cookies { text += " Imported cookies may sign you in to websites." }
+        if tabs { text += " This opens \(tabCount) tabs and contacts those websites." }
+        return text
+    }
+    private func cancelImport() {
+        guard !committing else { return }
+        operationID = UUID()
+        dismiss()
     }
     private func importRow(_ title: String, detail: String, icon: LoafIcon, selection: Binding<Bool>, enabled: Bool)
         -> some View
@@ -503,7 +550,9 @@ struct ProfileImportView: View {
         guard !scanning else { return }
         scanning = true
         Task {
-            browsers = await Task.detached(priority: .userInitiated) { BrowserImportDiscovery.installed() }.value
+            let result = await Task.detached(priority: .userInitiated) { BrowserImportDiscovery.installed() }.value
+            guard active else { return }
+            browsers = result
             scanning = false
             if step == 0, selectedBrowser == nil,
                 let id = UserDefaults.standard.string(forKey: "importBrowserAfterAccessRestart"),
@@ -514,10 +563,16 @@ struct ProfileImportView: View {
         }
     }
     private func chooseBrowser(_ browser: ImportBrowser, password: Data? = nil, authorizedFolder: URL? = nil) {
-        guard !busy else { return }
+        guard active, !busy else { return }
         if selectedFolderURL != authorizedFolder {
-            releaseFolderAccess()
-            if let authorizedFolder, authorizedFolder.startAccessingSecurityScopedResource() {
+
+            if !browser.isSafari || selectedBrowser?.id != browser.id || authorizedFolder == nil {
+                releaseFolderAccess()
+            }
+            if let authorizedFolder {
+                if !authorizedFolderURLs.contains(authorizedFolder), authorizedFolder.startAccessingSecurityScopedResource() {
+                    authorizedFolderURLs.append(authorizedFolder)
+                }
                 selectedFolderURL = authorizedFolder
             }
         }
@@ -527,11 +582,14 @@ struct ProfileImportView: View {
         busy = true
         error = nil
         transition(to: 0)
+        let operation = UUID()
+        operationID = operation
         Task {
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
                     try BrowserImportDiscovery.preview(browser, cookiePassword: password)
                 }.value
+                guard operationID == operation else { return }
                 acceptPreviews(result)
                 UserDefaults.standard.removeObject(forKey: "importBrowserAfterAccessRestart")
             } catch {
@@ -539,13 +597,17 @@ struct ProfileImportView: View {
                 let access = await Task.detached(priority: .userInitiated) {
                     BrowserImportDiscovery.requestDataAccess(browser)
                 }.value
+                guard operationID == operation else { return }
                 dataAccess = access
                 self.error = message
             }
-            busy = false
+            if operationID == operation { busy = false }
         }
     }
     private func unlockCookies(_ browser: ImportBrowser) {
+        guard !busy else { return }
+        let operation = UUID()
+        operationID = operation
         busy = true
         error = nil
         Task {
@@ -553,23 +615,30 @@ struct ProfileImportView: View {
                 let password = try await Task.detached(priority: .userInitiated) {
                     try BrowserImportDiscovery.cookiePassword(browser)
                 }.value
+                guard operationID == operation else { return }
                 busy = false
                 chooseBrowser(browser, password: password, authorizedFolder: selectedFolderURL)
             } catch {
+                guard operationID == operation else { return }
                 self.error = error.localizedDescription
                 busy = false
             }
         }
     }
     private func acceptPreviews(_ result: [ProfileImportPreview]) {
+        let result = result.map(ProfileImport.sanitize).filter { !$0.isEmpty }
+        guard let first = result.first else {
+            error = "No readable browsing data found. Choose another source."
+            return
+        }
         previews = result
         selected = 0
         importAll = false
-        name = result[0].name
+        name = first.name
         cookies = false
         tabs = false
-        history = !result[0].history.isEmpty
-        bookmarks = !result[0].bookmarks.isEmpty
+        history = !first.history.isEmpty
+        bookmarks = !first.bookmarks.isEmpty
         transition(to: 1)
     }
     private func chooseSource() {
@@ -602,38 +671,41 @@ struct ProfileImportView: View {
         dataAccess = nil
         busy = true
         error = nil
+        let operation = UUID()
+        operationID = operation
         Task {
             do {
                 let access = url.startAccessingSecurityScopedResource()
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
                 let result = try await Task.detached(priority: .userInitiated) { try ProfileImport.preview(url) }.value
-                guard !result.isEmpty else {
-                    throw ProfileImport.Failure(message: "No regular profiles found in this export.")
+                guard result.contains(where: { !$0.isEmpty }) else {
+                    throw ProfileImport.Failure(message: "No browsing data found in this source.")
                 }
+                guard operationID == operation else { return }
                 acceptPreviews(result)
-            } catch { self.error = error.localizedDescription }
-            busy = false
+            } catch {
+                guard operationID == operation else { return }
+                self.error = error.localizedDescription
+            }
+            if operationID == operation { busy = false }
         }
     }
     private func performImport() {
-        guard canImport, let preview else { return }
+        guard !busy, canImport, let preview else { return }
+        let sources = importAll ? previews : [preview]
+        let names = importAll ? sources.map(\.name) : [name]
+        let createProfiles = importAll || newProfile
         busy = true
+        committing = true
         error = nil
         Task {
+            defer { busy = false; committing = false }
             do {
-                let sources = importAll ? previews : [preview]
-                guard !importAll || sources.count <= 8 - store.profiles.count else {
-                    throw ProfileImport.Failure(message: "There isn’t room for every profile. Choose one to import.")
-                }
-                for source in sources {
-                    try await store.importProfile(
-                        source, name: importAll ? source.name : name,
-                        newProfile: importAll || newProfile, history: history, bookmarks: bookmarks, cookies: cookies,
-                        tabs: tabs)
-                }
+                let ids = try await store.importProfiles(sources, names: names, newProfile: createProfiles,
+                    history: history, bookmarks: bookmarks, cookies: cookies, tabs: tabs, destinationID: destinationID)
+                completedNames = ids.map { store.profileFor($0).name }
                 transition(to: 2)
             } catch { self.error = error.localizedDescription }
-            busy = false
         }
     }
 }

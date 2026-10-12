@@ -37,7 +37,7 @@ import WebKit
             return
         }
         let current = store.tabs
-        guard current.count > 1 else { return }
+        guard !current.isEmpty else { return }
         if !active {
             ids = current.map(\.id)
             profileID = store.selectedProfileID

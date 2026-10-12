@@ -47,6 +47,10 @@ import WebKit
         set { application.preferences = newValue }
     }
     @Published var browserSplit: BrowserSplit?
+    @Published var sideChatVisible = false
+    var sideChatOpeningTask: Task<Void, Never>?
+    @Published var sideChatWidth: CGFloat = 380
+    @Published var sideChatFocusID = UUID()
     var splitOriginalMinimum: NSSize?
     @Published var omnibarFocusID = UUID()
     @Published var omnibarVisible = false
@@ -65,6 +69,7 @@ import WebKit
     @Published var hoveredSidebar = false
     @Published var profileDirection = 0
     @Published var profileResistance: CGFloat = 0
+    @Published var profileSwipeDistance: CGFloat = 0
     weak var trayGestureAnchor: NSView?
     @Published var traySwipeDistance: CGFloat = 0
     @Published var extensionsVisible = false
@@ -89,9 +94,6 @@ import WebKit
             guard sidebarPresented != visible else {
                 host?.cancelResizeSnapshot()
                 return
-            }
-            if let host, preferences.resizeTransition != false {
-                host.beginResizeSnapshot()
             }
             sidebarPresented = visible
             sidebarRevealReadyAt = ProcessInfo.processInfo.systemUptime + (visible ? 0 : SidebarMotion.duration)
@@ -410,7 +412,14 @@ import WebKit
         let saved = SavedTab(
             title: internalPage?.title ?? "new tab", address: destination?.absoluteString, page: internalPage ?? .web)
         let tab = attach(saved, profileID: id, configuration: configuration)
-        updateProfile(id) { $0.tabs.append(saved) }
+        updateProfile(id) {
+            if preferences.newTabsAtTop != false { $0.tabs.insert(saved, at: 0) } else { $0.tabs.append(saved) }
+        }
+        if preferences.newTabsAtTop != false, var order = workspaces[id]?.sidebarOrder {
+            order.removeAll { $0 == saved.id }
+            order.insert(saved.id, at: 0)
+            workspaces[id]?.sidebarOrder = order
+        }
         if activate { select(tab) }
         if let destination, !tab.loaded {
             tab.load(destination)
@@ -671,6 +680,7 @@ import WebKit
         navigate(url.absoluteString)
     }
     func showPage(_ page: BrowserPage) {
+        guard page != .ask || preferences.aiFeaturesEnabled != false else { return }
         if let section = page.settingsSection {
             application.coordinator?.showSettings(for: self, section: section)
             return
@@ -685,6 +695,7 @@ import WebKit
         select(attach(saved, profileID: selectedProfileID))
     }
     func openInternal(_ page: BrowserPage, inNewTab: Bool) {
+        guard page != .ask || preferences.aiFeaturesEnabled != false else { return }
         if let section = page.settingsSection {
             application.coordinator?.showSettings(for: self, section: section)
             return
@@ -720,7 +731,7 @@ import WebKit
         markVisibleTabsActive()
         if id != selectedProfileID { endSplit() }
         guard profiles.contains(where: { $0.id == id }), id != selectedProfileID else { return }
-        for tab in tabs { tab.existingChatGPTSearch?.clear() }
+        for tab in tabs { tab.existingChatGPTSearch?.clear(); tab.existingSideChat?.clear() }
         cancelPasswordFill()
         tabHover.dismiss()
         profileDirection =
@@ -871,6 +882,10 @@ import WebKit
         application.updateProfile(id) { $0 = profile }
         syncWindowTitle()
         invalidateLater()
+    }
+    func historyDidChange(_ profileID: UUID) {
+        guard selectedProfileID == profileID else { return }
+        retainedSuggestions?.historyChanged(store: self)
     }
     func updateCurrent(_ update: (inout Profile) -> Void) {
         updateProfile(selectedProfileID, update)

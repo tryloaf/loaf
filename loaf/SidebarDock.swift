@@ -24,7 +24,7 @@ struct SidebarDock: View {
 struct SidebarDockPane: View {
     @ObservedObject var store: BrowserStore
     var scheme: ColorScheme
-    private var floating: Bool { !store.sidebarPresented && store.hoveredSidebar }
+    var floating: Bool = false
     var body: some View {
         SidebarContentSurface(store: store, floating: floating, scheme: scheme)
             .frame(width: store.preferences.sidebarWidth - (floating ? 6 : 0))
@@ -50,8 +50,6 @@ struct SidebarDockPane: View {
             }
     }
 }
-
-
 
 struct SidebarContentSurface: NSViewRepresentable {
     let store: BrowserStore
@@ -91,8 +89,10 @@ struct SidebarContentSurface: NSViewRepresentable {
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
         func configure(content value: Content) {
             let previous = content.rootView
-            guard previous.store !== value.store || previous.floating != value.floating
-                || previous.scheme != value.scheme else { return }
+            guard
+                previous.store !== value.store || previous.floating != value.floating
+                    || previous.scheme != value.scheme
+            else { return }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             layer?.cornerRadius = value.floating ? 13 : 0
@@ -115,7 +115,7 @@ struct SidebarDockHost: NSViewRepresentable {
     var scheme: ColorScheme
     var reduceMotion: Bool
     private var pane: SidebarDockPane {
-        .init(store: store, scheme: scheme)
+        .init(store: store, scheme: scheme, floating: !store.sidebarPresented)
     }
     func makeNSView(context: Context) -> ContainerView { ContainerView(pane: pane) }
     func updateNSView(_ view: ContainerView, context: Context) {
@@ -159,7 +159,7 @@ struct SidebarDockHost: NSViewRepresentable {
             hostedSidebar.sizingOptions = []
             hostedSidebar.safeAreaRegions = []
             hostedSidebar.wantsLayer = true
-            hostedSidebar.layer?.masksToBounds = !floating
+            hostedSidebar.layer?.masksToBounds = true
             super.init(frame: .zero)
             wantsLayer = true
             layer?.masksToBounds = false
@@ -168,14 +168,15 @@ struct SidebarDockHost: NSViewRepresentable {
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
         func updateScheme(_ value: ColorScheme, store: BrowserStore) {
-            guard scheme != value else { return }
+            guard scheme != value || hostedSidebar.rootView.floating != floating else { return }
             scheme = value
-            hostedSidebar.rootView = .init(store: store, scheme: value)
+            hostedSidebar.rootView = .init(store: store, scheme: value, floating: floating)
         }
         func configure(
             width: CGFloat, shown: Bool, duration: Double, reduceMotion: Bool, hiddenOffset: CGFloat
         ) {
-            hostedSidebar.layer?.masksToBounds = !floating
+            hostedSidebar.layer?.masksToBounds = true
+            hostedSidebar.layer?.cornerRadius = floating ? 16 : 0
             let destination: CGFloat = shown ? 0 : floating ? -width - 32 : hiddenOffset
             let changed = !initialized || self.shown != shown || sidebarWidth != width
             self.shown = shown

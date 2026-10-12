@@ -65,6 +65,7 @@ struct BrowserToolbar: View {
                 icon: store.isCurrentPageFavorite ? .favoriteFilled : .favorite,
                 label: store.isCurrentPageFavorite ? "remove favorite" : "bookmark this page"
             ) { store.favoriteCurrent() }.disabled(store.selectedTab?.url == nil)
+            SideChatToggle(store: store)
             IconButton(icon: .plus, label: "new tab") { _ = store.newTab() }
             Menu {
                 Button("find on page") {
@@ -129,7 +130,6 @@ private struct WonderbarOverlay: View {
                 appeared = true
             } else {
 
-
                 DispatchQueue.main.async {
                     withAnimation(.easeOut(duration: 0.10)) { appeared = true }
                 }
@@ -151,7 +151,7 @@ struct ContentView: View {
                 PageViewport(
                     leading: store.pageLeadingInset, edge: store.pageEdgeInset,
                     cornerRadius: store.pageCornerRadius, sidebarPresented: store.sidebarPresented,
-                    reduceMotion: reduceMotion
+                    reduceMotion: reduceMotion, trailing: store.sideChatReservedWidth(in: geometry.size.width)
                 ) {
                     ZStack(alignment: .top) {
                         Color(
@@ -180,12 +180,7 @@ struct ContentView: View {
                                                 account: store.application.chatGPTAccount
                                             ).id(tab.id)
                                         } else {
-                                            VStack(spacing: 12) {
-                                                Text("AI features are off").font(.headline)
-                                                Button("search settings") {
-                                                    store.application.coordinator?.showSettings(for: store)
-                                                }
-                                            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                                            StartPage(store: store).equatable()
                                         }
                                     case .web:
                                         if tab.url == nil {
@@ -202,7 +197,7 @@ struct ContentView: View {
                                                             width: max(
                                                                 0,
                                                                 geometry.size.width - store.pageLeadingInset
-                                                                    - store.pageEdgeInset),
+                                                                    - store.pageEdgeInset - store.sideChatReservedWidth(in: geometry.size.width)),
                                                             height: max(
                                                                 0,
                                                                 geometry.size.height - 2 * store.pageEdgeInset
@@ -218,7 +213,7 @@ struct ContentView: View {
                                                 }
                                                 if tab.loading {
                                                     GeometryReader { proxy in
-                                                        Rectangle().fill(Color.accentColor).frame(
+                                                        Rectangle().fill(profileTint(store.profile)).frame(
                                                             width: max(4, proxy.size.width * tab.progress), height: 2
                                                         ).animation(
                                                             reduceMotion ? nil : .easeOut(duration: 0.2),
@@ -279,6 +274,16 @@ struct ContentView: View {
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.omnibarVisible)
                 }
+                if store.sideChatReservedWidth(in: geometry.size.width) > 0, let tab = store.selectedTab {
+                    HStack(spacing: 0) {
+                        SideChatResizeHandle(store: store)
+                        SideChatPanel(store: store, tab: tab).id(tab.id)
+                            .clipShape(RoundedRectangle(cornerRadius: store.pageCornerRadius))
+                    }
+                    .frame(width: store.sideChatReservedWidth(in: geometry.size.width))
+                    .padding(.vertical, store.pageEdgeInset).padding(.trailing, store.pageEdgeInset)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing).zIndex(1)
+                }
                 SidebarDock(store: store).zIndex(2)
                 BrowserNotificationToast(
                     feedback: store.feedback,
@@ -295,11 +300,8 @@ struct ContentView: View {
             }
             .background {
                 ProfileWindowSurface(
-                    color: store.profile.privateMode
-                        ? PrivateChrome.base
-                        : ProfileColor.surfaceColor(
-                            profileTint(store.profile), strength: store.profile.personalization?.tintStrength ?? 0.06,
-                            dark: scheme == .dark), transparency: store.profile.personalization?.windowTransparency ?? 0
+                    color: store.profileSwipeSurface(dark: scheme == .dark),
+                    transparency: store.profileSwipeTransparency
                 )
                 .environment(
                     \.colorScheme,
@@ -318,6 +320,13 @@ struct ContentView: View {
                 if store.fullscreenControlsVisible && !store.usesSidebarOnlyChrome {
                     FullscreenWindowControls().frame(width: 76, height: 32)
                 }
+            }
+            .sheet(isPresented: Binding(get: {
+                store.sideChatVisible && store.canShowSideChat && store.sideChatReservedWidth(in: geometry.size.width) == 0
+            }, set: { visible in
+                if !visible, store.sideChatReservedWidth(in: geometry.size.width) == 0 { store.closeSideChat() }
+            })) {
+                if let tab = store.selectedTab { SideChatPanel(store: store, tab: tab).id(tab.id).frame(width: 400, height: 620) }
             }
         }
         .ignoresSafeArea().frame(minWidth: 800, minHeight: 540)

@@ -243,31 +243,35 @@ private struct TrayDownloadRow: View {
     @ObservedObject var item: DownloadItem
     let manager: DownloadManager
     let store: BrowserStore
+    @State private var controlsWidth: CGFloat = 28
     var body: some View {
         HStack(spacing: 6) {
             GolzheimIcon(icon: .download, size: 16)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name).font(.system(size: 11)).lineLimit(1).help(item.name)
                 if item.finished || item.error != nil {
-                    Text(item.finished ? "saved" : item.error ?? "interrupted").font(.system(size: 10)).foregroundStyle(
-                        .secondary
-                    ).lineLimit(1)
+                    Text(item.finished ? "saved" : item.error ?? "interrupted")
+                        .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                 } else {
-                    ProgressView(value: item.fraction).progressViewStyle(.linear).controlSize(.mini).accessibilityLabel(
-                        "download progress")
+                    ProgressView(value: item.fraction).progressViewStyle(.linear).controlSize(.mini)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
-            if item.finished, let destination = item.destination {
-                IconButton(icon: .external, label: "show in finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([destination])
-                }
-            } else if item.canRetrySave {
-                IconButton(icon: .download, label: "save again…") { manager.retrySave(item, in: store) }
-            } else if item.resumeData != nil {
-                IconButton(icon: .reload, label: "resume download") { manager.resume(item, in: store) }
-            } else if !item.finished && item.error == nil {
-                IconButton(icon: .close, label: "cancel download") { manager.cancel(item) }
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white, location: 0), .init(color: .white, location: 0.78),
+                            .init(color: .clear, location: 1),
+                        ], startPoint: .leading, endPoint: .trailing))
+        }.padding(.trailing, controlsWidth + 4)
+            .overlay(alignment: .trailing) {
+                DownloadControls(item: item, manager: manager, store: store)
+                    .onGeometryChange(for: CGFloat.self) {
+                        $0.size.width
+                    } action: {
+                        controlsWidth = $0
+                    }
             }
-        }.frame(height: 38).padding(.horizontal, 4)
+            .frame(height: 38).padding(.horizontal, 4)
+            .contextMenu { DownloadActions(item: item, manager: manager, store: store) }
     }
 }

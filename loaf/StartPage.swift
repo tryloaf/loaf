@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
     let profileID: UUID
     let name: String
     let emoji: String
+    let customIconPNG: Data?
     let tint: Int
     let privateMode: Bool
     let personalization: Personalization
@@ -16,6 +17,7 @@ import UniformTypeIdentifiers
         let profile = store.application.profiles.first { $0.id == selectedProfileID } ?? store.profile
         profileID = selectedProfileID
         name = profile.name
+        customIconPNG = profile.customIconPNG
         emoji = profile.emoji
         tint = profile.tint
         privateMode = profile.privateMode
@@ -79,7 +81,7 @@ struct StartPage: View, Equatable {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         HStack(spacing: 8) {
-                            EmojiIcon(glyph: snapshot.emoji, size: 16)
+                            ProfileIcon(glyph: snapshot.emoji, customIconPNG: snapshot.customIconPNG, size: 16)
                             Text(
                                 snapshot.privateMode && snapshot.name == "private"
                                     ? "private browsing" : snapshot.name
@@ -123,19 +125,6 @@ struct StartPage: View, Equatable {
                             }.help(editing ? "finish editing widgets" : "customize start page").accessibilityLabel(
                                 editing ? "finish editing widgets" : "customize start page")
                         }.buttonStyle(.bordered).controlSize(.small)
-                        Button {
-                            store.openOmnibar(query: "")
-                        } label: {
-                            HStack(spacing: 12) {
-                                GolzheimIcon(icon: .search, size: 20)
-                                Text("search or surf...")
-                                Spacer()
-                                Text("⌘L").font(.system(size: 12)).foregroundStyle(.secondary)
-                            }.font(.system(size: 16)).padding(16)
-                                .background(
-                                    Color(nsColor: .textBackgroundColor).opacity(0.72),
-                                    in: RoundedRectangle(cornerRadius: 16))
-                        }.buttonStyle(LoafButtonStyle())
                         if widgets.isEmpty {
                             VStack(spacing: 12) {
                                 GolzheimIcon(icon: .plus, size: 28).foregroundStyle(.secondary)
@@ -231,43 +220,21 @@ struct StartPage: View, Equatable {
         return preview.widgetPositions
     }
     private var background: some View {
-        Group {
-            if snapshot.privateMode {
-                LinearGradient(
-                    colors: [PrivateChrome.surface, PrivateChrome.base], startPoint: .topLeading,
-                    endPoint: .bottomTrailing)
-            } else if let backgroundImage, backgroundImage.url == backgroundURL {
-                Image(nsImage: backgroundImage.image).resizable().scaledToFill().overlay(
-                    Color(nsColor: .windowBackgroundColor).opacity(scheme == .dark ? 0.35 : 0.15))
-            } else {
-                let tint =
-                    preferences.background == "profile"
-                    ? tint : Color(nsColor: .windowBackgroundColor)
-                let strength =
-                    preferences.background == "profile"
-                    ? ProfileColor.surfaceOpacity(preferences.tintStrength) : (scheme == .dark ? 0.32 : 1)
-                LinearGradient(
-                    colors: [
-                        tint.opacity(strength * (preferences.background == "profile" ? 0.94 : 0.65)),
-                        tint.opacity(strength),
-                    ], startPoint: .topLeading, endPoint: .bottomTrailing
-                ).background(
-                    preferences.background == "profile"
-                        ? Color(white: scheme == .dark ? 0.15 : 0.88) : Color(nsColor: .windowBackgroundColor))
-            }
-        }.clipped().opacity(
-            ProfileTransparency.opacity(preferences.windowTransparency ?? 0, reduceTransparency: reduceTransparency)
-        )
-        .background {
-            if !reduceTransparency && ProfileTransparency.bounded(preferences.windowTransparency ?? 0) > 0 {
-                WindowBackdrop()
-            }
-        }
+        StartPageBackground(store: store, image: backgroundImage)
     }
     @ViewBuilder private func widgetView(_ widget: String) -> some View {
         let options = preferences.widgetOptions?[widget] ?? StartWidgetOptions()
         let compact = preferences.widgetSizes?[widget] == .square
         switch widget {
+        case "search":
+            Button { store.openOmnibar(query: "") } label: {
+                HStack(spacing: 12) {
+                    GolzheimIcon(icon: .search, size: 16)
+                    Text("search or surf...").font(.system(size: 16))
+                    Spacer()
+                    Text("⌘L").font(.system(size: 12)).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
+            }.buttonStyle(.plain)
         case "clock":
             TimelineView(.periodic(from: .now, by: options.clockSeconds == true ? 1 : 30)) { time in
                 VStack(alignment: .leading, spacing: 8) {
@@ -352,8 +319,10 @@ private struct StartWeatherWidget: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(weather.city.isEmpty ? "select a city" : weather.city).font(.system(size: 13))
-                    .lineLimit(weather.city.isEmpty && !compact ? 3 : 1).fixedSize(horizontal: false, vertical: true)
-                Text(weather.condition).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    .lineLimit(weather.city.isEmpty && !compact ? 3 : 1).minimumScaleFactor(0.8)
+                    .fixedSize(horizontal: false, vertical: true).help(weather.city)
+                Text(weather.condition).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }.frame(maxWidth: .infinity, alignment: .leading)
             if !compact && !weather.hours.isEmpty {
                 HStack(spacing: 14) {
@@ -404,6 +373,7 @@ private struct StartRecentTabsWidget: View {
                     HStack(spacing: 8) {
                         SiteIcon(tab: tab, size: 16)
                         Text(BrowserAddress.visible(tab.sidebarTitle)).font(.system(size: 13)).lineLimit(1)
+                            .minimumScaleFactor(0.85).help(tab.sidebarTitle)
                         Spacer()
                     }
                 }.buttonStyle(LoafButtonStyle())
@@ -456,11 +426,13 @@ private struct StartFavoritesWidget: View {
                         FavoriteIcon(favorite: favorite, store: store).frame(width: 48, height: 48).background(
                             Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
                         Text(BrowserAddress.visible(favorite.title)).font(.system(size: 11)).lineLimit(1)
+                            .minimumScaleFactor(0.85).help(favorite.title)
                     }.frame(maxWidth: .infinity)
                 } else {
                     HStack(spacing: 8) {
                         FavoriteIcon(favorite: favorite, store: store).frame(width: 20, height: 20)
                         Text(BrowserAddress.visible(favorite.title)).font(.system(size: 12)).lineLimit(1)
+                            .minimumScaleFactor(0.85).help(favorite.title)
                         Spacer(minLength: 0)
                     }.padding(style == "chips" ? 8 : 0).background(
                         Color.primary.opacity(style == "chips" ? 0.04 : 0), in: Capsule())
@@ -479,7 +451,7 @@ struct StartWidgetPlacementGrid: View {
             for row in 0..<max(1, Int(ceil(height / layout.gridStride.height))) {
                 for column in 0..<layout.gridColumns {
                     let rect = CGRect(
-                        x: CGFloat(column) * layout.gridStride.width, y: CGFloat(row) * layout.gridStride.height,
+                        x: CGFloat(column) * layout.gridStride.width, y: layout.rowOrigin(row),
                         width: side, height: max(176, side))
                     context.stroke(
                         Path(roundedRect: rect, cornerRadius: 16), with: .color(.primary.opacity(0.08)),
@@ -501,7 +473,7 @@ struct StartWidgetDropDelegate: DropDelegate {
     }
     func dropUpdated(info: DropInfo) -> DropProposal? {
         guard editing, let dragged else { return DropProposal(operation: .forbidden) }
-        let size = store.profile.personalization?.widgetSizes?[dragged] ?? .small
+        let size: StartWidgetSize = dragged == "search" ? .banner : store.profile.personalization?.widgetSizes?[dragged] ?? .small
         position = layout.position(at: info.location, size: size)
         return DropProposal(operation: .move)
     }
@@ -515,7 +487,7 @@ struct StartWidgetDropDelegate: DropDelegate {
         else { return false }
         let profileID = store.selectedProfileID
         let target = layout.position(
-            at: info.location, size: store.profile.personalization?.widgetSizes?[expected] ?? .small)
+            at: info.location, size: expected == "search" ? .banner : store.profile.personalization?.widgetSizes?[expected] ?? .small)
         provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
             Task { @MainActor in
                 defer {
@@ -555,6 +527,49 @@ struct StartWidgetScrollContent<Content: View>: View {
     }
 }
 
+private struct StartPageBackground: View {
+    @ObservedObject var store: BrowserStore
+    let image: (url: URL, image: NSImage)?
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    private var preferences: Personalization { store.profile.personalization ?? Personalization() }
+    private func gradientColor(_ profile: Profile, top: Bool) -> Color {
+        if profile.privateMode { return top ? PrivateChrome.surface : PrivateChrome.base }
+        let preferences = profile.personalization ?? Personalization()
+        let usesTint = preferences.background == "profile"
+        let tint = usesTint ? profileTint(profile) : Color(nsColor: .windowBackgroundColor)
+        let strength = usesTint ? ProfileColor.surfaceOpacity(preferences.tintStrength) : (scheme == .dark ? 0.32 : 1)
+        return tint.opacity(strength * (top ? (usesTint ? 0.94 : 0.65) : 1))
+    }
+    var body: some View {
+        Group {
+            if !store.profile.privateMode, let image,
+                preferences.background == "image:" + image.url.lastPathComponent
+            {
+                Image(nsImage: image.image).resizable().scaledToFill().overlay(
+                    Color(nsColor: .windowBackgroundColor).opacity(scheme == .dark ? 0.35 : 0.15))
+            } else {
+                LinearGradient(
+                    colors: [
+                        store.profileSwipeColor { gradientColor($0, top: true) },
+                        store.profileSwipeColor { gradientColor($0, top: false) },
+                    ], startPoint: .topLeading, endPoint: .bottomTrailing
+                ).background {
+                    store.profileSwipeColor { profile in
+                        if profile.privateMode { return PrivateChrome.base }
+                        return profile.personalization?.background == "profile"
+                            ? Color(white: scheme == .dark ? 0.15 : 0.88) : Color(nsColor: .windowBackgroundColor)
+                    }
+                }
+            }
+        }.clipped().opacity(
+            ProfileTransparency.opacity(store.profileSwipeTransparency, reduceTransparency: reduceTransparency)
+        ).background {
+            if !reduceTransparency && store.profileSwipeTransparency > 0 { WindowBackdrop() }
+        }
+    }
+}
+
 struct StartWidgetCard<Content: View>: View {
     let store: BrowserStore
     let id: String
@@ -568,7 +583,7 @@ struct StartWidgetCard<Content: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.startWidgetDropCleanup) private var dropCleanup
     private var preferences: Personalization { store.profile.personalization ?? Personalization() }
-    private var size: StartWidgetSize { preferences.widgetSizes?[id] ?? .small }
+    private var size: StartWidgetSize { id == "search" ? .banner : preferences.widgetSizes?[id] ?? .small }
     private func update(_ edit: (inout Personalization) -> Void) {
         store.updateCurrent { profile in
             var value = profile.personalization ?? Personalization()
@@ -599,13 +614,13 @@ struct StartWidgetCard<Content: View>: View {
         position = layout.position(
             at: CGPoint(
                 x: CGFloat(position.column) * layout.gridStride.width,
-                y: CGFloat(position.row) * layout.gridStride.height), size: size)
+                y: layout.rowOrigin(position.row)), size: size)
         update { $0.placeWidget(id, at: position, currentPositions: layout.positions) }
     }
     var body: some View {
         let payloadProfileID = store.selectedProfileID
         return VStack(alignment: .leading, spacing: 12) {
-            if editing {
+            if editing && id != "search" {
                 HStack(spacing: 8) {
                     HStack(spacing: 8) {
                         GolzheimIcon(icon: .more, size: 14).rotationEffect(.degrees(90))
@@ -635,16 +650,28 @@ struct StartWidgetCard<Content: View>: View {
                         .accessibilityLabel("\(id) widget settings")
                 }
             }
-            if id == "notes" {
+            if id == "notes" || id == "search" {
                 content().frame(maxHeight: .infinity)
             } else {
                 StartWidgetScrollContent(content: content())
             }
-        }.padding(16).padding(.bottom, editing ? 12 : 0)
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.62), in: RoundedRectangle(cornerRadius: 16))
+        }.overlay {
+            if editing && id == "search" {
+                StartWidgetDragHandle(payload: StartWidgetDrag(window: store.id, profile: store.selectedProfileID, widget: id),
+                    title: "search or surf…", dragged: $dragged, ended: dropCleanup,
+                    removed: { update { $0.hiddenWidgets.append(id) } })
+            }
+        }.contextMenu {
+            settings
+            Divider()
+            Button(id == "search" ? "hide search bar" : "hide widget") {
+                update { if !$0.hiddenWidgets.contains(id) { $0.hiddenWidgets.append(id) } }
+            }
+        }.padding(16).padding(.bottom, editing && id != "search" ? 12 : 0)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(editing ? 0.12 : 0.03)))
             .overlay(alignment: .bottomTrailing) {
-                if editing {
+                if editing && id != "search" {
                     HStack(spacing: 4) {
                         if let preview = resizePreview {
                             Text(preview.rawValue).font(.system(size: 10)).foregroundStyle(.secondary)
@@ -688,7 +715,7 @@ struct StartWidgetCard<Content: View>: View {
                         $0.widgetSizes?[id] = value
                     }
                 })
-        ) { ForEach(StartWidgetSize.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
+        ) { ForEach(id == "search" ? [.banner] : StartWidgetSize.allCases.filter { $0 != .banner }, id: \.self) { Text($0.rawValue).tag($0) } }
         if id == "clock" {
             Toggle(
                 "24-hour time",
@@ -711,7 +738,7 @@ struct StartWidgetCard<Content: View>: View {
                 Text("list").tag("list")
             }
         }
-        if id == "notes" {
+        if id == "notes" || id == "search" {
             Toggle(
                 "larger text",
                 isOn: Binding(
@@ -851,13 +878,18 @@ private struct StartDownloadsContent: View {
 }
 private struct StartDownloadItem: View {
     @ObservedObject var item: DownloadItem
+    private var status: String {
+        if item.finished { return "saved" }
+        if let error = item.error { return error.localizedCaseInsensitiveContains("cancel") ? "cancelled" : "failed" }
+        return "\(Int(item.fraction * 100))%"
+    }
     var body: some View {
         HStack(spacing: 8) {
             GolzheimIcon(icon: item.finished ? .check : .download, size: 12)
-            Text(item.name).font(.system(size: 12)).lineLimit(1)
-            Spacer()
-            Text(item.finished ? "saved" : item.error ?? "\(Int(item.fraction * 100))%").font(.system(size: 10))
-                .foregroundStyle(.secondary).lineLimit(1)
+            Text(item.name).font(.system(size: 12)).lineLimit(1).minimumScaleFactor(0.85).help(item.name)
+            Spacer(minLength: 0)
+            Text(status).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
+                .help(item.error ?? status)
         }
     }
 }

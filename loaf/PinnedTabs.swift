@@ -107,19 +107,45 @@ extension BrowserWindowState {
         if let groupID = tab.groupID { updateGroup(groupID) { $0.collapsed = false } }
     }
 
+    func toggleSelectedTabPins(including tab: BrowserTab) {
+        let selected = groupingTabs(including: tab)
+        guard !selected.isEmpty else { return }
+        let unpin = selected.allSatisfy { isPersistentTab($0) }
+        for selectedTab in selected {
+            if unpin {
+                removePersistentTab(selectedTab)
+            } else if !isPersistentTab(selectedTab) {
+                setPinPresentation(selectedTab, row: true)
+            }
+        }
+        selectedSidebarTabIDs = []
+    }
+
+    func closeSelectedTabs(including tab: BrowserTab) {
+        let selected = groupingTabs(including: tab).filter { isOpenTab($0) }
+        for selectedTab in selected { close(selectedTab) }
+        selectedSidebarTabIDs = []
+    }
+
 }
 
 struct TabActions: View {
     @ObservedObject var tab: BrowserTab
     @ObservedObject var store: BrowserStore
     var body: some View {
-        if store.isPersistentTab(tab) {
+        let selected = store.groupingTabs(including: tab)
+        let multiple = selected.count > 1
+        if multiple {
+            Button(selected.allSatisfy { store.isPersistentTab($0) } ? "unpin tabs" : "pin tabs") {
+                store.toggleSelectedTabPins(including: tab)
+            }
+        } else if store.isPersistentTab(tab) {
             Button("unpin tab") { store.removePersistentTab(tab) }
         } else {
             Button("pin tab") { store.setPinPresentation(tab, row: true) }
             Button("pin to grid") { store.setPinPresentation(tab, row: false) }
         }
-        Button(store.groupingTabs(including: tab).count > 1 ? "group selected tabs" : "new group with tab") {
+        Button(multiple ? "group selected tabs" : "new group with tab") {
             store.groupSelectedTabs(including: tab)
         }
         if tab.pinned {
@@ -176,6 +202,8 @@ struct TabActions: View {
         if tab.pinned {
             Divider()
             Button("rename…") { store.editPin(tab) }
+            Button("pin current page") { store.pinCurrentPage(tab) }
+                .disabled(tab.page != .web || tab.saved.address == nil || tab.url?.absoluteString == tab.pinnedAddress)
             Button("edit pinned page…") { store.editPin(tab, address: true) }
             Button("return to pinned page") { store.returnToPin(tab) }.disabled(tab.pinnedAddress == nil)
         }
@@ -190,9 +218,15 @@ struct TabActions: View {
             Button("show miniplayer") { tab.dismissedMedia.removeAll() }
         }
         Divider()
-        Button("close tab") { store.close(tab) }.disabled(!store.tabs.contains(where: { $0 === tab }))
+        if multiple {
+            Button("close tabs") { store.closeSelectedTabs(including: tab) }
+                .disabled(!selected.contains { store.isOpenTab($0) })
+        } else {
+            Button("close tab") { store.close(tab) }.disabled(!store.tabs.contains(where: { $0 === tab }))
+        }
         Button("close other tabs") {
-            for other in store.tabs where other.id != tab.id && !other.pinned { store.close(other) }
+            let keptIDs = Set(selected.map(\.id))
+            for other in store.tabs where !keptIDs.contains(other.id) && !other.pinned { store.close(other) }
         }
     }
 }
@@ -209,7 +243,7 @@ struct PinnedTabGrid: View {
         var pins = store.gridPinnedTabs
         if preview?.row == false { pins.removeAll { $0.id == store.draggedTabID } }
         var items = pins.map { Item(id: $0.pinnedShortcutID ?? $0.id, tab: $0) }
-        if let preview, !preview.row, let id = store.draggedTabID {
+        if let preview, !preview.row, let id = store.draggedTabID, store.pinReplacementTarget == nil {
             let index =
                 preview.position.flatMap { position in
                     pins.firstIndex { $0.id == position.target }.map { $0 + (position.after ? 1 : 0) }
@@ -247,7 +281,22 @@ struct PinnedTabGrid: View {
     }
     @ViewBuilder private func tile(_ item: Item, list: Bool) -> some View {
         if let tab = item.tab {
-            if list { TabRow(tab: tab, store: store) } else { PinnedTabTile(tab: tab, store: store) }
+            if list {
+                TabRow(tab: tab, store: store)
+            } else {
+                PinnedTabTile(tab: tab, store: store)
+                    .overlay {
+                        if store.pinReplacementTarget?.id == tab.id {
+                            RoundedRectangle(cornerRadius: 8).fill(.regularMaterial)
+                                .overlay(Text("replace").font(.system(size: 10, weight: .semibold)))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8).strokeBorder(
+                                        profileTint(store.profile), lineWidth: 2)
+                                )
+                                .allowsHitTesting(false)
+                        }
+                    }
+            }
         } else {
             RoundedRectangle(cornerRadius: 8).fill(profileTint(store.profile).opacity(0.08))
                 .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(profileTint(store.profile).opacity(0.25)) }
@@ -300,12 +349,13 @@ struct PinnedTabTile: View {
 }
 
 nonisolated enum PinGridLayout {
+    static let maximumItems = 15
     static let tileHeight: CGFloat = 32
     static func height(for count: Int, list: Bool) -> CGFloat {
         guard count > 0 else { return 0 }
         return list
             ? CGFloat(min(6, count)) * 36 - 4
-            : CGFloat(min(3, (count + columns(for: count) - 1) / columns(for: count))) * (tileHeight + 6) - 6
+            : CGFloat((min(maximumItems, count) + columns(for: count) - 1) / columns(for: count)) * (tileHeight + 6) - 6
     }
     static func columns(for count: Int) -> Int { count <= 3 ? max(1, count) : count == 4 ? 2 : 3 }
 }

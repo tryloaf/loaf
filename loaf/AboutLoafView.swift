@@ -1,30 +1,33 @@
 import SwiftUI
 
 struct AboutLoafView: View {
+    @ObservedObject private var updates = SoftwareUpdateManager.shared
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
     }
     private var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1" }
     var body: some View {
         VStack(spacing: 0) {
-            Image("loaf-lockup").resizable().scaledToFit().frame(width: 208, height: 76).accessibilityLabel("loaf")
-            Text("version " + version + " (" + build + ")").font(.system(size: 12)).foregroundStyle(.secondary)
+            Image("loaf-logo").resizable().scaledToFit().frame(width: 72, height: 72).accessibilityHidden(true)
+            Image("loaf-word").resizable().scaledToFit().frame(width: 108, height: 42)
+                .padding(.top, 12).accessibilityLabel("loaf")
+            Text("a browser for Mac").font(.system(size: 13)).foregroundStyle(.secondary).padding(.top, 8)
+            Text("version \(version) · build \(build)").font(.system(size: 11)).foregroundStyle(.tertiary)
                 .textSelection(.enabled).padding(.top, 6)
-            Link(destination: BrowserBrand.website) {
-                HStack(spacing: 5) {
-                    Text("tryloaf.app")
-                    Image(systemName: "arrow.up.right").font(.system(size: 9, weight: .semibold))
-                }
-            }.font(.system(size: 13, weight: .medium)).padding(.top, 20)
-            Link("report a bug", destination: BrowserBrand.reportBug)
-                .font(.system(size: 13, weight: .medium)).padding(.top, 12)
-            Divider().padding(.vertical, 24)
-            HStack(spacing: 16) {
-                Link("owen van vooren", destination: BrowserBrand.authorWebsite)
-                Spacer()
-                Link("github", destination: BrowserBrand.github)
-            }.font(.system(size: 12)).foregroundStyle(.secondary)
-        }.padding(.horizontal, 32).padding(.top, 56).padding(.bottom, 28).frame(width: 360)
+            HStack(spacing: 8) {
+                Link("website", destination: BrowserBrand.website)
+                Link("report a bug", destination: BrowserBrand.reportBug)
+            }.buttonStyle(.bordered).controlSize(.small).padding(.top, 20)
+            Button("check for updates…") { updates.checkForUpdates() }
+                .disabled(!updates.canCheckForUpdates)
+                .controlSize(.small).padding(.top, 10)
+            Divider().padding(.vertical, 20)
+            Text("designed and developed by").font(.system(size: 11)).foregroundStyle(.secondary)
+            Link("owen van vooren", destination: BrowserBrand.authorWebsite)
+                .font(.system(size: 12, weight: .medium)).padding(.top, 4)
+            Link("source on github", destination: BrowserBrand.github)
+                .font(.system(size: 11)).foregroundStyle(.secondary).padding(.top, 10)
+        }.padding(.horizontal, 32).padding(.top, 38).padding(.bottom, 24).frame(width: 360)
             .frame(maxHeight: .infinity).background(Color(nsColor: .windowBackgroundColor))
     }
 }

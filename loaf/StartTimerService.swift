@@ -66,7 +66,6 @@ nonisolated enum StartTimeDisplay {
     }
 }
 
-
 @MainActor final class StartTimerService: ObservableObject {
     nonisolated struct Record: Codable, Equatable, Sendable {
         var countdown = StartCountdown()

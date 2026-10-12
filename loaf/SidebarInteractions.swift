@@ -79,15 +79,13 @@ struct SidebarProfileGesture {
     private var active = false
     private var rejected = false
     private var captured = false
-    private var committed = false
-    private var switched = false
     private var horizontal = 0.0
     private var vertical = 0.0
 
     mutating func reset() { self = Self() }
     mutating func update(
         x: Double, y: Double, phase: NSEvent.Phase, momentum: NSEvent.Phase = [],
-        startsInside: Bool, dragging: Bool = false, index: Int, count: Int
+        startsInside: Bool, dragging: Bool = false, index: Int, count: Int, stride: Double = 180
     ) -> Result {
         if dragging {
             reset()
@@ -98,11 +96,15 @@ struct SidebarProfileGesture {
             reset()
             active = startsInside
         }
+        guard active, !rejected else { return Result() }
         if phase.contains(.ended) || phase.contains(.cancelled) {
             active = false
-            return Result(consumed: captured)
+            let direction = horizontal < 0 ? 1 : -1
+            return Result(
+                consumed: captured,
+                direction: captured && !phase.contains(.cancelled)
+                    && abs(horizontal) >= stride * 0.42 && (0..<count).contains(index + direction) ? direction : nil)
         }
-        guard active, !rejected else { return Result() }
         horizontal += x
         vertical += y
         if !captured {
@@ -115,16 +117,9 @@ struct SidebarProfileGesture {
         }
         let direction = horizontal < 0 ? 1 : -1
         let atEdge = !(0..<count).contains(index + direction)
-        let resistance = atEdge && !switched ? max(-8, min(8, horizontal / 12)) : 0
-        var result = Result(consumed: true, resistance: resistance, translation: max(-44, min(44, -horizontal / 2)))
-        if abs(horizontal) > 72, !committed {
-            committed = true
-            if !atEdge {
-                switched = true
-                result.direction = direction
-            }
-        }
-        return result
+        return Result(
+            consumed: true, resistance: atEdge ? max(-8, min(8, horizontal / 12)) : 0,
+            translation: atEdge ? 0 : max(-stride, min(stride, -horizontal)))
     }
 }
 
@@ -222,6 +217,8 @@ struct SidebarInteractions: NSViewRepresentable {
         var traySection: Binding<TraySection?>?
         var trayProgress: CGFloat = 0
         private var swipingTray = false
+        private var profileCommit: DispatchWorkItem?
+        private var profileReset: DispatchWorkItem?
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if let monitor {
@@ -230,7 +227,18 @@ struct SidebarInteractions: NSViewRepresentable {
             }
             gesture.reset()
             mouseScroll = SidebarMouseScroll()
-            if let store, store.profileResistance != 0 { store.profileResistance = 0 }
+            profileCommit?.cancel()
+            profileCommit = nil
+            profileReset?.cancel()
+
+            let reset = DispatchWorkItem { [weak self, weak store] in
+                self?.profileReset = nil
+                guard let store else { return }
+                if store.profileResistance != 0 { store.profileResistance = 0 }
+                if store.profileSwipeDistance != 0 { store.profileSwipeDistance = 0 }
+            }
+            profileReset = reset
+            DispatchQueue.main.async(execute: reset)
             guard window != nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown, .leftMouseDown]) {
                 [weak self] event in
@@ -258,6 +266,18 @@ struct SidebarInteractions: NSViewRepresentable {
 
         func handleScroll(_ event: NSEvent, startsInside: Bool, startsInTray: Bool? = nil) -> Bool {
             guard let store else { return false }
+
+            let pendingReset = profileReset
+            pendingReset?.perform()
+            pendingReset?.cancel()
+            profileReset = nil
+            if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
+
+                let previousCommit = profileCommit
+                previousCommit?.perform()
+                previousCommit?.cancel()
+                profileCommit = nil
+            }
             let point = convert(event.locationInWindow, from: nil)
             let fromBottom = isFlipped ? bounds.maxY - point.y : point.y - bounds.minY
             let anchoredTray = store.trayGestureAnchor.map { anchor in
@@ -313,34 +333,49 @@ struct SidebarInteractions: NSViewRepresentable {
             let result = gesture.update(
                 x: event.scrollingDeltaX, y: event.scrollingDeltaY,
                 phase: event.phase, momentum: event.momentumPhase, startsInside: startsInside,
-                dragging: store.draggedTabID != nil, index: index, count: count)
-            if let direction = result.direction {
-                switchDestination(direction)
-            }
-            let trayDistance: CGFloat = swipingTray && !reduceMotion ? result.translation : 0
-            if store.traySwipeDistance != trayDistance {
-                if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
-                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
-                        store.traySwipeDistance = trayDistance
-                    }
-                } else {
-                    store.traySwipeDistance = trayDistance
-                }
-            }
-            let resistance: CGFloat = reduceMotion || swipingTray ? 0 : result.resistance
+                dragging: store.draggedTabID != nil, index: index, count: count, stride: store.preferences.sidebarWidth)
 
-            if store.profileResistance != resistance {
-                if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
-                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
-                        store.profileResistance = resistance
+            guard event.momentumPhase.isEmpty, result.consumed else { return result.consumed }
+            if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+                if let direction = result.direction, !reduceMotion {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        store.profileSwipeDistance = CGFloat(direction) * store.preferences.sidebarWidth
+                        store.profileResistance = 0
                     }
+                    let profileID = store.selectedProfileID
+                    let work = DispatchWorkItem { [weak self, weak store] in
+                        self?.profileCommit = nil
+                        guard let store, store.selectedProfileID == profileID else { return }
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            store.swipeProfile(direction)
+                            store.profileSwipeDistance = 0
+                        }
+                    }
+                    profileCommit = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
                 } else {
-                    store.profileResistance = resistance
+                    withAnimation(reduceMotion ? nil : .spring(duration: 0.24, bounce: 0)) {
+                        if let direction = result.direction { switchDestination(direction) }
+                        store.profileSwipeDistance = 0
+                        store.profileResistance = 0
+                    }
+                }
+            } else {
+                var transaction = Transaction()
+                transaction.animation = nil
+                withTransaction(transaction) {
+                    store.profileSwipeDistance = reduceMotion ? 0 : result.translation
+                    store.profileResistance = reduceMotion ? 0 : result.resistance
                 }
             }
             return result.consumed
         }
-        deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+        deinit {
+            profileCommit?.cancel()
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
     }
 }
 
@@ -379,11 +414,11 @@ struct PinDropZone: NSViewRepresentable {
         }
         func position(at point: NSPoint, source: BrowserTab) -> TabDropPosition? {
             guard let store else { return nil }
-            let pins = (row ? store.rowPinnedTabs : store.gridPinnedTabs).filter { $0.id != source.id }
+            let pins = row ? store.rowPinnedTabs : store.gridPinnedTabs
             guard !pins.isEmpty else { return nil }
             if row { return TabDropPosition(target: pins.last!.id, after: true) }
             let list = store.preferences.pinnedLayout == "list"
-            let columns = list ? 1 : PinGridLayout.columns(for: pins.count + 1)
+            let columns = list ? 1 : PinGridLayout.columns(for: store.gridPinnedTabs.count)
             let cellWidth = max(1, (bounds.width + 6) / CGFloat(columns))
             let y = isFlipped ? point.y : bounds.height - point.y
             let column = min(columns - 1, max(0, Int(point.x / cellWidth)))
@@ -393,6 +428,7 @@ struct PinDropZone: NSViewRepresentable {
                 list
                 ? y.truncatingRemainder(dividingBy: 36) > 16
                 : point.x - CGFloat(column) * cellWidth > cellWidth / 2
+            guard pins[index].id != source.id else { return nil }
             return TabDropPosition(target: pins[index].id, after: after)
         }
         override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
@@ -418,9 +454,25 @@ struct PinDropZone: NSViewRepresentable {
             defer { highlighted = false }
             guard let tab = validatedTab(sender), let store else { return false }
             let destination = position(at: convert(sender.draggingLocation, from: nil), source: tab)
+            store.pinDropPreview = PinDropPreview(row: row, position: destination)
+            let replacement = store.pinReplacementTarget
+            let replacementIndex = replacement.flatMap { victim in
+                store.gridPinnedTabs.firstIndex { $0.id == victim.id }
+            }
+            if let replacement {
+                store.removePin(replacement)
+                store.tabChanged(replacement)
+            }
             store.setPinPresentation(tab, row: row)
             let pinned = store.pinnedTabs.first { $0.pinnedShortcutID == tab.pinnedShortcutID } ?? tab
-            if let destination,
+            if let replacementIndex {
+                let others = store.gridPinnedTabs.filter { $0.pinnedShortcutID != pinned.pinnedShortcutID }
+                if others.indices.contains(replacementIndex) {
+                    store.movePin(pinned, before: others[replacementIndex])
+                } else if let last = others.last {
+                    store.movePin(pinned, before: last, after: true)
+                }
+            } else if let destination,
                 let target = store.pinnedTabs.first(where: { $0.id == destination.target })
             {
                 store.movePin(pinned, before: target, after: destination.after)

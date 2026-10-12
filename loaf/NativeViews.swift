@@ -1,9 +1,6 @@
 import AppKit
 import SwiftUI
 
-
-
-
 struct FocusRingSafeScrollView<Content: View>: View {
     private let content: Content
     init(@ViewBuilder content: () -> Content) { self.content = content() }

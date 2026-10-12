@@ -118,8 +118,8 @@ struct ProfileDragHandle: NSViewRepresentable {
         static func previewImage(profile: Profile, rowSize: CGSize, appearance: NSAppearance) -> NSImage {
             let size = NSSize(width: min(300, max(160, rowSize.width)), height: min(64, max(36, rowSize.height)))
 
-
             let glyph = Golzheim.image(profile.emoji, size: 20)
+            let customIcon = ProfileIconAsset.image(profile.customIconPNG)
             return NSImage(size: size, flipped: false) { rect in
                 appearance.performAsCurrentDrawingAppearance {
                     let outline = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
@@ -127,7 +127,15 @@ struct ProfileDragHandle: NSViewRepresentable {
                     outline.fill()
                     NSColor.separatorColor.setStroke()
                     outline.stroke()
-                    if let glyph {
+                    if let customIcon {
+                        let scale = min(22 / customIcon.size.width, 22 / customIcon.size.height)
+                        let iconSize = NSSize(width: customIcon.size.width * scale, height: customIcon.size.height * scale)
+                        customIcon.draw(
+                            in: NSRect(x: 21 - iconSize.width / 2, y: rect.midY - iconSize.height / 2,
+                                       width: iconSize.width, height: iconSize.height),
+                            from: .zero, operation: .sourceOver, fraction: 1,
+                            respectFlipped: true, hints: nil)
+                    } else if let glyph {
                         let tinted = NSImage(size: NSSize(width: 22, height: 22), flipped: false) { bounds in
                             glyph.draw(in: bounds)
                             NSColor.labelColor.setFill()

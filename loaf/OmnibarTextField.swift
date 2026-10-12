@@ -73,9 +73,24 @@ struct OmnibarTextField: NSViewRepresentable {
         field.updateOverflowFade()
     }
     final class SuggestionOverlay: NSView {
-        var suggestion = "" { didSet { needsDisplay = true; updateTrailingFade() } }
-        var startX: CGFloat = 0 { didSet { needsDisplay = true; updateTrailingFade() } }
-        var suggestionFont = NSFont.systemFont(ofSize: 17) { didSet { needsDisplay = true; updateTrailingFade() } }
+        var suggestion = "" {
+            didSet {
+                needsDisplay = true
+                updateTrailingFade()
+            }
+        }
+        var startX: CGFloat = 0 {
+            didSet {
+                needsDisplay = true
+                updateTrailingFade()
+            }
+        }
+        var suggestionFont = NSFont.systemFont(ofSize: 17) {
+            didSet {
+                needsDisplay = true
+                updateTrailingFade()
+            }
+        }
         private let trailingFade = CAGradientLayer()
         override init(frame frameRect: NSRect) {
             super.init(frame: frameRect)
@@ -112,14 +127,18 @@ struct OmnibarTextField: NSViewRepresentable {
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineBreakMode = .byClipping
             let height = suggestionFont.ascender - suggestionFont.descender + suggestionFont.leading + 2
-            NSAttributedString(string: suggestion, attributes: [
-                .font: suggestionFont,
-                .foregroundColor: NSColor.secondaryLabelColor.withAlphaComponent(0.7),
-                .paragraphStyle: paragraph,
-            ]).draw(with: NSRect(
-                x: startX, y: (bounds.height - height) / 2 + 1,
-                width: max(0, bounds.maxX - startX), height: height
-            ), options: [.usesLineFragmentOrigin])
+            NSAttributedString(
+                string: suggestion,
+                attributes: [
+                    .font: suggestionFont,
+                    .foregroundColor: NSColor.secondaryLabelColor.withAlphaComponent(0.7),
+                    .paragraphStyle: paragraph,
+                ]
+            ).draw(
+                with: NSRect(
+                    x: startX, y: (bounds.height - height) / 2 + 1,
+                    width: max(0, bounds.maxX - startX), height: height
+                ), options: [.usesLineFragmentOrigin])
         }
     }
     final class FocusField: NSTextField {
@@ -383,25 +402,25 @@ struct OmnibarTextField: NSViewRepresentable {
                 reportPresentation(nil)
                 return
             }
-            if let title = parent.actionPreview, !title.isEmpty {
-                let tail: String
-                if title.lowercased().hasPrefix(parent.text.lowercased()) {
-                    tail = String(title.dropFirst(parent.text.count))
-                } else {
-                    tail = "  ·  " + title
+            if let full = parent.inlineCompletion, full.hasPrefix(parent.text), full.count > parent.text.count {
+                var tail = String(full.dropFirst(parent.text.count))
+                if let title = parent.actionPreview, !title.isEmpty, title != full {
+                    tail += "  –  " + title
                 }
                 field.showSuggestion(tail)
-                reportPresentation(title)
-                return
-            }
-            if let full = parent.inlineCompletion, full.hasPrefix(parent.text), full.count > parent.text.count {
-                field.showSuggestion(String(full.dropFirst(parent.text.count)))
                 reportPresentation(full)
+            } else if let title = parent.actionPreview, !title.isEmpty {
+                let tail =
+                    title.lowercased().hasPrefix(parent.text.lowercased())
+                    ? String(title.dropFirst(parent.text.count)) : "  –  " + title
+                field.showSuggestion(tail)
+                reportPresentation(title)
             } else {
                 field.showSuggestion(nil)
                 reportPresentation(nil)
             }
         }
+
         func controlTextDidBeginEditing(_ notification: Notification) {
             guard let field = notification.object as? FocusField else { return }
             field.configureEditor()
@@ -447,9 +466,7 @@ struct OmnibarTextField: NSViewRepresentable {
             case #selector(NSResponder.insertTab(_:)):
                 let range = textView.selectedRange()
                 guard range.length == 0, range.location == textView.string.utf16.count else { return false }
-                if parent.actionPreview != nil {
-                    parent.complete()
-                } else if let full = parent.inlineCompletion, full.hasPrefix(parent.text),
+                if let full = parent.inlineCompletion, full.hasPrefix(parent.text),
                     full.count > parent.text.count
                 {
                     parent.text = full

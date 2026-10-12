@@ -15,13 +15,25 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
     @Published private(set) var connected = false
     @Published private(set) var connecting = false
     @Published private(set) var disconnecting = false
-    @Published private(set) var lunaModel: String?
+    @Published private(set) var models: [ChatModel] = []
+    @Published private(set) var selectedModelID: String?
+    @Published var reasoningEffort: String?
+    var selectedModel: ChatModel? { models.first { $0.id == selectedModelID } }
+    var modelName: String { selectedModel?.name ?? selectedModelID ?? "ChatGPT" }
+
+    var lunaModel: String? { ChatGPTProtocol.availableLuna(in: models.map { ["slug": $0.id] }) }
     var lunaAvailable: Bool { lunaModel != nil }
     var lunaName: String { ChatGPTProtocol.modelName(lunaModel) }
     @Published private(set) var checkingModels = false
     @Published var error: String?
     @Published var showPlanWelcome = false
-    var useExternalWebSearch = false
+    private var externalSearchModels = Set<String>()
+    var useExternalWebSearch: Bool {
+        get { selectedModelID.map { externalSearchModels.contains($0) } ?? false }
+        set { if let id = selectedModelID { if newValue { externalSearchModels.insert(id) } else { externalSearchModels.remove(id) } } }
+    }
+    func usesExternalSearch(for model: String) -> Bool { externalSearchModels.contains(model) }
+    func markExternalSearch(for model: String) { externalSearchModels.insert(model) }
     private var registration: ChatGPTRegistration?
     private var connectionTask: Task<Void, Never>?
     private var refreshTask: Task<ChatGPTRegistration, Error>?
@@ -58,6 +70,15 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
             }
         }
         publishAccount()
+        selectedModelID = defaults.string(forKey: modelPreferenceKey)
+    }
+    private var modelPreferenceKey: String { "loaf.chatgpt.model." + (registration?.subject ?? "default") }
+    func selectModel(_ id: String) {
+        guard models.contains(where: { $0.id == id }), !disconnecting else { return }
+        selectedModelID = id
+        if !models.first(where: { $0.id == id })!.reasoningEfforts.contains(reasoningEffort ?? "") { reasoningEffort = nil }
+        defaults.set(id, forKey: modelPreferenceKey)
+        error = nil
     }
     private func publishAccount() {
         email = registration?.email
@@ -65,9 +86,9 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
     }
     func connect(openAuthorization: ((URL) -> Bool)? = nil) {
         guard !connecting, !disconnecting else { return }
-        useExternalWebSearch = false
+        externalSearchModels = []
         catalogTask?.cancel()
-        lunaModel = nil
+        models = []
         generation = UUID()
         let current = generation
         error = nil
@@ -120,8 +141,10 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
                 try saveRegistration(record)
                 registration = record
                 publishAccount()
+                selectedModelID = defaults.string(forKey: modelPreferenceKey)
                 if !defaults.bool(forKey: "loaf.chatgpt.planWelcome") { showPlanWelcome = true }
-                await checkModels()
+                refreshCatalog()
+                if let catalogTask { await catalogTask.value }
             } catch is CancellationError {} catch {
                 if generation == current {
                     self.error = friendly(error)
@@ -183,7 +206,8 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
                     registration = record
                 }
                 connected = false
-                lunaModel = nil
+                models = []
+                selectedModelID = nil
                 publishAccount()
                 if !revoked {
                     error =
@@ -202,13 +226,14 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
             catalogTask = nil
         }
     }
-    func requireLuna() async throws -> String {
-        if let catalogTask { await catalogTask.value } else if lunaModel == nil { await checkModels() }
+    func requireModel(_ requestedID: String? = nil) async throws -> ChatModel {
+        if models.isEmpty { refreshCatalog() }
+        if let catalogTask { await catalogTask.value }
         guard connected, !disconnecting else { throw ChatGPTFailure.signIn }
-        guard let lunaModel else {
+        guard let id = requestedID ?? selectedModelID, let model = models.first(where: { $0.id == id }) else {
             throw ChatGPTFailure.message(error ?? ChatGPTFailure.unavailable.localizedDescription)
         }
-        return lunaModel
+        return model
     }
     private func checkModels() async {
         checkingModels = true
@@ -222,11 +247,14 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
             let models = object?["models"] as? [[String: Any]] ?? object?["data"] as? [[String: Any]] ?? []
             try Task.checkCancellation()
             guard generation == current else { return }
-            lunaModel = ChatGPTProtocol.availableLuna(in: models)
-            error = lunaAvailable ? nil : ChatGPTFailure.unavailable.localizedDescription
+            self.models = ChatModel.catalog(models)
+            if selectedModelID == nil {
+                selectedModelID = lunaModel ?? self.models.first?.id
+            }
+            error = selectedModel == nil ? ChatGPTFailure.unavailable.localizedDescription : nil
         } catch is CancellationError {} catch {
             if generation == current {
-                lunaModel = nil
+                models = []
                 self.error = friendly(error)
             }
         }

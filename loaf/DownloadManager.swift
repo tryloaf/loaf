@@ -17,6 +17,10 @@ struct DownloadRecord: Codable {
     var bookmark: Data?
     var transferComplete: Bool? = nil
     var downloadOrigin: String? = nil
+    var sourceURL: String? = nil
+    var folderBookmark: Bool? = nil
+    var openWhenFinished: Bool? = nil
+    var reservedDestination: Bool? = nil
 }
 @MainActor final class DownloadItem: ObservableObject, Identifiable {
     let id: UUID
@@ -28,6 +32,11 @@ struct DownloadRecord: Codable {
     weak var owner: BrowserWindowState?
     var privateMode = false
     var downloadOrigin: String?
+    var sourceURL: URL?
+    var folderBookmark = false
+    var reservedDestination = false
+    @Published var openWhenFinished = false
+    @Published var starting = false
     var transfer: URL?
     var bookmark: Data?
     var transferComplete = false
@@ -42,6 +51,7 @@ struct DownloadRecord: Codable {
         id = UUID()
         date = Date()
         self.download = download
+        sourceURL = download.originalRequest?.url
         self.profileID = profileID
         windowID = owner.id
         self.owner = owner
@@ -58,11 +68,18 @@ struct DownloadRecord: Codable {
         fraction = record.finished || record.transferComplete == true ? 1 : 0
         transferComplete = record.transferComplete == true
         downloadOrigin = record.downloadOrigin
+        sourceURL = record.sourceURL.flatMap(URL.init(string:))
+        folderBookmark = record.folderBookmark == true
+        reservedDestination = record.reservedDestination == true
+        openWhenFinished = record.openWhenFinished == true
         error = record.finished ? record.error : record.error ?? "interrupted"
         resumeData = record.resumeData
         transfer = record.transfer.map { URL(fileURLWithPath: $0) }
         bookmark = record.bookmark
     }
+    var active: Bool { !finished && error == nil && (download != nil || starting) }
+    var canResume: Bool { !active && !finished && resumeData != nil }
+    var canRestart: Bool { !active && !finished && !canRetrySave && sourceURL != nil }
     var canRetrySave: Bool {
         download == nil && fraction == 1 && !finished
             && transfer.map { FileManager.default.fileExists(atPath: $0.path) } == true
@@ -71,7 +88,9 @@ struct DownloadRecord: Codable {
         DownloadRecord(
             id: id, profileID: profileID, windowID: windowID, name: name, date: date, destination: destination?.path,
             finished: finished, error: error, resumeData: resumeData, transfer: transfer?.path, bookmark: bookmark,
-            transferComplete: transferComplete, downloadOrigin: downloadOrigin)
+            transferComplete: transferComplete, downloadOrigin: downloadOrigin,
+            sourceURL: sourceURL?.absoluteString, folderBookmark: folderBookmark, openWhenFinished: openWhenFinished,
+            reservedDestination: reservedDestination)
     }
 }
 
@@ -79,7 +98,9 @@ struct DownloadRecord: Codable {
     @Published var items: [DownloadItem] = []
     private var dockView: DownloadDockProgress?
     private var dockTimer: Timer?
-    var hasActiveDownloads: Bool { items.contains { $0.download != nil && $0.error == nil } }
+    private var cacheTimer: Timer?
+    var cacheRetentionDays: () -> Int = { 7 }
+    var hasActiveDownloads: Bool { items.contains { $0.active } }
     private var file: URL?
     private var transferFolder: URL?
     private final class DestinationRequest {
@@ -139,6 +160,12 @@ struct DownloadRecord: Codable {
             items = records.map(DownloadItem.init)
         }
     }
+    func startCacheMaintenance() {
+        cacheTimer?.invalidate()
+        cacheTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { if let self { self.cleanupCache(olderThanDays: self.cacheRetentionDays()) } }
+        }
+    }
     func persist() {
         updateDockProgress()
         guard let file else { return }
@@ -157,6 +184,9 @@ struct DownloadRecord: Codable {
     private func observe(_ item: DownloadItem, _ download: WKDownload) {
         download.delegate = self
         item.download = download
+        item.starting = false
+        item.resumeData = nil
+        item.error = nil
         item.observation = download.progress.observe(\.fractionCompleted, options: [.new]) {
             [weak self, weak item] progress, _ in
             Task { @MainActor [weak self, weak item] in
@@ -174,6 +204,7 @@ struct DownloadRecord: Codable {
             return
         }
         item.name = URL(fileURLWithPath: suggestedFilename).lastPathComponent
+        if item.sourceURL == nil { item.sourceURL = download.originalRequest?.url ?? response.url }
         item.downloadOrigin =
             Self.websiteOrigin(for: response.url)
             ?? Self.websiteOrigin(for: download.originalRequest?.url)
@@ -317,9 +348,25 @@ struct DownloadRecord: Codable {
         guard queues[windowID]?.first === request else { return }
         request.item.destination = destination
         if let destination, let folder = transferFolder {
+
+            request.item.folderBookmark = false
+            if !FileManager.default.fileExists(atPath: destination.path) {
+                do {
+                    try Data().write(to: destination, options: .withoutOverwriting)
+                    request.item.reservedDestination = true
+                } catch {
+                    request.item.error = "couldn’t prepare the save location: " + error.localizedDescription
+                    request.completion(nil)
+                    finishSheet(windowID, request: request)
+                    return
+                }
+            }
             request.item.bookmark = try? destination.bookmarkData(
                 options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
-            let transfer = folder.appendingPathComponent(request.item.id.uuidString)
+            let transfer =
+                request.item.transferComplete
+                ? request.item.transfer ?? folder.appendingPathComponent(request.item.id.uuidString)
+                : folder.appendingPathComponent(request.item.id.uuidString)
             request.item.transfer = transfer
             request.completion(transfer)
         } else {
@@ -350,21 +397,28 @@ struct DownloadRecord: Codable {
     private func saveTransferredFile(_ item: DownloadItem) {
         do {
             var stale = false
-            let destination =
+            let resolved =
                 item.bookmark.flatMap {
                     try? URL(
                         resolvingBookmarkData: $0, options: .withSecurityScope, relativeTo: nil,
                         bookmarkDataIsStale: &stale)
-                } ?? item.destination
+                }
+            let scope = resolved ?? item.destination?.deletingLastPathComponent()
+            let destination =
+                item.folderBookmark
+                ? scope?.appendingPathComponent(item.destination?.lastPathComponent ?? item.name)
+                : resolved ?? item.destination
             guard let destination, let transfer = item.transfer else { throw CocoaError(.fileWriteUnknown) }
-            let access = destination.startAccessingSecurityScopedResource()
-            defer { if access { destination.stopAccessingSecurityScopedResource() } }
+            let access = scope?.startAccessingSecurityScopedResource() == true
+            defer { if access { scope?.stopAccessingSecurityScopedResource() } }
             try Self.completeTransfer(from: transfer, to: destination)
             item.destination = destination
             item.finished = true
+            item.reservedDestination = false
             item.error = nil
             item.transfer = nil
             item.bookmark = nil
+            if item.openWhenFinished { NSWorkspace.shared.open(destination) }
         } catch { item.error = "transfer complete, save failed: " + error.localizedDescription }
         persist()
     }
@@ -375,8 +429,10 @@ struct DownloadRecord: Codable {
         }
         item?.observation = nil
         item?.download = nil
-        item?.resumeData = item?.error == "blocked by website settings" ? nil : resumeData
+        item?.resumeData = ["blocked by website settings", "cancelled"].contains(item?.error ?? "") ? nil : resumeData
         item?.sourceWebView = nil
+        item?.starting = false
+        if let item, item.resumeData == nil { discardTransfer(item) }
         persist()
     }
     static func completeTransfer(from source: URL, to destination: URL) throws {
@@ -397,7 +453,9 @@ struct DownloadRecord: Codable {
         guard item.canRetrySave, item.profileID == window.selectedProfileID else { return }
         item.owner = window
         item.windowID = window.id
+        discardReservedDestination(item)
         item.error = nil
+        item.bookmark = nil
         queues[item.windowID, default: []].append(
             DestinationRequest(item: item) { [weak self, weak item] transfer in
                 guard transfer != nil, let item else { return }
@@ -406,7 +464,17 @@ struct DownloadRecord: Codable {
         presentNext(item.windowID)
     }
     func pause(_ item: DownloadItem) { stop(item, message: "paused") }
-    func cancel(_ item: DownloadItem) { stop(item, message: "cancelled") }
+    func cancel(_ item: DownloadItem) {
+        if item.download != nil {
+            stop(item, message: "cancelled")
+        } else {
+            item.error = "cancelled"
+            item.resumeData = nil
+            item.starting = false
+            discardTransfer(item)
+            persist()
+        }
+    }
     private func stop(_ item: DownloadItem, message: String) {
         guard item.download != nil else { return }
         item.error = message
@@ -420,7 +488,8 @@ struct DownloadRecord: Codable {
             guard let self, let item else { return }
             item.download = nil
             item.sourceWebView = nil
-            item.resumeData = data
+            item.resumeData = message == "paused" ? data : nil
+            if item.resumeData == nil { self.discardTransfer(item) }
             if item.privateMode && !self.items.contains(where: { $0.id == item.id }) {
                 item.resumeData = nil
                 if let transfer = item.transfer { try? FileManager.default.removeItem(at: transfer) }
@@ -431,7 +500,7 @@ struct DownloadRecord: Codable {
         persist()
     }
     func resume(_ item: DownloadItem, in window: BrowserWindowState) {
-        guard let data = item.resumeData, item.profileID == window.selectedProfileID,
+        guard !item.active, let data = item.resumeData, item.profileID == window.selectedProfileID,
             let web = window.selectedTab?.webView
         else { return }
         item.owner = window
@@ -442,16 +511,99 @@ struct DownloadRecord: Codable {
         }
         item.windowID = window.id
         item.error = nil
+        item.starting = true
+        item.resumeData = nil
         item.sourceWebView = web
         web.resumeDownload(fromResumeData: data) { [weak self, weak item] download in
             guard let self, let item else { return }
+            guard item.starting else {
+                download.cancel { _ in }
+                return
+            }
             self.observe(item, download)
             self.persist()
         }
     }
+    func restart(_ item: DownloadItem, in window: BrowserWindowState) {
+        guard item.canRestart, item.profileID == window.selectedProfileID,
+            let url = item.sourceURL, let web = window.selectedTab?.webView
+        else { return }
+        item.owner = window
+        guard permission(for: item) != false else { return }
+        discardTransfer(item)
+        item.windowID = window.id
+        item.error = nil
+        item.starting = true
+        item.fraction = 0
+        item.resumeData = nil
+        item.transferComplete = false
+        item.sourceWebView = web
+        web.startDownload(using: URLRequest(url: url)) { [weak self, weak item] download in
+            guard let self, let item else { return }
+            guard item.starting else {
+                download.cancel { _ in }
+                return
+            }
+            self.observe(item, download)
+            self.persist()
+        }
+    }
+    private func discardReservedDestination(_ item: DownloadItem) {
+        guard item.reservedDestination, let destination = item.destination else { return }
+        var stale = false
+        let scoped =
+            item.bookmark.flatMap {
+                try? URL(
+                    resolvingBookmarkData: $0, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &stale
+                )
+            } ?? destination
+        let access = scoped.startAccessingSecurityScopedResource()
+        defer { if access { scoped.stopAccessingSecurityScopedResource() } }
+        if (try? scoped.resourceValues(forKeys: [.fileSizeKey]).fileSize) == 0 {
+            try? FileManager.default.removeItem(at: scoped)
+        }
+        item.reservedDestination = false
+    }
+    private func discardTransfer(_ item: DownloadItem) {
+        discardReservedDestination(item)
+        if let transfer = item.transfer { try? FileManager.default.removeItem(at: transfer) }
+        item.transfer = nil
+        item.transferComplete = false
+    }
+    func remove(_ item: DownloadItem) {
+        guard !item.active else { return }
+        discardTransfer(item)
+        items.removeAll { $0.id == item.id }
+        persist()
+    }
+    func cleanupCache(olderThanDays days: Int, now: Date = Date()) {
+        guard let folder = transferFolder else { return }
+        let cutoff = now.addingTimeInterval(-Double(max(1, days)) * 86400)
+        for item in items
+        where !item.active && item.download == nil && item.resumeData == nil && !item.canRetrySave {
+            discardTransfer(item)
+        }
+        let retained = Set(
+            items.filter {
+                $0.download != nil || $0.active
+                    || (days == 0 || $0.date > cutoff) && ($0.resumeData != nil || $0.canRetrySave)
+            }
+            .compactMap { $0.transfer?.resolvingSymlinksInPath().path })
+        for url in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] {
+            if !retained.contains(url.resolvingSymlinksInPath().path) { try? FileManager.default.removeItem(at: url) }
+        }
+        for item in items
+        where !item.active && days > 0 && item.date <= cutoff && (item.transfer != nil || item.resumeData != nil) {
+            discardTransfer(item)
+            item.resumeData = nil
+            if !item.finished { item.error = "cached transfer expired" }
+        }
+        persist()
+    }
     private func updateDockProgress() {
+
+        guard let dock = NSApp?.dockTile else { return }
         let active = items.filter { $0.download != nil && $0.error == nil }
-        let dock = NSApp.dockTile
         guard !active.isEmpty else {
             dockTimer?.invalidate()
             dockTimer = nil
@@ -480,6 +632,11 @@ struct DownloadRecord: Codable {
         }
     }
     func prepareToQuit() async {
+        for item in items where item.starting && item.download == nil {
+            item.starting = false
+            item.error = "paused"
+            discardTransfer(item)
+        }
         for item in items where item.download != nil {
             guard let download = item.download else { continue }
             item.error = "paused"
@@ -488,6 +645,7 @@ struct DownloadRecord: Codable {
                 download.cancel { continuation.resume(returning: $0) }
             }
             item.resumeData = item.privateMode ? nil : data
+            if item.resumeData == nil { discardTransfer(item) }
             item.download = nil
             item.sourceWebView = nil
         }
@@ -504,7 +662,10 @@ struct DownloadRecord: Codable {
         if start == 0 { choosing.remove(id) }
     }
     func clear(profileID: UUID, since date: Date) {
-        items.removeAll { $0.profileID == profileID && $0.date >= date && $0.download == nil }
+        for item in items where item.profileID == profileID && item.date >= date && !item.active {
+            discardTransfer(item)
+        }
+        items.removeAll { $0.profileID == profileID && $0.date >= date && !($0.active) }
         persist()
     }
     func forgetPrivate(_ id: UUID) {

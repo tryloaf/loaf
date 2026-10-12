@@ -5,6 +5,12 @@ import SwiftUI
 enum LoafIcon: String, CaseIterable {
     case back = "←"
     case forward = "→"
+    case up = "↑"
+    case stop = "⏹"
+    case chat = "💬"
+    case document = "📜"
+    case quote = "❞"
+    case camera = "📷"
     case reload = "↻"
     case close = "✗"
     case plus = "+"
@@ -73,6 +79,12 @@ enum LoafIcon: String, CaseIterable {
         switch self {
         case .back: "arrow.left"
         case .forward: "arrow.right"
+        case .up: "arrow.up"
+        case .stop: "stop.fill"
+        case .chat: "bubble.right"
+        case .document: "doc.text"
+        case .quote: "text.quote"
+        case .camera: "camera"
         case .reload: "arrow.clockwise"
         case .close: "xmark"
         case .plus: "plus"
@@ -157,19 +169,21 @@ extension BrowserPage {
 
 @MainActor enum Golzheim {
     static let name = "GolzheimSansVAR-Regular"
-    static let font: NSFont? = {
+    static let bundledFontURL = Bundle.main.url(forResource: "GolzheimSansVAR", withExtension: "ttf")
+        ?? Bundle.main.url(forResource: "GolzheimSansVAR", withExtension: "ttf", subdirectory: "Fonts")
+    private static let bundledFont: CTFont? = bundledFontURL.flatMap { loadFont(at: $0) }
+    static let font: NSFont? = bundledFont.map { $0 as NSFont }
+    static func loadFont(at url: URL) -> CTFont? {
 
-        let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Fonts")
-        if let fonts = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
-            for url in fonts
-            where url.lastPathComponent.lowercased().contains("golzheimsans")
-                && !url.lastPathComponent.lowercased().contains("trial")
-            {
-                CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
-            }
-        }
-        return NSFont(name: name, size: 20)
-    }()
+        guard let provider = CGDataProvider(url: url as CFURL), let graphicsFont = CGFont(provider),
+              (graphicsFont.postScriptName as String?)?.hasPrefix("GolzheimSansVAR-") == true else { return nil }
+        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        let descriptor = CTFontDescriptorCreateWithAttributes([
+            kCTFontURLAttribute: url,
+            kCTFontVariationAttribute: [NSNumber(value: 0x77676874): 400],
+        ] as CFDictionary)
+        return CTFontCreateWithGraphicsFont(graphicsFont, 20, nil, descriptor)
+    }
     static var available: Bool { font != nil }
     private static var cache: [String: NSImage] = [:]
     private static var fonts: [String: CTFont] = [:]
@@ -178,10 +192,10 @@ extension BrowserPage {
         min(300, 100 + max(0, size - 16) * 16)
     }
     static func iconFont(size: CGFloat, weight override: CGFloat? = nil, arrows: Bool = false) -> CTFont? {
-        guard size.isFinite, size > 0, size <= 512, let font else { return nil }
+        guard size.isFinite, size > 0, size <= 512, let bundledFont else { return nil }
         let key = "\(size)-\(override ?? weight(for: size))-\(arrows)"
         if let cached = fonts[key] { return cached }
-        let base = CTFontCreateWithName(font.fontName as CFString, size, nil)
+        let base = CTFontCreateCopyWithAttributes(bundledFont, size, nil, nil)
 
         let descriptor = CTFontDescriptorCreateCopyWithVariation(
             CTFontCopyFontDescriptor(base), NSNumber(value: 0x77676874), override ?? weight(for: size))
@@ -194,7 +208,7 @@ extension BrowserPage {
                         [kCTFontOpenTypeFeatureTag: "ss11", kCTFontOpenTypeFeatureValue: 1]
                     ]
                 ] as CFDictionary) : descriptor
-        let result = CTFontCreateWithFontDescriptor(styled, size, nil)
+        let result = CTFontCreateCopyWithAttributes(base, size, nil, styled)
         if fonts.count >= 64 { fonts.removeAll(keepingCapacity: true) }
         fonts[key] = result
         return result
@@ -246,7 +260,13 @@ extension BrowserPage {
     ) -> NSImage? {
         let key = "\(glyph)-\(size)-\(weight ?? self.weight(for: size))-\(filled)-\(fitInk)"
         if let image = cache[key] { return image }
-        let arrows = [LoafIcon.back, .forward, .external, .expand, .collapse, .reload].contains { $0.rawValue == glyph }
+        if [LoafIcon.expand.rawValue, LoafIcon.collapse.rawValue, LoafIcon.info.rawValue].contains(glyph) {
+            guard let image = composedIcon(glyph, size: size, weight: weight) else { return nil }
+            if cache.count >= 1024 { cache.removeAll(keepingCapacity: true) }
+            cache[key] = image
+            return image
+        }
+        let arrows = [LoafIcon.back, .forward, .up, .external, .expand, .collapse, .reload].contains { $0.rawValue == glyph }
         guard let face = iconFont(size: size, weight: weight, arrows: arrows) else { return nil }
         let chars = Array(glyph.utf16)
         var glyphs = [CGGlyph](repeating: 0, count: chars.count)
@@ -317,6 +337,52 @@ extension BrowserPage {
         cache[key] = image
         return image
     }
+    private static func composedIcon(_ glyph: String, size: CGFloat, weight: CGFloat?) -> NSImage? {
+
+        guard size.isFinite, size > 0, size <= 512 else { return nil }
+        let info = glyph == LoafIcon.info.rawValue
+        guard let face = iconFont(size: size * (info ? 0.85 : 0.7), weight: weight, arrows: !info) else { return nil }
+        let text = info ? "i" : LoafIcon.external.rawValue
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text,
+            attributes: [NSAttributedString.Key(kCTFontAttributeName as String): face]))
+        guard let runs = CTLineGetGlyphRuns(line) as? [CTRun], let run = runs.first,
+              CTRunGetGlyphCount(run) == 1 else { return nil }
+        var shaped = CGGlyph()
+        CTRunGetGlyphs(run, CFRange(location: 0, length: 1), &shaped)
+        guard let path = CTFontCreatePathForGlyph(face, shaped, nil), !path.boundingBoxOfPath.isEmpty else { return nil }
+        let bounds = path.boundingBoxOfPath
+        let result = NSImage(size: NSSize(width: size + 4, height: size + 4), flipped: false) { rect in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            context.setFillColor(NSColor.black.cgColor)
+            if info {
+                context.setStrokeColor(NSColor.black.cgColor)
+                context.setLineWidth(max(0.6, size * 0.055))
+                context.strokeEllipse(in: rect.insetBy(dx: 3, dy: 3))
+                context.translateBy(x: rect.midX - bounds.midX, y: rect.midY - bounds.midY)
+                context.addPath(path)
+                context.fillPath()
+            } else {
+                let scale = size * 0.45 / max(bounds.width, bounds.height)
+                let offset = size * 0.23
+                let inward = glyph == LoafIcon.collapse.rawValue
+                for upperRight in [false, true] {
+                    context.saveGState()
+                    let direction: CGFloat = upperRight ? 1 : -1
+                    context.translateBy(x: rect.midX + direction * offset, y: rect.midY + direction * offset)
+                    if upperRight == inward { context.rotate(by: .pi) }
+                    context.scaleBy(x: scale, y: scale)
+                    context.translateBy(x: -bounds.midX, y: -bounds.midY)
+                    context.addPath(path)
+                    context.fillPath()
+                    context.restoreGState()
+                }
+            }
+            return true
+        }
+        result.isTemplate = true
+        return result
+    }
+
 }
 
 struct GolzheimIcon: View {
@@ -328,8 +394,7 @@ struct GolzheimIcon: View {
         Group {
             if let image = Golzheim.image(
                 icon.rawValue, size: size, weight: weight, filled: filled,
-                fitInk: [.plus, .tray, .disclosureDown, .disclosureUp].contains(icon)
-                    || [.back, .forward, .reload].contains(icon))
+                fitInk: true)
             {
                 Image(nsImage: image).renderingMode(.template).resizable().scaledToFit()
             } else {

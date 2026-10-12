@@ -109,11 +109,6 @@ struct OnboardingView: View {
                         }))
             }.modifier(AppearancePreviewHover(option: .titlebar, selection: $appearanceDemo))
             Divider()
-            option("soften sidebar resizing") {
-                Toggle("soften sidebar resizing", isOn: preference(\.resizeTransition, fallback: true))
-            }
-            .modifier(AppearancePreviewHover(option: .resizing, selection: $appearanceDemo))
-            Divider()
             option("tint wonderbar") { Toggle("tint wonderbar", isOn: preference(\.tintWonderbar, fallback: false)) }
                 .modifier(AppearancePreviewHover(option: .wonderbarTint, selection: $appearanceDemo))
         }.font(.system(size: 12)).toggleStyle(.switch).controlSize(.small)

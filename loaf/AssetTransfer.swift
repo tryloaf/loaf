@@ -26,10 +26,12 @@ nonisolated final class AssetTransfer: @unchecked Sendable {
     private var redirects = 0
     private let allowHTTP: Bool
     private let originalURL: URL?
-    init(limit: Int, allowHTTP: Bool = false, originalURL: URL? = nil) {
+    private let allowsRedirects: Bool
+    init(limit: Int, allowHTTP: Bool = false, originalURL: URL? = nil, allowsRedirects: Bool = true) {
         body = AssetBody(limit: limit)
         self.allowHTTP = allowHTTP
         self.originalURL = originalURL
+        self.allowsRedirects = allowsRedirects
     }
     func start(_ task: URLSessionDataTask, continuation: CheckedContinuation<Data, Error>) -> Bool {
         lock.lock()
@@ -101,7 +103,7 @@ nonisolated final class AssetTransfer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         redirects += 1
-        guard let url = request.url else { return false }
+        guard allowsRedirects, let url = request.url else { return false }
         guard result == nil, redirects <= 5, url.host != nil, url.user == nil, url.password == nil else {
             return false
         }

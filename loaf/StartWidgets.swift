@@ -18,11 +18,12 @@ struct StartWidgetGrid<Content: View>: View {
 }
 
 nonisolated enum StartWidgetKind: String, CaseIterable, Identifiable, Sendable {
-    case pins, clock, weather, recent, notes, calendar, downloads, checklist, worldClock, timer, stopwatch, battery,
+    case search, pins, clock, weather, recent, notes, calendar, downloads, checklist, worldClock, timer, stopwatch, battery,
         browsingTime
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .search: "search or surf…"
         case .battery: "battery"
         case .browsingTime: "browsing time"
         case .pins: "favorites"
@@ -40,6 +41,7 @@ nonisolated enum StartWidgetKind: String, CaseIterable, Identifiable, Sendable {
     }
     var glyph: String {
         switch self {
+        case .search: "⌕"
         case .battery: "🔋"
         case .browsingTime: "⌛"
         case .pins: "★"
@@ -56,6 +58,7 @@ nonisolated enum StartWidgetKind: String, CaseIterable, Identifiable, Sendable {
     }
     var detail: String {
         switch self {
+        case .search: "open the wonderbar"
         case .battery: "battery level and power saver status"
         case .browsingTime: "opt-in site totals, kept on this Mac"
         case .pins: "saved websites"
@@ -73,6 +76,7 @@ nonisolated enum StartWidgetKind: String, CaseIterable, Identifiable, Sendable {
     }
     var symbol: String {
         switch self {
+        case .search: "magnifyingglass"
         case .pins: "star"
         case .clock: "clock"
         case .weather: "cloud.sun"
@@ -91,8 +95,8 @@ nonisolated enum StartWidgetKind: String, CaseIterable, Identifiable, Sendable {
 }
 
 nonisolated enum StartWidgetSize: String, CaseIterable, Codable, Equatable, Sendable {
-    case small, square, wide, tall, large
-    var columns: Int { self == .wide || self == .large ? 2 : 1 }
+    case small, square, wide, tall, large, banner
+    var columns: Int { self == .banner ? 2 : self == .wide || self == .large ? 2 : 1 }
     var rows: Int { self == .tall || self == .large ? 2 : 1 }
     static func squareSide(columnWidth: CGFloat) -> CGFloat {
         columnWidth >= 16 ? (columnWidth - 16) / 2 : max(0, columnWidth)
@@ -103,7 +107,7 @@ nonisolated enum StartWidgetSize: String, CaseIterable, Codable, Equatable, Send
         return CGFloat(span) * columnWidth + CGFloat(span - 1) * 16
     }
     func height(columnWidth: CGFloat) -> CGFloat {
-        self == .square ? Self.squareSide(columnWidth: columnWidth) : CGFloat(rows) * 192 - 16
+        self == .banner ? 56 : self == .square ? Self.squareSide(columnWidth: columnWidth) : CGFloat(rows) * 192 - 16
     }
     static func resized(from size: Self, translation: CGSize, columnWidth: CGFloat, columns: Int) -> Self {
         let width = size.width(columnWidth: columnWidth, columns: columns) + translation.width
@@ -165,17 +169,21 @@ struct StartWidgetLayout {
     let columns: Int
     let columnWidth: CGFloat
     let height: CGFloat
+    private let firstRowReduction: CGFloat
     var gridColumns: Int { columns * (columnWidth >= 16 ? 2 : 1) }
     var gridStride: CGSize {
         CGSize(
             width: StartWidgetSize.squareSide(columnWidth: columnWidth) + 16,
             height: max(176, StartWidgetSize.squareSide(columnWidth: columnWidth)) + 16)
     }
+    func rowOrigin(_ row: Int) -> CGFloat {
+        CGFloat(row) * gridStride.height - (row > 0 ? firstRowReduction : 0)
+    }
     func position(at point: CGPoint, size: StartWidgetSize) -> StartWidgetPosition {
         let span = size == .square ? 1 : min(columns, size.columns) * (columnWidth >= 16 ? 2 : 1)
         return StartWidgetPosition(
             column: Int(min(CGFloat(gridColumns - span), max(0, (point.x.isFinite ? point.x : 0) / gridStride.width))),
-            row: Int(min(128, max(0, (point.y.isFinite ? point.y : 0) / gridStride.height))))
+            row: Int(min(128, max(0, ((point.y.isFinite ? point.y : 0) + (point.y >= 72 ? firstRowReduction : 0)) / gridStride.height))))
     }
     var positions: [String: StartWidgetPosition] {
         Dictionary(
@@ -188,7 +196,7 @@ struct StartWidgetLayout {
                     position(
                         at: CGPoint(
                             x: placement.frame.minX + gridStride.width / 2,
-                            y: placement.frame.minY + gridStride.height / 2), size: size)
+                            y: placement.frame.minY + min(placement.frame.height / 2, gridStride.height / 2)), size: size)
                 )
             })
     }
@@ -196,9 +204,15 @@ struct StartWidgetLayout {
         widgets: [String], sizes: [String: StartWidgetSize], positions: [String: StartWidgetPosition] = [:],
         width: CGFloat
     ) {
+
+        var sizes = sizes
+        sizes["search"] = .banner
         let width = width.isFinite ? max(0, width) : 0
         let columns = width >= 560 ? 2 : 1
         let columnWidth = max(0, (width - CGFloat(columns - 1) * 16) / CGFloat(columns))
+        let compactSearchRow = widgets.contains("search") && sizes["search"] == .banner
+            && (positions["search"]?.row == 0 || (positions.isEmpty && widgets.first == "search"))
+        let searchRowReduction = max(176, StartWidgetSize.squareSide(columnWidth: columnWidth)) + 16 - 72
         if !positions.isEmpty {
             let subdivisions = columnWidth >= 16 ? 2 : 1
             let gridColumns = columns * subdivisions
@@ -246,11 +260,18 @@ struct StartWidgetLayout {
             }
             self.columns = columns
             self.columnWidth = columnWidth
-            placements = ids.compactMap { placed[$0] }
+
+            let reduction = placed["search"]?.frame.minY == 0 ? searchRowReduction : 0
+            firstRowReduction = reduction
+            placements = ids.compactMap { placed[$0] }.map { placement in
+                Placement(id: placement.id, frame: placement.frame.offsetBy(
+                    dx: 0, dy: placement.frame.minY > 0 ? -reduction : 0))
+            }
             self.height = placements.map(\.frame.maxY).max() ?? 0
             return
         }
-        if widgets.contains(where: { sizes[$0] == .square }) {
+        firstRowReduction = compactSearchRow ? searchRowReduction : 0
+        if widgets.contains(where: { sizes[$0] == .square || sizes[$0] == .banner }) {
 
             let subdivisions = columnWidth >= 16 ? 2 : 1
             let compactColumns = columns * subdivisions
@@ -272,7 +293,7 @@ struct StartWidgetLayout {
                     height: size.height(columnWidth: columnWidth))
                 result.append(Placement(id: id, frame: frame))
 
-                let occupiedHeight = max(frame.height, max(176, side))
+                let occupiedHeight = size == .banner ? frame.height : max(frame.height, max(176, side))
                 for index in column..<column + span { bottoms[index] = frame.minY + occupiedHeight + 16 }
             }
             self.columns = columns
@@ -284,7 +305,6 @@ struct StartWidgetLayout {
         var occupied = Set<Int>()
         var result: [Placement] = []
         var cursor = 0
-        var bottom = 0
         var seen = Set<String>()
         for id in widgets where StartWidgetKind(rawValue: id) != nil && seen.insert(id).inserted {
             let size = sizes[id] ?? .small
@@ -296,11 +316,11 @@ struct StartWidgetLayout {
                 if column + span <= columns && cells.allSatisfy({ !occupied.contains($0) }) {
                     occupied.formUnion(cells)
                     let frame = CGRect(
-                        x: CGFloat(column) * (columnWidth + 16), y: CGFloat(row) * 192,
+                        x: CGFloat(column) * (columnWidth + 16),
+                        y: CGFloat(row) * 192 - (row > 0 ? firstRowReduction : 0),
                         width: CGFloat(span) * columnWidth + CGFloat(span - 1) * 16,
-                        height: CGFloat(size.rows) * 176 + CGFloat(size.rows - 1) * 16)
+                        height: size.height(columnWidth: columnWidth))
                     result.append(Placement(id: id, frame: frame))
-                    bottom = max(bottom, row + size.rows)
                     cursor += span
                     break
                 }
@@ -310,7 +330,7 @@ struct StartWidgetLayout {
         self.columns = columns
         self.columnWidth = columnWidth
         placements = result
-        height = bottom == 0 ? 0 : CGFloat(bottom) * 192 - 16
+        height = result.map(\.frame.maxY).max() ?? 0
     }
 }
 

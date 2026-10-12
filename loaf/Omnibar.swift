@@ -5,7 +5,11 @@ import SwiftUI
 nonisolated enum OmnibarMetrics {
     static func layout(in height: Double) -> (top: Double, suggestions: Double) {
         let suggestions = min(228, max(36, height - 108))
-        return (max(12, (height - (56 + 1 + suggestions + 28)) / 2), suggestions)
+        return (max(12, (height - (56 + 1 + suggestions + 30)) / 2), suggestions)
+    }
+    static func suggestionsHeight(count: Int, maximum: Double) -> Double {
+        guard count > 0 else { return 0 }
+        return min(maximum, Double(count) * 32 + Double(count - 1) * 4 + 16)
     }
     static func width(in available: Double) -> Double {
         guard available.isFinite else { return 520 }
@@ -33,13 +37,13 @@ struct Suggestion: Identifiable {
     var visibleDetail: String {
         guard defaultSearchQuery != nil else { return BrowserAddress.visible(detail) }
         if kind == .tab { return detail }
-        return kind == .favorite ? "favorite · Google search" : "Google search"
+        return kind == .favorite ? "favorite – Google search" : "Google search"
     }
     var preview: String {
-        if let query = defaultSearchQuery { return "google search · " + query }
-        if kind == .search { return detail + " · " + title }
+        if let query = defaultSearchQuery { return "google search – " + query }
+        if kind == .search { return detail + " – " + title }
         let address = BrowserAddress.display(siteURL)
-        return visibleTitle == address || id == "input" ? address : visibleTitle + " · " + address
+        return visibleTitle == address || id == "input" ? address : visibleTitle + " – " + address
     }
 }
 
@@ -208,7 +212,8 @@ nonisolated enum HistorySuggestionWork {
             if index & 255 == 0, Task.isCancelled { return [] }
             guard let score = row.score(query: query) else { continue }
             let visit = row.visit
-            let adjusted = score + (emptyQuery ? 35 : 20)
+            let adjusted =
+                score + (emptyQuery ? 35 : 20)
                 + min(20, log2(Double((addressVisits[visit.address] ?? 1) + 1)) * 5)
                 + max(0, 12 - now.timeIntervalSince(visit.date) / 86400)
                 - (row.savedSearch ? 15 : 0)
@@ -330,9 +335,10 @@ nonisolated enum HistorySuggestionWork {
         let file = store.application.directory.appendingPathComponent("WonderbarChoices.json")
         guard learningFile != file else { return }
         learningFile = file
-        learnedChoices = (try? Data(contentsOf: file)).flatMap {
-            try? JSONDecoder().decode([LearnedChoice].self, from: $0)
-        } ?? []
+        learnedChoices =
+            (try? Data(contentsOf: file)).flatMap {
+                try? JSONDecoder().decode([LearnedChoice].self, from: $0)
+            } ?? []
     }
     func remember(_ suggestion: Suggestion, query: String, store: BrowserStore) {
         guard !store.profile.privateMode, suggestion.id != "input", suggestion.id != "search-input",
@@ -348,8 +354,10 @@ nonisolated enum HistorySuggestionWork {
             learnedChoices[index].count = min(100, learnedChoices[index].count + 1)
             learnedChoices[index].lastUsed = Date()
         } else {
-            learnedChoices.append(LearnedChoice(
-                profile: store.selectedProfileID, query: value, destination: destination, count: 1, lastUsed: Date()))
+            learnedChoices.append(
+                LearnedChoice(
+                    profile: store.selectedProfileID, query: value, destination: destination, count: 1, lastUsed: Date()
+                ))
         }
         if learnedChoices.count > 500 {
             learnedChoices.sort { $0.lastUsed > $1.lastUsed }
@@ -362,9 +370,11 @@ nonisolated enum HistorySuggestionWork {
     private func learnedBoost(for suggestion: Suggestion, query: String, profile: UUID) -> Double {
         guard !query.isEmpty else { return 0 }
         let destination = canonical(suggestion.destination, kind: suggestion.kind)
-        guard let choice = learnedChoices.first(where: {
-            $0.profile == profile && $0.query == query && $0.destination == destination
-        }) else { return 0 }
+        guard
+            let choice = learnedChoices.first(where: {
+                $0.profile == profile && $0.query == query && $0.destination == destination
+            })
+        else { return 0 }
         return min(28, log2(Double(choice.count + 1)) * 10)
     }
     var selected: Int {
@@ -424,15 +434,19 @@ nonisolated enum HistorySuggestionWork {
             else { return suggestion }
             return Suggestion(
                 id: "tab-\(tab.id)", title: tab.sidebarTitle,
-                detail: tab.windowID == store.id ? "switch to tab" : "switch to tab · other window", icon: .sidebar,
+                detail: tab.windowID == store.id ? "switch to tab" : "switch to tab – other window", icon: .sidebar,
                 destination: tab.url!.absoluteString, tabID: tab.id, kind: .tab)
         }
         var ranking = SuggestionRanking.Accumulator(limit: 40, transform: tabAction) {
             self.canonical($0.destination, kind: $0.kind)
         }
         func adjustedScore(_ value: Suggestion, score: Double) -> Double {
-            var adjusted = score + (store.profile.privateMode ? 0 : learnedBoost(
-                for: value, query: text.lowercased(), profile: store.selectedProfileID))
+            var adjusted =
+                score
+                + (store.profile.privateMode
+                    ? 0
+                    : learnedBoost(
+                        for: value, query: text.lowercased(), profile: store.selectedProfileID))
             guard let domainPrefix else { return adjusted }
             let url = value.kind == .search || value.kind == .page ? nil : URL(string: value.destination)
             let host = url?.host?.lowercased() ?? ""
@@ -485,7 +499,7 @@ nonisolated enum HistorySuggestionWork {
                 consider(
                     Suggestion(
                         id: "tab-\(tab.id)", title: title,
-                        detail: tab.windowID == store.id ? "switch to tab" : "switch to tab · other window",
+                        detail: tab.windowID == store.id ? "switch to tab" : "switch to tab – other window",
                         icon: .sidebar, destination: address, tabID: tab.id, kind: .tab),
                     score: score + (needle.isEmpty ? 25 : 40))
             }
@@ -498,7 +512,7 @@ nonisolated enum HistorySuggestionWork {
                 consider(
                     Suggestion(
                         id: "favorite-\(favorite.id)", title: favorite.title,
-                        detail: "favorite · " + BrowserAddress.suggestionLabel(URL(string: favorite.address)),
+                        detail: "favorite – " + BrowserAddress.suggestionLabel(URL(string: favorite.address)),
                         icon: .favorite, destination: favorite.address, kind: .favorite),
                     score: score + (needle.isEmpty ? 65 : 35))
             }
@@ -592,23 +606,27 @@ nonisolated enum HistorySuggestionWork {
             }
         }
 
-        let baseLocal = ranking.scoredResults + (inputAction.map {
-            [($0, $0.kind == .site ? 200.0 : 70.0)]
-        } ?? [])
+        let baseLocal =
+            ranking.scoredResults
+            + (inputAction.map {
+                [($0, $0.kind == .site ? 200.0 : 70.0)]
+            } ?? [])
         let baseResults = ranked(baseLocal, query: text, domainPrefix: domainPrefix)
         publish(baseResults)
 
         let historyRows = preparedHistory
         let historyAddressVisits = addressVisits
         let historyNow = Date()
-        let remoteEligible = text.count >= 2 && text.count <= 200 && !store.profile.privateMode
+        let remoteEligible =
+            text.count >= 2 && text.count <= 200 && !store.profile.privateMode
             && (store.preferences.googleSuggestions || store.preferences.remoteSites == true)
             && !text.contains("/") && !text.contains(":") && !text.contains("@") && !text.contains(".")
             && BrowserAddress.resolve(text)?.host == "www.google.com"
         let searches = store.preferences.googleSuggestions
         let sites = store.preferences.remoteSites == true
         let provider = store.preferences.suggestionProvider ?? .google
-        let remoteKey = remoteEligible
+        let remoteKey =
+            remoteEligible
             ? CacheKey(
                 profile: store.selectedProfileID, query: text, searches: searches, sites: sites, provider: provider)
             : nil
@@ -644,13 +662,19 @@ nonisolated enum HistorySuggestionWork {
                     if remoteSuggestion.kind == .site {
                         let host = suggestion.siteURL?.host?.lowercased() ?? ""
                         let shortHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
-                        score = 156 - Double(index * 4)
+                        score =
+                            156 - Double(index * 4)
                             + (domainPrefix.map { shortHost.hasPrefix($0) } == true ? 160 : 0)
                     } else {
                         score = 125 - Double(index * 4)
                     }
-                    candidates.append((suggestion, score + learnedBoost(
-                        for: suggestion, query: text.lowercased(), profile: store.selectedProfileID)))
+                    candidates.append(
+                        (
+                            suggestion,
+                            score
+                                + learnedBoost(
+                                    for: suggestion, query: text.lowercased(), profile: store.selectedProfileID)
+                        ))
                 }
                 publish(ranked(candidates, query: text, domainPrefix: domainPrefix), remoteUpdate: true)
                 if Date().timeIntervalSince(cached.date) < 15 { return }
@@ -679,13 +703,19 @@ nonisolated enum HistorySuggestionWork {
                     if remoteSuggestion.kind == .site {
                         let host = suggestion.siteURL?.host?.lowercased() ?? ""
                         let shortHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
-                        score = 156 - Double(index * 4)
+                        score =
+                            156 - Double(index * 4)
                             + (domainPrefix.map { shortHost.hasPrefix($0) } == true ? 160 : 0)
                     } else {
                         score = 125 - Double(index * 4)
                     }
-                    candidates.append((suggestion, score + learnedBoost(
-                        for: suggestion, query: text.lowercased(), profile: store.selectedProfileID)))
+                    candidates.append(
+                        (
+                            suggestion,
+                            score
+                                + learnedBoost(
+                                    for: suggestion, query: text.lowercased(), profile: store.selectedProfileID)
+                        ))
                 }
                 publish(ranked(candidates, query: text, domainPrefix: domainPrefix), remoteUpdate: true)
                 remoteLoading = false
@@ -707,8 +737,11 @@ nonisolated enum HistorySuggestionWork {
 
         if !query.isEmpty && domainPrefix == nil {
             sorted = sorted.map { suggestion, score in
-                (suggestion, suggestion.id == "input" && suggestion.kind == .search
-                    ? max(score, query.contains(where: { $0.isWhitespace }) ? 185 : 160) : score)
+                (
+                    suggestion,
+                    suggestion.id == "input" && suggestion.kind == .search
+                        ? max(score, query.contains(where: { $0.isWhitespace }) ? 185 : 160) : score
+                )
             }.sorted { $0.1 == $1.1 ? $0.0.id < $1.0.id : $0.1 > $1.1 }
         }
         var chosen: [Suggestion] = []
@@ -716,7 +749,8 @@ nonisolated enum HistorySuggestionWork {
         var domains: [String: Int] = [:]
         var kinds: [SuggestionKind: Int] = [:]
         func take(_ suggestion: Suggestion) -> Bool {
-            let key = suggestion.kind == .search
+            let key =
+                suggestion.kind == .search
                 ? "search-query:" + suggestion.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 : canonical(suggestion.destination, kind: suggestion.kind)
             guard !keys.contains(key), chosen.count < 6 else { return false }
@@ -747,6 +781,10 @@ nonisolated enum HistorySuggestionWork {
             chosen.append(input)
         }
         return chosen
+    }
+    func historyChanged(store: BrowserStore) {
+        historySignature = nil
+        prepareHistory(for: store)
     }
     private func prepareHistory(for store: BrowserStore) {
         let profile = store.profile
@@ -840,7 +878,16 @@ nonisolated enum HistorySuggestionWork {
     }
     private func publish(_ values: [Suggestion], remoteUpdate: Bool = false) {
 
-        if remoteUpdate && keyboardSelection { return }
+        if remoteUpdate && keyboardSelection && values.contains(where: { $0.id == selectedID }) {
+            let surviving = suggestions.compactMap { previous in values.first { $0.id == previous.id } }
+            suggestions = surviving + values.filter { next in !surviving.contains { $0.id == next.id } }
+            publishedQuery = previousQuery
+            return
+        }
+        if !values.contains(where: { $0.id == selectedID }) {
+            keyboardSelection = false
+            explicitSelection = false
+        }
         let old = selectedID
         suggestions = values
         publishedQuery = previousQuery
@@ -968,6 +1015,17 @@ struct SuggestionIcon: View {
             }
     }
 }
+private struct OmnibarPanelHeight: AnimatableModifier {
+    var height: CGFloat
+    var animatableData: CGFloat {
+        get { height }
+        set { height = newValue }
+    }
+    func body(content: Content) -> some View {
+        content.frame(height: height, alignment: .top).clipped()
+    }
+}
+
 struct OmnibarView: View {
     private enum ModifiedAction {
         case alternateSearch, newTab, backgroundTab, copyAddress
@@ -998,6 +1056,7 @@ struct OmnibarView: View {
         let query = store.omnibarQuery
         let current = engine.represents(query, profile: profileID)
         let displayed = engine.belongs(to: profileID) ? engine.suggestions : []
+        let rowsHeight = OmnibarMetrics.suggestionsHeight(count: displayed.count, maximum: suggestionHeight)
         let selectedAction = engine.action(query: query, profile: profileID)
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
@@ -1051,7 +1110,7 @@ struct OmnibarView: View {
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: closeHovered)
                     .accessibilityLabel("close wonderbar")
             }.padding(16)
-            if current && !displayed.isEmpty {
+            if !displayed.isEmpty {
                 Divider()
                 VStack(spacing: 4) {
                     ForEach(Array(displayed.enumerated()), id: \.element.id) { index, suggestion in
@@ -1106,13 +1165,13 @@ struct OmnibarView: View {
                         }.accessibilityLabel("\(suggestion.visibleTitle), \(actionDetail(for: suggestion))")
                     }
                 }.padding(8).frame(
-                    height: min(suggestionHeight, CGFloat(engine.suggestions.count) * 36 + 12), alignment: .top
+                    height: rowsHeight, alignment: .top
                 ).clipped()
-
-                    .transaction { $0.animation = nil }
+                    .allowsHitTesting(current)
+                    .transition(.opacity)
             }
             HStack(spacing: 5) {
-                EmojiIcon(glyph: store.profile.emoji, size: 12)
+                ProfileIcon(profile: store.profile, size: 12)
                 Text(store.profile.name)
                 Spacer(minLength: 8)
                 Text("⇥")
@@ -1130,7 +1189,10 @@ struct OmnibarView: View {
             }.font(.system(size: 10)).lineLimit(1).foregroundStyle(.secondary).padding(.horizontal, 16).padding(
                 .vertical, 8)
 
-        }.frame(width: width, alignment: .top).clipped().background {
+        }.frame(width: width, alignment: .top)
+            .modifier(OmnibarPanelHeight(height: 56 + 30 + (displayed.isEmpty ? 0 : 1 + rowsHeight)))
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: rowsHeight)
+            .background {
             ProfileWindowSurface(
                 color: store.profile.privateMode ? PrivateChrome.surface : Color(nsColor: .controlBackgroundColor),
                 transparency: store.profile.personalization?.windowTransparency ?? 0, withinWindow: true
@@ -1258,7 +1320,8 @@ struct OmnibarView: View {
         let suggestion = engine.action(for: chosen, query: store.omnibarQuery, profile: profileID)
         guard chosen == nil || suggestion != nil else { return true }
         if action == .alternateSearch {
-            let query = suggestion?.kind == .search && suggestion?.id != "input"
+            let query =
+                suggestion?.kind == .search && suggestion?.id != "input"
                 ? suggestion?.title ?? store.omnibarQuery : store.omnibarQuery
             store.performAlternateSearch(query)
             return true

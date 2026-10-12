@@ -12,8 +12,14 @@ nonisolated struct ImportBrowser: Identifiable, Sendable {
 
     var isSafari: Bool { id == "com.apple.Safari" || id == "com.apple.SafariTechnologyPreview" }
     var suggestedFolder: URL? {
-        if isSafari, let cookies = roots.first(where: { $0.path.hasSuffix("/Data/Library/Cookies") }) {
-            return cookies.deletingLastPathComponent()
+        if isSafari {
+            let folder = id == "com.apple.Safari" ? "Safari" : "SafariTechnologyPreview"
+            if let browsingData = roots.first(where: {
+                $0.lastPathComponent == folder && !$0.pathComponents.contains("Containers")
+                    && !$0.pathComponents.contains("Group Containers")
+            }) {
+                return browsingData
+            }
         }
         return roots.first(where: { FileManager.default.fileExists(atPath: $0.path) }) ?? roots.first
     }
@@ -38,11 +44,20 @@ nonisolated struct ImportBrowser: Identifiable, Sendable {
             }
             if let library {
 
-                selectedRoots = [library.appendingPathComponent("Safari"), library.appendingPathComponent("Cookies")]
+                selectedRoots = roots + [library.appendingPathComponent("Safari"), library.appendingPathComponent("Cookies")]
+            } else if ["Safari", "SafariTechnologyPreview", "Cookies"].contains(folder.lastPathComponent),
+                !folder.pathComponents.contains("Profiles")
+            {
+                selectedRoots = roots + [folder]
             }
         }
         return .init(
-            id: id, name: name, applicationURL: applicationURL, roots: selectedRoots,
+            id: id, name: name, applicationURL: applicationURL,
+            roots: selectedRoots.reduce(into: [URL]()) { result, root in
+                if !result.contains(where: { $0.standardizedFileURL.path == root.standardizedFileURL.path }) {
+                    result.append(root)
+                }
+            },
             safeStorageService: safeStorageService)
     }
 }

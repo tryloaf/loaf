@@ -3,7 +3,8 @@ import SwiftUI
 
 nonisolated enum SettingsNavigation {
     static let sections = [
-        "general", "appearance", "search", "profiles", "websites", "privacy", "passwords", "extensions", "advanced", "sync",
+        "general", "appearance", "search", "profiles", "websites", "privacy", "passwords", "extensions", "advanced",
+        "sync",
     ]
     enum Shortcut: Equatable {
         case search
@@ -38,7 +39,8 @@ extension NSHostingView: FixedSettingsContent {
     weak var titlebarContentAnchor: NSView?
     private var titlebarPromoted = false
     private var materialFrame = NSRect.zero
-    func setTitlebarPromoted(_ promoted: Bool) {
+    func setTitlebarPromoted(_ promoted: Bool, title: String) {
+        titlebarMaterial.heading.stringValue = title
         guard promoted != titlebarPromoted else { return }
         titlebarPromoted = promoted
         let destination = materialFrame.offsetBy(dx: 0, dy: promoted ? 0 : 6)
@@ -78,7 +80,6 @@ extension NSHostingView: FixedSettingsContent {
         if titlebarMaterial.superview !== contentView {
             titlebarMaterial.removeFromSuperview()
 
-
             contentView.addSubview(titlebarMaterial, positioned: .above, relativeTo: nil)
             titlebarMaterial.autoresizingMask = [.width, .minYMargin]
         }
@@ -103,6 +104,7 @@ extension NSHostingView: FixedSettingsContent {
         titlebarMaterial.frame = next.offsetBy(dx: 0, dy: titlebarPromoted ? 0 : 6)
     }
     private final class TitlebarMaterial: NSVisualEffectView {
+        let heading = NSTextField(labelWithString: "")
         init() {
             super.init(frame: .zero)
             alphaValue = 0
@@ -111,6 +113,18 @@ extension NSHostingView: FixedSettingsContent {
             state = .active
             identifier = .init("loaf.settings.titlebarMaterial")
             setAccessibilityElement(false)
+            heading.font = .systemFont(ofSize: 13, weight: .semibold)
+            heading.textColor = .labelColor
+            heading.alignment = .center
+            heading.translatesAutoresizingMaskIntoConstraints = false
+            heading.identifier = .init("loaf.settings.sectionTitle")
+            addSubview(heading)
+            NSLayoutConstraint.activate([
+                heading.centerXAnchor.constraint(equalTo: centerXAnchor),
+                heading.centerYAnchor.constraint(equalTo: centerYAnchor),
+                heading.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
+                heading.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            ])
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }

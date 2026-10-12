@@ -1,6 +1,5 @@
 import Foundation
 
-
 nonisolated struct SyncStamp: Codable, Equatable, Comparable, Sendable {
     var counter: UInt64
     var device: String
@@ -57,11 +56,11 @@ nonisolated enum ICloudSyncProjection {
 
     static let preferenceKeys: Set<String> = [
         "haptics", "showLinkPreview", "fahrenheit", "sidebarWidth", "alternateSearch", "capitalizeMenus",
-        "userAgentMode", "restoreSession", "warnBeforeQuitting", "sleepIdleTabs", "sidebarOnlyChrome",
-        "insetCollapsedPage", "pinnedLayout", "resizeTransition", "tintWonderbar", "tabSleepMinutes",
+        "userAgentMode", "restoreSession", "warnBeforeQuitting", "warnBeforeClosingOtherProfiles", "sleepIdleTabs", "sidebarOnlyChrome",
+        "insetCollapsedPage", "pinnedLayout", "tintWonderbar", "tabSleepMinutes",
         "customNewTabURL", "searchEngine", "customSearchTemplate", "suggestionProvider", "linkTabGroups",
     ]
-    static let profileKeys: Set<String> = ["name", "emoji", "tint", "blockerEnabled", "blocksCookies"]
+    static let profileKeys: Set<String> = ["name", "emoji", "customIconPNG", "tint", "blockerEnabled", "blocksCookies"]
     static let appearanceKeys: Set<String> = [
         "customTint", "sidebarWeather", "compactSidebarWeather", "tintStrength", "windowTransparency",
         "background", "pinStyle", "widgets", "hiddenWidgets", "widgetSizes", "widgetPositions",
@@ -161,6 +160,7 @@ nonisolated enum ICloudSyncProjection {
         var result = try JSONDecoder().decode(Profile.self, from: data(raw))
         result.name = String(result.name.prefix(128))
         result.emoji = String(result.emoji.prefix(4))
+        if (result.customIconPNG?.count ?? 0) > 100_000 { result.customIconPNG = nil }
         result.tint = min(15, max(0, result.tint))
         let tintStrength = result.personalization?.tintStrength ?? 0.06
         result.personalization?.tintStrength = min(1, max(0, tintStrength))

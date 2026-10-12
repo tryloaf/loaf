@@ -466,6 +466,34 @@ import WebKit
         state(for: window)?.fullscreenControlsVisible = true
         state(for: window)?.isFullscreen = true
     }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if !terminating, !UpdateInstallationState.shared.isInstalling, let state = state(for: sender),
+           !application.busyProfileIDs.isDisjoint(with: Set(state.workspaces.keys).union([state.selectedProfileID])) {
+            state.error = "A browsing-data operation is still running in this window. Wait for it to finish before closing it."
+            return false
+        }
+        guard !terminating, !UpdateInstallationState.shared.isInstalling,
+            application.preferences.warnBeforeClosingOtherProfiles != false, let state = state(for: sender) else { return true }
+        let others = state.workspaces.filter { $0.key != state.selectedProfileID && !$0.value.tabs.isEmpty }
+        guard !others.isEmpty else { return true }
+        let count = others.values.reduce(0) { $0 + $1.tabs.count }
+        let alert = NSAlert()
+        alert.messageText = "close tabs in other profiles?"
+        alert.informativeText = "This window also contains \(count) tabs in \(others.count) other profiles. Closing it closes those tabs too."
+        alert.addButton(withTitle: "close window").keyEquivalent = ""
+        let cancel = alert.addButton(withTitle: "cancel")
+        cancel.keyEquivalent = "\u{1b}"
+        alert.window.defaultButtonCell = cancel.cell as? NSButtonCell
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "don’t ask again"
+        let result = alert.runModal()
+        if result == .alertFirstButtonReturn && alert.suppressionButton?.state == .on {
+            application.preferences.warnBeforeClosingOtherProfiles = false
+            application.persistSoon()
+        }
+        return result == .alertFirstButtonReturn
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard !terminating, let state = state(for: notification.object as? NSWindow) else { return }
         if !state.profile.privateMode, let saved = state.snapshot() {
@@ -524,7 +552,7 @@ import WebKit
             return
         }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 360, height: 380),
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 430),
             styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "about loaf"
         window.titleVisibility = .hidden
@@ -705,8 +733,6 @@ import WebKit
         guard focused, attachedSheet == nil, store?.omnibarVisible != true, store?.findVisible != true,
             event.type == .keyDown, event.modifierFlags.contains(.command), let view
         else { return false }
-
-
 
         guard !forwardedPageCommands.contains(event) else {
             return ["a", "s", "f", "l", "r"].contains(event.charactersIgnoringModifiers?.lowercased() ?? "")

@@ -300,6 +300,7 @@ nonisolated struct Profile: Codable, Identifiable, Sendable {
     var id = UUID()
     var name: String
     var emoji = "🌱"
+    var customIconPNG: Data?
     var tint = 0
     var tabs: [SavedTab] = []
     var pinShortcuts: [SavedTab]?
@@ -332,12 +333,15 @@ nonisolated struct BrowserPreferences: Codable, Sendable {
     var alternateSearch: SearchRedirect?
     var developerMenu: Bool?
     var capitalizeMenus: Bool?
+    var newTabsAtTop: Bool?
+    var downloadCacheDays: Int?
     var inspectorMode: InspectorMode?
     var userAgentMode: UserAgentMode?
     var customUserAgent: String?
     var weatherProvider: String?
     var restoreSession: Bool?
     var warnBeforeQuitting: Bool?
+    var warnBeforeClosingOtherProfiles: Bool?
     var sleepIdleTabs: Bool?
     var sidebarOnlyChrome: Bool?
     var insetCollapsedPage: Bool?
@@ -359,6 +363,7 @@ nonisolated struct BrowserPreferences: Codable, Sendable {
         alternateSearch = redirect
     }
     var aiFeaturesEnabled: Bool?
+    var syncSideChats: Bool?
     var powerSaver: Bool?
     var powerSaverThreshold: Int?
     var tracksScreenTime: Bool?
@@ -464,11 +469,16 @@ nonisolated struct Personalization: Codable, Equatable, Sendable {
     var windowTransparency: Double?
     var background = "profile"
     var pinStyle = "tiles"
-    var widgets = ["clock", "weather", "pins", "recent", "notes"]
+    var widgets = ["search", "clock", "weather", "pins", "downloads", "battery", "recent", "worldClock"]
     var hiddenWidgets: [String] = []
-    var widgetSizes: [String: StartWidgetSize]? = ["clock": .square, "weather": .square]
+    var widgetSizes: [String: StartWidgetSize]? = ["search": .banner, "clock": .square, "weather": .square, "pins": .small, "downloads": .square, "battery": .square, "recent": .square, "worldClock": .square]
     var widgetOptions: [String: StartWidgetOptions]?
-    var widgetPositions: [String: StartWidgetPosition]?
+    var widgetPositions: [String: StartWidgetPosition]? = [
+        "search": .init(column: 0, row: 0),
+        "clock": .init(column: 0, row: 2), "weather": .init(column: 1, row: 2), "pins": .init(column: 2, row: 2),
+        "downloads": .init(column: 0, row: 3), "battery": .init(column: 1, row: 3),
+        "recent": .init(column: 2, row: 3), "worldClock": .init(column: 3, row: 3)
+    ]
     var notes = ""
     var checklistItems: [StartChecklistItem]?
 }

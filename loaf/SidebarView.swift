@@ -30,6 +30,9 @@ struct SidebarView: View {
     @State private var traySettleTask: Task<Void, Never>?
     @State private var extensionProgress: CGFloat = 0
     @State private var extensionTask: Task<Void, Never>?
+    @State private var draggedExtensionID: UUID?
+    @State private var extensionOrder: [UUID] = []
+    @State private var extensionOverflow = false
     @State private var drop: TabDropPosition?
     var body: some View {
         VStack(spacing: 0) {
@@ -56,25 +59,7 @@ struct SidebarView: View {
                     }
                 }
             address.padding(.horizontal, 8)
-            if !store.gridPinnedTabs.isEmpty || store.draggedTabID != nil {
-                Color.clear.frame(
-                    height: PinGridLayout.height(
-                        for: max(
-                            store.draggedTabID != nil ? 1 : 0,
-                            store.gridPinnedTabs.count
-                                + (store.pinDropPreview?.row == false
-                                    && !store.gridPinnedTabs.contains { $0.id == store.draggedTabID } ? 1 : 0)),
-                        list: store.preferences.pinnedLayout == "list")
-                )
-                .overlay(PinnedTabGrid(store: store)).padding(.horizontal, 8).padding(.top, 10).padding(.bottom, 4)
-                .overlay { PinDropZone(store: store).padding(.horizontal, 8) }
-            }
-            TabListView(store: store, position: $drop)
-                .padding(
-                    .top,
-                    store.gridPinnedTabs.isEmpty && store.draggedTabID == nil && !store.rowPinnedTabs.isEmpty ? 10 : 0
-                )
-                .offset(x: store.profileResistance)
+            profileTabs
             VStack(spacing: 8) {
                 SidebarMediaPlayers(store: store, collection: store.sidebarMedia)
                 if !store.preferences.weatherCity.isEmpty && store.profile.personalization?.sidebarWeather != false {
@@ -93,7 +78,7 @@ struct SidebarView: View {
         .background {
             if floating {
                 ProfileWindowSurface(
-                    color: chromeBase, transparency: store.profile.personalization?.windowTransparency ?? 0
+                    color: chromeBase, transparency: store.profileSwipeTransparency
                 )
                 .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: store.selectedProfileID)
             }
@@ -112,6 +97,9 @@ struct SidebarView: View {
             cancelRebound()
             traySection = nil
             trayProgress = 0
+            extensionOrder = []
+            draggedExtensionID = nil
+            extensionOverflow = false
         }
         .onAppear { extensionProgress = store.extensionsVisible ? 1 : 0 }
         .onChange(of: store.extensionsVisible) { _, open in animateExtensions(open) }
@@ -121,6 +109,37 @@ struct SidebarView: View {
         }
         .onChange(of: store.draggedTabID) { _, value in if value == nil { drop = nil } }
         .onChange(of: store.draggedFolderID) { _, value in if value == nil { drop = nil } }
+    }
+    private var profileTabs: some View {
+        VStack(spacing: 0) {
+            if !store.gridPinnedTabs.isEmpty || store.draggedTabID != nil {
+                Color.clear.frame(
+                    height: PinGridLayout.height(
+                        for: max(
+                            store.draggedTabID != nil ? 1 : 0,
+                            store.gridPinnedTabs.count
+                                + (store.pinDropPreview?.row == false && store.pinReplacementTarget == nil
+                                    && !store.gridPinnedTabs.contains { $0.id == store.draggedTabID } ? 1 : 0)),
+                        list: store.preferences.pinnedLayout == "list")
+                )
+                .overlay(PinnedTabGrid(store: store)).padding(.horizontal, 8).padding(.top, 10).padding(.bottom, 4)
+                .overlay { PinDropZone(store: store).padding(.horizontal, 8).padding(.top, 10).padding(.bottom, 4) }
+            }
+            TabListView(store: store, position: $drop)
+                .padding(
+                    .top,
+                    store.gridPinnedTabs.isEmpty && store.draggedTabID == nil && !store.rowPinnedTabs.isEmpty ? 10 : 0
+                )
+        }
+        .opacity(max(0, 1 - store.profileSwipeProgress * 2))
+        .offset(x: store.profileResistance)
+        .overlay {
+            if let target = store.profileSwipeTarget {
+                SidebarProfilePreview(store: store, profile: target)
+                    .opacity(max(0, store.profileSwipeProgress * 2 - 1))
+                    .allowsHitTesting(false).accessibilityHidden(true)
+            }
+        }.clipped()
     }
     private var address: some View {
         AddressFeedback(feedback: store.feedback, activate: { store.openOmnibar() }) {
@@ -189,11 +208,7 @@ struct SidebarView: View {
         }.buttonStyle(LoafButtonStyle()).help("weather").modifier(WeatherRefresh(store: store))
     }
     private var chromeBase: Color {
-        store.profile.privateMode
-            ? PrivateChrome.base
-            : ProfileColor.surfaceColor(
-                profileTint(store.profile), strength: store.profile.personalization?.tintStrength ?? 0.06,
-                dark: scheme == .dark)
+        store.profileSwipeSurface(dark: scheme == .dark)
     }
     private var trayRadius: CGFloat { floating ? 5 : 8 }
     private func cancelRebound() {
@@ -260,7 +275,7 @@ struct SidebarView: View {
         }
         .background {
             ProfileWindowSurface(
-                color: chromeBase, transparency: store.profile.personalization?.windowTransparency ?? 0
+                color: chromeBase, transparency: store.profileSwipeTransparency
             )
             .clipShape(RoundedRectangle(cornerRadius: trayRadius))
             .overlay(
@@ -294,40 +309,94 @@ struct SidebarView: View {
         .animation(nil, value: store.extensionsVisible)
         .accessibilityElement(children: .contain).accessibilityLabel(trayProgress == 0 ? "sidebar controls" : "tray")
     }
-    private var extensionColumns: Int { max(1, Int((store.preferences.sidebarWidth - 48) / 30)) }
+    private var orderedExtensions: [InstalledExtension] {
+        let enabled = store.profile.extensions.filter(\.enabled)
+        let records = Dictionary(uniqueKeysWithValues: enabled.map { ($0.id, $0) })
+        let order = extensionOrder.isEmpty ? enabled.map(\.id) : extensionOrder
+        return order.compactMap { records[$0] } + enabled.filter { !order.contains($0.id) }
+    }
     private var extensionStripHeight: CGFloat {
-        let count = store.profile.extensions.filter(\.enabled).count + 1
-        return CGFloat(min(5, max(1, (count + extensionColumns - 1) / extensionColumns))) * 32 + 4
+        let overflow = max(0, orderedExtensions.count - 4)
+        return 36 + (overflow > 0 ? 18 : 0) + (extensionOverflow && overflow > 0 ? CGFloat(min(4, (overflow + 4) / 5)) * 32 + 8 : 0)
     }
     private var extensionStrip: some View {
-        let enabled = store.profile.extensions.filter(\.enabled)
-        return ScrollView {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: extensionColumns), spacing: 4)
-            {
-                ForEach(enabled) { record in
-                    Button {
-                        store.runtime.extensions.perform(record)
-                    } label: {
-                        Group {
-                            if let context = store.runtime.extensions.contexts[record.id],
-                                let image = context.webExtension.icon(for: CGSize(width: 18, height: 18))
-                            {
-                                Image(nsImage: image).resizable().scaledToFit().frame(width: 18, height: 18)
-                            } else {
-                                GolzheimIcon(icon: .extensionPuzzle, size: 16)
-                            }
-                        }.frame(maxWidth: .infinity).frame(height: 28).contentShape(Rectangle())
-                    }.buttonStyle(LoafButtonStyle()).help(record.name).accessibilityLabel(record.name)
-                }
+        let enabled = orderedExtensions
+        let pinned = Array(enabled.prefix(4))
+        let overflow = Array(enabled.dropFirst(4))
+        return VStack(spacing: 4) {
+            if !overflow.isEmpty {
+                Button {
+                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.2)) { extensionOverflow.toggle() }
+                } label: {
+                    GolzheimIcon(icon: extensionOverflow ? .disclosureDown : .disclosureUp, size: 12)
+                        .frame(maxWidth: .infinity).frame(height: 14)
+                }.buttonStyle(LoafButtonStyle()).help(extensionOverflow ? "hide other extensions" : "show other extensions")
+            }
+            if extensionOverflow, !overflow.isEmpty {
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 5), spacing: 4) {
+                        ForEach(overflow) { extensionButton($0) }
+                    }.padding(4)
+                }.scrollIndicators(.hidden).frame(height: CGFloat(min(4, (overflow.count + 4) / 5)) * 32 + 4)
+            }
+            HStack(spacing: 0) {
+                ForEach(pinned) { extensionButton($0) }
+                if pinned.count < 4 { Spacer(minLength: 0) }
                 Button {
                     store.showPage(.extensions)
                 } label: {
-                    GolzheimIcon(icon: .settings, size: 14).frame(maxWidth: .infinity).frame(height: 28)
-                }.buttonStyle(LoafButtonStyle()).help("manage extensions").accessibilityLabel("manage extensions")
+                    GolzheimIcon(icon: .settings, size: 14).frame(width: 24, height: 28)
+                }.buttonStyle(LoafButtonStyle()).help("manage extensions")
             }.padding(4)
-        }.scrollIndicators(.hidden).frame(height: extensionStripHeight)
+        }.frame(height: extensionStripHeight)
             .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 6)).padding(.horizontal, 8)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.16), value: enabled.map(\.id))
             .accessibilityElement(children: .contain).accessibilityLabel("extension tray")
+    }
+    private func extensionButton(_ record: InstalledExtension) -> some View {
+        Button {
+            store.runtime.extensions.perform(record)
+        } label: {
+            Group {
+                if let context = store.runtime.extensions.contexts[record.id],
+                    let image = context.webExtension.icon(for: CGSize(width: 18, height: 18))
+                {
+                    Image(nsImage: image).resizable().scaledToFit().frame(width: 18, height: 18)
+                } else {
+                    GolzheimIcon(icon: .extensionPuzzle, size: 16)
+                }
+            }.frame(maxWidth: .infinity).frame(height: 28).contentShape(Rectangle())
+        }.buttonStyle(LoafButtonStyle()).help(record.name).accessibilityLabel(record.name)
+            .opacity(draggedExtensionID == record.id ? 0.25 : 1)
+            .overlay(
+                ExtensionDragArea(
+                    record: record, store: store,
+                    began: {
+                        extensionOrder = store.profile.extensions.filter(\.enabled).map(\.id)
+                        draggedExtensionID = record.id
+                    },
+                    ended: {
+                        draggedExtensionID = nil
+                        extensionOrder = []
+                    })
+            )
+            .onDrop(
+                of: [.text],
+                delegate: ExtensionReorderDrop(
+                    store: store, target: record.id, dragged: $draggedExtensionID, order: $extensionOrder)
+            )
+            .contextMenu {
+                if let index = store.profile.extensions.firstIndex(where: { $0.id == record.id }) {
+                    Button("move to first pinned slot") {
+                        store.updateCurrent { profile in
+                            let extensionRecord = profile.extensions.remove(at: index)
+                            profile.extensions.insert(extensionRecord, at: 0)
+                        }
+                        extensionOrder = []
+                    }
+                }
+                Button("manage extensions…") { store.showPage(.extensions) }
+            }
     }
     private var footer: some View {
         HStack(spacing: 0) {
@@ -348,7 +417,7 @@ struct SidebarView: View {
             } label: {
                 VStack(spacing: 4) {
                     HStack(spacing: 4) {
-                        EmojiIcon(glyph: store.profile.emoji, size: 14)
+                        ProfileIcon(profile: store.profile, size: 14)
                         Text(store.profile.name).font(.system(size: 13)).lineLimit(1)
                     }
                     HStack(spacing: 4) {
@@ -372,7 +441,7 @@ struct SidebarView: View {
                                 profilePicker = false
                             } label: {
                                 HStack(spacing: 8) {
-                                    EmojiIcon(glyph: profile.emoji, size: 20)
+                                    ProfileIcon(profile: profile, size: 20)
                                     Text(profile.name)
                                     Spacer()
                                     if profile.id == store.selectedProfileID { GolzheimIcon(icon: .check) }
@@ -507,7 +576,8 @@ struct TabListContent: View {
         let last = min(entries.count, max(first, visibleRange?.upperBound ?? entries.count))
 
         let retained = Set([store.draggedTabID, store.draggedFolderID, store.editingGroupID].compactMap { $0 })
-        let indices = retained.isEmpty
+        let indices =
+            retained.isEmpty
             ? Array(first..<last)
             : entries.indices.filter { (first..<last).contains($0) || retained.contains(entries[$0].id) }
         let mounted = indices.enumerated().map { local, index in
@@ -554,7 +624,13 @@ struct TabListContent: View {
                                 .overlay { PinDropZone(store: store, row: true) }
                         }
                     }.offset(y: slot.map { row.index >= $0 ? SidebarTabMetrics.insertionGap : 0 } ?? 0)
-                        .transition(reduceMotion ? .opacity : .asymmetric(insertion: .opacity, removal: .identity))
+                        .transition(
+                            reduceMotion
+                                ? .opacity
+                                : .asymmetric(
+                                    insertion: .move(edge: store.preferences.newTabsAtTop != false ? .top : .bottom)
+                                        .combined(with: .opacity), removal: .identity)
+                        )
                         .padding(.bottom, row.index < entries.count - 1 ? SidebarTabMetrics.spacing : 0)
                 }
             }
@@ -575,13 +651,7 @@ struct TabListContent: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: slot)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: entries.map(\.id))
         .id(store.selectedProfileID)
-        .transition(
-            reduceMotion
-                ? .opacity
-                : .asymmetric(
-                    insertion: .offset(x: CGFloat(store.profileDirection) * 18).combined(with: .opacity),
-                    removal: .offset(x: CGFloat(store.profileDirection) * -8).combined(with: .opacity))
-        )
+        .transition(.opacity)
         .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: store.selectedProfileID)
     }
 }
@@ -687,5 +757,206 @@ struct TabRow: View {
             .background(TabHoverAnchor(tab: tab, store: store))
             .background(TabClosingAnchor(tabID: tab.id))
             .contextMenu { TabActions(tab: tab, store: store) }
+    }
+}
+
+private struct SidebarProfilePreview: View {
+    let store: BrowserStore
+    let profile: Profile
+    private struct Row: Identifiable {
+        let id: UUID
+        var tab: SavedTab?
+        var group: TabGroup?
+        var indented = false
+    }
+    private var rows: [Row] {
+        let workspace = store.workspaces[profile.id]
+        let tabs = workspace?.tabs ?? profile.tabs
+        let groups = (profile.pinnedGroups ?? []) + (workspace?.groups ?? [])
+        func groupRows(_ group: TabGroup) -> [Row] {
+            let members = group.savedTabs ?? tabs.filter { $0.groupID == group.id && !$0.pinned }
+            return [Row(id: group.id, group: group)]
+                + (group.collapsed ? [] : members.map { Row(id: $0.id, tab: $0, indented: true) })
+        }
+        let looseTabs = tabs.filter { tab in !tab.pinned && !groups.contains(where: { $0.id == tab.groupID }) }
+        let local = groups.filter { !$0.isPinned }
+        let available = local.map(\.id) + looseTabs.map(\.id)
+        let order = (workspace?.sidebarOrder ?? []).filter { available.contains($0) }
+        var result = (profile.pinShortcuts ?? []).filter { $0.pinPresentation == "row" }.map { Row(id: $0.id, tab: $0) }
+        result += groups.filter(\.isPinned).flatMap(groupRows)
+        result.append(Row(id: SidebarEntry.newTabID))
+        result += (order + available.filter { !order.contains($0) }).flatMap { id -> [Row] in
+            if let group = local.first(where: { $0.id == id }) { return groupRows(group) }
+            return looseTabs.first(where: { $0.id == id }).map { [Row(id: id, tab: $0)] } ?? []
+        }
+        return result
+    }
+    @ViewBuilder private func icon(_ tab: SavedTab) -> some View {
+        if let glyph = tab.pinnedIcon ?? tab.customIcon {
+            EmojiIcon(glyph: glyph, size: 16)
+        } else if let url = tab.address.flatMap(URL.init(string:)),
+            let image = store.application.favicons.cachedImage(
+                for: url, privateID: profile.privateMode ? profile.id : nil)
+        {
+            Image(nsImage: image).resizable().scaledToFit().frame(width: 16, height: 16)
+        } else {
+            GolzheimIcon(icon: tab.page == .web ? .globe : tab.page.icon, size: 16)
+        }
+    }
+    var body: some View {
+        let pins = (profile.pinShortcuts ?? []).filter { $0.pinPresentation != "row" }
+        let list = store.preferences.pinnedLayout == "list"
+        VStack(spacing: 0) {
+            if !pins.isEmpty {
+                ScrollView {
+                    LazyVGrid(
+                        columns: Array(
+                            repeating: GridItem(.flexible(), spacing: 6),
+                            count: list ? 1 : PinGridLayout.columns(for: pins.count)),
+                        spacing: list ? 4 : 6
+                    ) {
+                        ForEach(pins) { pin in
+                            HStack(spacing: 8) {
+                                icon(pin)
+                                if list {
+                                    Text(pin.pinnedTitle ?? pin.customTitle ?? pin.title).font(.system(size: 13))
+                                        .lineLimit(1)
+                                    Spacer(minLength: 0)
+                                }
+                            }.frame(maxWidth: .infinity).frame(height: PinGridLayout.tileHeight)
+                                .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }.scrollIndicators(.hidden).frame(height: PinGridLayout.height(for: pins.count, list: list))
+                    .padding(.horizontal, 8).padding(.top, 10).padding(.bottom, 4)
+            }
+            ScrollView {
+                LazyVStack(spacing: 4) {
+                    ForEach(rows) { row in
+                        if let tab = row.tab {
+                            HStack(spacing: 8) {
+                                icon(tab)
+                                Text(tab.pinnedTitle ?? tab.customTitle ?? tab.title).font(.system(size: 13)).lineLimit(
+                                    1)
+                                Spacer(minLength: 0)
+                            }.padding(.leading, row.indented ? 24 : 8).padding(.trailing, 8).frame(height: 32)
+                                .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
+                        } else if let group = row.group {
+                            HStack(spacing: 8) {
+                                EmojiIcon(glyph: group.icon, size: 16)
+                                Text(group.name).font(.system(size: 13))
+                                Spacer(minLength: 0)
+                                GolzheimIcon(icon: group.collapsed ? .disclosureUp : .disclosureDown, size: 12)
+                            }.padding(.horizontal, 8).frame(height: 32)
+                        } else {
+                            HStack(spacing: 4) {
+                                GolzheimIcon(icon: .plus, size: 12)
+                                Text("new tab")
+                                Spacer()
+                            }
+                            .font(.system(size: 13)).padding(.horizontal, 8).frame(height: 32)
+                            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+                            .padding(.top, 8).padding(.bottom, 4)
+                        }
+                    }
+                }.padding(.horizontal, 8)
+            }.scrollIndicators(.hidden)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+private struct ExtensionReorderDrop: DropDelegate {
+    let store: BrowserStore
+    let target: UUID
+    @Binding var dragged: UUID?
+    @Binding var order: [UUID]
+    func validateDrop(info: DropInfo) -> Bool { dragged != nil }
+    func dropEntered(info: DropInfo) {
+        guard let dragged, dragged != target, let from = order.firstIndex(of: dragged),
+            let to = order.firstIndex(of: target)
+        else { return }
+        withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .smooth(duration: 0.16)) {
+            let source = order.remove(at: from)
+            order.insert(source, at: min(to, order.count))
+        }
+    }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+    func performDrop(info: DropInfo) -> Bool {
+        guard dragged != nil else { return false }
+        let positions = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($0.element, $0.offset) })
+        store.updateCurrent { profile in
+            let enabled = profile.extensions.filter(\.enabled).sorted {
+                (positions[$0.id] ?? Int.max) < (positions[$1.id] ?? Int.max)
+            }
+            profile.extensions = enabled + profile.extensions.filter { !$0.enabled }
+        }
+        dragged = nil
+        order = []
+        return true
+    }
+}
+
+private struct ExtensionDragArea: NSViewRepresentable {
+    let record: InstalledExtension
+    let store: BrowserStore
+    let began: () -> Void
+    let ended: () -> Void
+    func makeNSView(context: Context) -> DragView { DragView() }
+    func updateNSView(_ view: DragView, context: Context) {
+        view.record = record
+        view.store = store
+        view.began = began
+        view.ended = ended
+    }
+    final class DragView: NSView, NSDraggingSource {
+        var record: InstalledExtension?
+        weak var store: BrowserStore?
+        var began: (() -> Void)?
+        var ended: (() -> Void)?
+        private var origin: NSPoint?
+        private var dragging = false
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            if NSApp.currentEvent?.type == .rightMouseDown
+                || NSApp.currentEvent?.modifierFlags.contains(.control) == true
+            {
+                return nil
+            }
+            return super.hitTest(point)
+        }
+        override func mouseDown(with event: NSEvent) {
+            origin = event.locationInWindow
+            dragging = false
+        }
+        override func mouseUp(with event: NSEvent) {
+            defer { origin = nil }
+            if !dragging, bounds.contains(convert(event.locationInWindow, from: nil)), let record {
+                store?.runtime.extensions.perform(record)
+            }
+        }
+        override func mouseDragged(with event: NSEvent) {
+            guard !dragging, let origin, let record,
+                hypot(event.locationInWindow.x - origin.x, event.locationInWindow.y - origin.y) >= 4
+            else { return }
+            let writer = NSPasteboardItem()
+            writer.setString("loaf-extension:" + record.id.uuidString, forType: .string)
+            let item = NSDraggingItem(pasteboardWriter: writer)
+            let image =
+                store?.runtime.extensions.contexts[record.id]?.webExtension.icon(for: CGSize(width: 24, height: 24))
+                ?? NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: nil)
+                ?? NSImage(size: NSSize(width: 24, height: 24))
+            let point = convert(event.locationInWindow, from: nil)
+            item.setDraggingFrame(NSRect(x: point.x - 12, y: point.y - 12, width: 24, height: 24), contents: image)
+            dragging = true
+            began?()
+            beginDraggingSession(with: [item], event: event, source: self)
+        }
+        func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext)
+            -> NSDragOperation
+        { context == .withinApplication ? .move : [] }
+        func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+            dragging = false
+            origin = nil
+            ended?()
+        }
     }
 }

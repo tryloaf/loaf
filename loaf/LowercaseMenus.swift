@@ -50,12 +50,14 @@ import WebKit
         if item.identifier?.rawValue == "loaf.profileWindow" {
             let prefix = "new window · "
             guard item.title.lowercased().hasPrefix(prefix) else { return }
-            item.title = (capitalizationEnabled() ? "New Window · " : prefix)
+            item.title =
+                (capitalizationEnabled() ? "New Window · " : prefix)
                 + item.title.dropFirst(prefix.count)
             return
         }
         let lastDisplayed = objc_getAssociatedObject(item, &displayedTitleKey) as? String
-        let original = lastDisplayed == item.title
+        let original =
+            lastDisplayed == item.title
             ? (objc_getAssociatedObject(item, &originalTitleKey) as? String ?? item.title) : item.title
         objc_setAssociatedObject(item, &originalTitleKey, original, .OBJC_ASSOCIATION_COPY_NONATOMIC)
         let title = capitalizationEnabled() ? standardTitle(original) : original
@@ -83,8 +85,11 @@ import WebKit
             result += source.substring(with: NSRange(location: offset, length: match.range.location - offset))
             let word = source.substring(with: match.range)
 
-            result += word.contains(where: \.isUppercase) || word.hasPrefix("“") || word.hasPrefix("\"")
-                ? word : word.prefix(1).uppercased(with: Locale.current) + word.dropFirst()
+            result +=
+                word.lowercased() == "loaf"
+                ? "loaf"
+                : word.contains(where: \.isUppercase) || word.hasPrefix("“") || word.hasPrefix("\"")
+                    ? word : word.prefix(1).uppercased(with: Locale.current) + word.dropFirst()
             offset = NSMaxRange(match.range)
         }
         return result + source.substring(from: offset)
@@ -141,7 +146,7 @@ extension NSMenuItem {
 @MainActor final class LoafMainMenus: NSObject, NSMenuDelegate, NSMenuItemValidation {
     private enum Command: String {
         case about, updates, settings, newWindow, newTab, newPrivateWindow, closeTab, save, printPage
-        case find, location, password, sidebar, reload, reloadFromOrigin, reader, zoomIn, zoomOut, actualSize
+        case find, location, sidebar, sideChat, reload, reloadFromOrigin, reader, zoomIn, zoomOut, actualSize
         case back, forward, history, reopenTab, reopenWindow, bookmark, favorites
         case nextTab, previousTab, pin, duplicate, downloads, previousProfile, nextProfile, editProfile, addProfile
         case inspector, inlineInspector, detachedInspector, source, report, help
@@ -249,7 +254,6 @@ extension NSMenuItem {
         edit.addItem(.separator())
         add("Find on Page", .find, key: "f", to: edit)
         add("Search or Enter URL", .location, key: "l", to: edit)
-        add("Fill Saved Password", .password, key: "k", flags: [.command, .shift], to: edit)
         edit.addItem(.separator())
         let spelling = appendMenu("Spelling and Grammar", to: edit)
         for (title, action) in [
@@ -286,6 +290,7 @@ extension NSMenuItem {
 
         let view = appendMenu("View", to: main)
         add("Toggle Sidebar", .sidebar, key: "s", to: view)
+        add("Toggle Side Chat", .sideChat, key: "l", flags: [.command, .shift], to: view)
         add("Reload", .reload, key: "r", to: view)
         add("Reload Without Cache", .reloadFromOrigin, key: "r", flags: [.command, .shift], to: view)
         add("Reading View", .reader, key: "r", flags: [.command, .option], to: view)
@@ -430,6 +435,10 @@ extension NSMenuItem {
         guard let menu = menu ?? mainMenu else { return }
         for item in menu.items {
             if item.target === self {
+                if item.representedObject as? String == Command.sideChat.rawValue {
+                    item.isHidden = coordinator.application.preferences.aiFeaturesEnabled == false
+                    item.keyEquivalent = item.isHidden ? "" : "l"
+                }
                 let enabled = validateMenuItem(item)
                 if item.isEnabled != enabled { item.isEnabled = enabled }
             }
@@ -606,7 +615,8 @@ extension NSMenuItem {
             while main.numberOfItems > expected.count { main.removeItem(at: main.numberOfItems - 1) }
         }
         if NSApp.mainMenu !== main { NSApp.mainMenu = main }
-        if let services = baseItems.first?.submenu?.items.first(where: { $0.title.lowercased() == "services" })?.submenu,
+        if let services = baseItems.first?.submenu?.items.first(where: { $0.title.lowercased() == "services" })?
+            .submenu,
             NSApp.servicesMenu !== services
         {
             NSApp.servicesMenu = services
@@ -648,6 +658,7 @@ extension NSMenuItem {
         guard !coordinator.application.onboardingVisible else { return false }
         switch command {
         case .save: return store?.selectedTab?.url != nil && store?.selectedTab?.loading == false
+        case .sideChat: return store?.canShowSideChat == true
         case .bookmark, .duplicate: return store?.selectedTab?.url != nil
         case .back: return store?.selectedTab?.canGoBack == true
         case .forward: return store?.selectedTab?.canGoForward == true
@@ -696,10 +707,10 @@ extension NSMenuItem {
             store?.findVisible = true
             store?.findFocusID = UUID()
         case .location: coordinator.activateBrowser()?.openOmnibar()
-        case .password: if let tab = store?.selectedTab { PasswordVault.fill(tab: tab) }
         case .sidebar: store?.sidebarVisible.toggle()
+        case .sideChat: store?.toggleSideChat()
         case .reload: store?.selectedTab?.reload()
-        case .reloadFromOrigin: store?.selectedTab?.webView.reloadFromOrigin()
+        case .reloadFromOrigin: store?.selectedTab?.reloadFromOrigin()
         case .reader: if let tab = store?.selectedTab { Task { await tab.toggleReader() } }
         case .zoomIn: if let tab = store?.selectedTab { store?.setPageZoom(tab.webView.pageZoom + 0.1) }
         case .zoomOut: if let tab = store?.selectedTab { store?.setPageZoom(tab.webView.pageZoom - 0.1) }

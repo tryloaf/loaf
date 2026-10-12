@@ -9,6 +9,8 @@ import WebKit
     @Published var onboardingVisible = false
     @Published var error: String?
     @Published var windows: [BrowserWindowState] = []
+    @Published var busyProfileIDs = Set<UUID>()
+    var profileImportInProgress = false
     let directory: URL
     let browsingSessionID = UUID()
     let blocker = ContentBlocker()
@@ -22,6 +24,7 @@ import WebKit
         resourceMonitor = monitor
         return monitor
     }
+    lazy var chatArchive = ChatArchive(directory: directory)
     lazy var cloudSync = ICloudSync(application: self)
     lazy var notifications = WebNotifications(application: self)
     lazy var startTimers = StartTimerService(
@@ -41,10 +44,23 @@ import WebKit
     private var didCreateWindow = false
     private var pendingProfileDeletions = Set<UUID>()
     private var observers = Set<AnyCancellable>()
+    func deleteSavedChat(_ id: UUID) throws {
+        try chatArchive.delete(id)
+        for runtime in runtimes.values {
+            for tab in runtime.tabs.values where tab.existingSideChat?.savedChatID == id {
+                tab.existingSideChat?.discardCurrentChat()
+            }
+        }
+        persistSoon()
+    }
     func setAIFeaturesEnabled(_ enabled: Bool) {
         preferences.aiFeaturesEnabled = enabled
         if !enabled {
-            for runtime in runtimes.values { for tab in runtime.tabs.values { tab.existingChatGPTSearch?.clear() } }
+            if [.chatgpt, .appleIntelligence, .perplexity, .googleAIOverview].contains(preferences.alternateSearch?.provider) { preferences.alternateSearch?.enabled = false }
+            for window in windows { window.closeSideChat() }
+            for runtime in runtimes.values { for tab in runtime.tabs.values {
+                tab.existingChatGPTSearch?.clear(); tab.existingSideChat?.clear()
+            } }
         }
         persistSoon()
     }
@@ -116,6 +132,7 @@ import WebKit
         if profiles.isEmpty {
             profiles = [Profile(name: "personal", emoji: "🌱"), Profile(name: "school", emoji: "📝", tint: 1)]
         }
+        for index in profiles.indices { profiles[index].limitPinGrid() }
         for index in profiles.indices where profiles[index].personalization?.background == "lime" {
             profiles[index].personalization?.background = "profile"
         }
@@ -134,7 +151,13 @@ import WebKit
         if preferences.alternateSearch?.provider == .googleAIOverview {
             preferences.alternateSearch?.provider = .google
         }
+        if preferences.aiFeaturesEnabled == false {
+            if [.chatgpt, .appleIntelligence, .perplexity, .googleAIOverview].contains(preferences.alternateSearch?.provider) { preferences.alternateSearch?.enabled = false }
+        }
         downloads.configure(directory: directory)
+        downloads.cleanupCache(olderThanDays: preferences.downloadCacheDays ?? 7)
+        downloads.cacheRetentionDays = { [weak self] in self?.preferences.downloadCacheDays ?? 7 }
+        downloads.startCacheMaintenance()
         _ = startTimers
         for publisher in [
             blocker.objectWillChange, downloads.objectWillChange, weather.objectWillChange, sites.objectWillChange,
@@ -247,10 +270,13 @@ import WebKit
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { return }
         var profile = profiles[index]
         update(&profile)
+        profile.limitPinGrid()
         profile.tabs = []
         profile.selectedTab = nil
 
+        let historyChanged = profile.history != profiles[index].history
         profiles[index] = profile
+        if historyChanged { for window in windows { window.historyDidChange(id) } }
         persistSoon()
     }
     func moveProfile(_ id: UUID, relativeTo targetID: UUID, after: Bool) {
@@ -279,10 +305,13 @@ import WebKit
     func canDeleteProfile(_ id: UUID) -> Bool {
         profiles.contains { $0.id == id && !$0.privateMode }
             && profiles.filter { !$0.privateMode }.count > 1 && !pendingProfileDeletions.contains(id)
+            && !busyProfileIDs.contains(id)
     }
     func deleteProfile(_ id: UUID) async throws {
         guard canDeleteProfile(id) else {
-            throw ProfileImport.Failure(message: "Keep at least one regular profile in loaf.")
+            throw ProfileImport.Failure(message: busyProfileIDs.contains(id)
+                ? "Wait for this profile’s data operation to finish before deleting it."
+                : "Keep at least one regular profile in loaf.")
         }
 
         var pending = pendingProfileDeletions
@@ -293,6 +322,7 @@ import WebKit
         runtimes[id]?.extensions.shutDown()
         for window in windows { window.forgetProfile(id) }
         coordinator?.forgetProfile(id)
+        try chatArchive.deleteProfile(id)
         downloads.forgetProfile(id)
         notifications.forgetProfile(id)
         startTimers.forgetProfile(id)
@@ -506,5 +536,14 @@ import WebKit
             try sessionWriter.commit(data, to: directory.appendingPathComponent("session.json"), revision: revision)
         } catch { reportSaveError(error) }
         downloads.persist()
+    }
+
+    func persistImport() throws {
+        saveTask?.cancel()
+        saveTask = nil
+        guard let snapshot = sessionSnapshot() else { throw CocoaError(.fileWriteUnknown) }
+        let data = try SessionWrite(snapshot: snapshot).encoded()
+        try sessionWriter.commit(data, to: directory.appendingPathComponent("session.json"), revision: sessionWriter.reserve())
+        cloudSync.capture(snapshot)
     }
 }

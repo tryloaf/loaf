@@ -173,16 +173,16 @@ struct StartWorldClockWidget: View {
                     }
                 }
                 ForEach(StartWorldClock.zones(options.timeZones), id: \.identifier) { zone in
-                    HStack {
+                    HStack(spacing: 4) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(StartWorldClock.city(zone)).font(.system(size: 12))
+                            Text(StartWorldClock.city(zone)).font(.system(size: 12)).lineLimit(1).minimumScaleFactor(0.75)
                             Text(StartWorldClock.day(context.date, zone: zone)).font(.system(size: 10)).foregroundStyle(
                                 .secondary)
                         }
-                        Spacer(minLength: 8)
+                        Spacer(minLength: 0)
                         Text(StartWorldClock.time(context.date, zone: zone, hour24: options.clock24Hour == true)).font(
-                            .system(size: 18, weight: .light)
-                        ).monospacedDigit().lineLimit(1)
+                            .system(size: 14, weight: .regular)
+                        ).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
                     }
                 }
                 if StartWorldClock.zones(options.timeZones).isEmpty {

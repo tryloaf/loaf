@@ -50,6 +50,11 @@ import WebKit
             coordinator?.application.persist()
             return .terminateNow
         }
+        if coordinator?.application.busyProfileIDs.isEmpty == false {
+            (coordinator?.commandState ?? coordinator?.application.windows.first)?.error =
+                "A browsing-data operation is still running. Wait for it to finish before quitting loaf."
+            return .terminateCancel
+        }
         if !LegalAcceptance.shared.isAccepted { return .terminateNow }
         if let downloads = coordinator?.application.downloads, downloads.hasActiveDownloads {
             guard !quitWarningVisible else { return .terminateLater }
@@ -95,8 +100,10 @@ import WebKit
         alert.informativeText = "you may have unsaved work in your tabs."
         let quit = alert.addButton(withTitle: "quit")
         quit.hasDestructiveAction = true
-        quit.keyEquivalent = "\r"
-        alert.addButton(withTitle: "cancel").keyEquivalent = "\u{1b}"
+        quit.keyEquivalent = ""
+        let cancel = alert.addButton(withTitle: "cancel")
+        cancel.keyEquivalent = "\u{1b}"
+        alert.window.defaultButtonCell = cancel.cell as? NSButtonCell
         alert.addButton(withTitle: "always quit")
         let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard let self else {

@@ -95,21 +95,21 @@ enum AssetRequest {
         remember(image, key: "normal" + origin)
         return image
     }
-    func image(for url: URL, privateID: UUID? = nil, declared: [URL] = [], refresh: Bool = false, quick: Bool = false, discoverPage: Bool = true) async -> NSImage? {
+    func image(for url: URL, privateID: UUID? = nil, declared: [URL] = [], refresh: Bool = false, forceRefresh: Bool = false, quick: Bool = false, discoverPage: Bool = true) async -> NSImage? {
         guard let origin = BrowserAddress.websiteOrigin(url) else { return nil }
+        let refresh = refresh || forceRefresh
         let key = (privateID?.uuidString ?? "normal") + origin
         let generation = privateID.map { privateGenerations[$0, default: 0] }
         func valid() -> Bool { privateID.map { privateGenerations[$0, default: 0] == generation } ?? true }
         if !refresh, let image = memory[key] { return image }
-        if !declared.isEmpty, let attempt = recentDeclaredAttempts[key], attempt.links == declared,
+        if !forceRefresh, !declared.isEmpty, let attempt = recentDeclaredAttempts[key], attempt.links == declared,
             Date().timeIntervalSince(attempt.date) < 300
         {
             return memory[key]
         }
         if let request = pending[key] {
 
-
-            if !declared.isEmpty && request.declared != declared
+            if forceRefresh || !declared.isEmpty && request.declared != declared
                 || !discoverPage && request.discoverPage && request.declared.isEmpty {
                 pending.removeValue(forKey: key)?.task.cancel()
             } else {
@@ -121,7 +121,7 @@ enum AssetRequest {
             }
         }
         guard !Task.isCancelled else { return nil }
-        if declared.isEmpty, let failed = failures[key], Date().timeIntervalSince(failed) < 60 { return nil }
+        if !refresh, declared.isEmpty, let failed = failures[key], Date().timeIntervalSince(failed) < 60 { return nil }
         let file = cacheFile(for: origin)
         let assets = assets
         let fetch = fetch
@@ -147,9 +147,12 @@ enum AssetRequest {
                     return image(prepared)
                 }
             }
-            let known =
-                PublicSuffixList.shared.registrableDomain(url.host ?? "") == "reddit.com"
-                ? [URL(string: "https://www.redditstatic.com/shreddit/assets/favicon/192x192.png")!] : []
+            var known: [URL] = []
+            let domain = PublicSuffixList.shared.registrableDomain(url.host ?? "")
+            if domain == "reddit.com" { known = [URL(string: "https://www.redditstatic.com/shreddit/assets/favicon/192x192.png")!] }
+            if domain == "chatgpt.com" || domain == "openai.com" {
+                known = [URL(string: "https://chatgpt.com/favicon.ico")!, URL(string: "https://chat.openai.com/favicon.ico")!]
+            }
             var discovered = declared
             if discoverPage, discovered.isEmpty, (url.scheme == "https" || localHTTP),
                 let pageURL = URL(string: origin), let data = try? await fetch(pageURL),
@@ -160,7 +163,12 @@ enum AssetRequest {
             let candidates = (discovered + known).filter {
                 Self.acceptsIconURL($0, for: url) && seen.insert($0).inserted
             }
-            for candidate in candidates + (fallback.url.map { seen.contains($0) ? [] : [$0] } ?? []) {
+            let rootIcons = ["/favicon.ico", "/apple-touch-icon.png", "/favicon.png", "/favicon.svg"].compactMap { path -> URL? in
+                var parts = fallback
+                parts.path = path
+                return parts.url
+            }.filter { seen.insert($0).inserted }
+            for candidate in candidates + rootIcons {
                 if Task.isCancelled { return nil }
                 let data: Data?
                 if candidate.scheme == "data" {

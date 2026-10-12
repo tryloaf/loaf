@@ -14,7 +14,8 @@ enum ChatGPTAnswerContent {
         let start: Int
         var language: String?
         var citations: [ChatGPTCitation] = []
-        var text: AttributedString { attributed(raw, start: start, citations: citations) }
+        var streaming = false
+        var text: AttributedString { attributed(raw, start: start, citations: citations, streaming: streaming) }
     }
     private struct Line {
         let text: String
@@ -29,7 +30,8 @@ enum ChatGPTAnswerContent {
     }
 
     static func siteName(_ url: URL) -> String {
-        PublicSuffixList.shared.registrableDomain(url.host?.lowercased() ?? "source")
+        if ChatGPTCitation.contextID(url) != nil { return "page" }
+        return PublicSuffixList.shared.registrableDomain(url.host?.lowercased() ?? "source")
     }
 
     static func blocks(_ turn: ChatGPTSearchTurn) -> [Block] {
@@ -53,7 +55,7 @@ enum ChatGPTAnswerContent {
             result.append(
                 Block(
                     style: style, raw: slice(from, to), start: from, language: language,
-                    citations: turn.citations.filter { $0.start >= from && $0.end <= to }))
+                    citations: turn.citations.filter { $0.start >= from && $0.end <= to }, streaming: !turn.complete && turn.error == nil))
         }
         func flush() {
             if let from = paragraphStart {
@@ -85,6 +87,7 @@ enum ChatGPTAnswerContent {
                 continue
             }
             let hashes = line.text.prefix(while: { $0 == "#" }).count
+            if !turn.complete, (1...6).contains(hashes), line.text.dropFirst(hashes).isEmpty { continue }
             if (1...6).contains(hashes), line.text.dropFirst(hashes).hasPrefix(" ") {
                 flush()
                 append(.heading(hashes), line.start + hashes + 1, line.end)
@@ -117,12 +120,15 @@ enum ChatGPTAnswerContent {
         return Fence(character: character, count: count, language: String(language.prefix(40)))
     }
 
-    static func attributed(_ raw: String, start: Int, citations: [ChatGPTCitation]) -> AttributedString {
+    static func attributed(_ raw: String, start: Int, citations: [ChatGPTCitation], streaming: Bool = false) -> AttributedString {
         let scalars = Array(raw.unicodeScalars)
         var result = AttributedString()
         var position = 0
         func plain(_ from: Int, _ to: Int) -> AttributedString {
-            let text = String(String.UnicodeScalarView(scalars[from..<to]))
+            var text = String(String.UnicodeScalarView(scalars[from..<to]))
+            if streaming {
+                text = balancedStreamingMarkdown(text)
+            }
             return
                 (try? AttributedString(
                     markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
@@ -132,7 +138,7 @@ enum ChatGPTAnswerContent {
             let from = citation.start - start
             let to = citation.end - start
             guard from >= position, to > from, to <= scalars.count,
-                ChatGPTProtocol.safeSourceURL(citation.url.absoluteString) != nil
+                citation.valid
             else { continue }
             result += plain(position, from)
             var link = AttributedString(siteName(citation.url))
@@ -144,6 +150,40 @@ enum ChatGPTAnswerContent {
         return result
     }
 
+    static func balancedStreamingMarkdown(_ text: String) -> String {
+        var result = text
+        var stack: [String] = []
+        var index = text.startIndex
+        while index < text.endIndex {
+            let char = text[index]
+            if char == "\\" { index = text.index(after: index); if index < text.endIndex { index = text.index(after: index) }; continue }
+            if char == "*" || char == "_" || char == "`" {
+                let runEnd = text[index...].firstIndex(where: { $0 != char }) ?? text.endIndex
+                let token = String(text[index..<runEnd])
+                let before = index > text.startIndex ? text[text.index(before: index)] : nil
+                let after = runEnd < text.endIndex ? text[runEnd] : nil
+                let intraword = char == "_" && before?.isLetter == true && after?.isLetter == true
+                if intraword || (before?.isWhitespace == true && after?.isWhitespace == true) {
+                    index = runEnd
+                    continue
+                }
+                if stack.last == token { stack.removeLast() }
+                else if runEnd == text.endIndex { result = String(result.dropLast(token.count)) }
+                else if after?.isWhitespace != true { stack.append(token) }
+                index = runEnd
+            } else { index = text.index(after: index) }
+        }
+
+        if let start = result.range(of: "[", options: .backwards),
+            result[start.upperBound...].contains("](") && !result[start.upperBound...].hasSuffix(")") {
+            let suffix = result[start.upperBound...]
+            if let labelEnd = suffix.range(of: "](") { result = String(result[..<start.lowerBound]) + suffix[..<labelEnd.lowerBound] }
+        } else if let start = result.range(of: "[", options: .backwards), !result[start.upperBound...].contains("]") {
+            result.remove(at: start.lowerBound)
+        }
+        for token in stack.reversed() { result += token }
+        return result
+    }
     static func copyText(_ turn: ChatGPTSearchTurn) -> String {
         let scalars = Array(turn.text.unicodeScalars)
         let codeRanges = blocks(turn).filter {
@@ -155,10 +195,11 @@ enum ChatGPTAnswerContent {
         for citation in turn.citations.sorted(by: { $0.start < $1.start }) {
             guard citation.start >= position, citation.end > citation.start, citation.end <= scalars.count,
                 !codeRanges.contains(where: { $0.overlaps(citation.start..<citation.end) }),
-                ChatGPTProtocol.safeSourceURL(citation.url.absoluteString) != nil
+                citation.valid
             else { continue }
             result += String(String.UnicodeScalarView(scalars[position..<citation.start]))
-            result += "[\(siteName(citation.url))](\(citation.url.absoluteString))"
+            result += citation.pageContextID == nil
+                ? "[\(siteName(citation.url))](\(citation.url.absoluteString))" : "[page]"
             position = citation.end
         }
         result += String(String.UnicodeScalarView(scalars[position..<scalars.count]))
@@ -169,6 +210,7 @@ enum ChatGPTAnswerContent {
 struct ChatGPTAnswerBody: View {
     let turn: ChatGPTSearchTurn
     @ObservedObject var store: BrowserStore
+    var compact = false
     typealias Block = ChatGPTAnswerContent.Block
     @State private var icons: [String: NSImage] = [:]
     private var privateID: UUID? { store.profile.privateMode ? store.selectedProfileID : nil }
@@ -180,16 +222,16 @@ struct ChatGPTAnswerBody: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ForEach(Array(Self.blocks(turn).enumerated()), id: \.offset) { _, block in
+            ForEach(Self.blocks(turn), id: \.start) { block in
                 if case .code = block.style {
                     ChatGPTCodeSnippet(code: block.raw, language: block.language ?? "")
                 } else {
                     HStack(alignment: .top, spacing: 10) {
                         if case .list(let marker) = block.style {
-                            Text(marker).font(.system(size: 15)).foregroundStyle(.secondary)
-                                .frame(minWidth: 14, alignment: .trailing).padding(.top, 2)
+                            Text(marker).font(.system(size: compact ? 14 : 16)).foregroundStyle(.secondary)
+                                .frame(width: 18, alignment: .trailing).padding(.top, compact ? 1 : 2)
                         }
-                        ChatGPTInlineAnswer(block: block, icons: icons)
+                        ChatGPTInlineAnswer(block: block, icons: icons, streaming: !turn.complete && turn.error == nil, compact: compact)
                     }
                 }
             }
@@ -198,7 +240,7 @@ struct ChatGPTAnswerBody: View {
         .task(id: iconIdentity) {
             icons = [:]
             var seen = Set<String>()
-            let urls = turn.citations.map(\.url).filter { seen.insert(BrowserAddress.websiteOrigin($0) ?? "").inserted }
+            let urls = turn.citations.filter { $0.pageContextID == nil }.map(\.url).filter { seen.insert(BrowserAddress.websiteOrigin($0) ?? "").inserted }
                 .prefix(32)
             let service = store.application.favicons
             let scope = privateID
@@ -228,7 +270,7 @@ struct ChatGPTSourceIcon: View {
             if let image {
                 Image(nsImage: image).resizable().scaledToFit()
             } else {
-                Image(systemName: "globe").font(.system(size: 12)).foregroundStyle(.tertiary)
+                GolzheimIcon(icon: .globe, size: 12).foregroundStyle(.tertiary)
             }
         }
         .frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3)).accessibilityHidden(true)
@@ -258,7 +300,8 @@ struct ChatGPTCodeSnippet: View {
                     copied = Self.copy(code, to: .general)
                     copyRevision += 1
                 } label: {
-                    Label(copied ? "copied" : "copy code", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    Label { Text(copied ? "copied" : "copy code") }
+                    icon: { GolzheimIcon(icon: copied ? .check : .copy, size: 11) }
                         .font(.system(size: 11))
                 }.buttonStyle(.plain).foregroundStyle(.secondary).help("copy code without formatting")
                     .accessibilityLabel(copied ? "code copied" : "copy code")

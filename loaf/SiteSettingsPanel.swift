@@ -194,7 +194,6 @@ struct SiteSettingsAnchor: NSViewRepresentable {
     final class AnchorView: NSView { override func hitTest(_ point: NSPoint) -> NSView? { nil } }
 }
 
-
 struct SiteControlToggle: View {
     let title: String
     @Binding var isOn: Bool

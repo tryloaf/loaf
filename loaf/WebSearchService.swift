@@ -38,9 +38,9 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
         return combined
     }
 
-    static func search(_ query: String, reading: (([WebSearchResult]) -> Void)? = nil) async throws -> [WebSearchResult]
+    static func search(_ query: String, publicSnippetsOnly: Bool = false, reading: (([WebSearchResult]) -> Void)? = nil) async throws -> [WebSearchResult]
     {
-        let official = isLoafQuestion(query)
+        let official = !publicSnippetsOnly && isLoafQuestion(query)
         let seeds: [WebSearchResult] =
             official
             ? [
@@ -50,21 +50,25 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
             ] : []
         var results = seeds
         if !official {
-            async let primary = try? searchResults(query)
-            let technical =
-                query.range(
-                    of: #"\b(api|sdk|swiftui|webkit|javascript|python|typescript|programming|framework|library)\b"#,
-                    options: [.regularExpression, .caseInsensitive]) != nil
-            async let focused = try? searchResults(query + (technical ? " official documentation" : " official"))
-            let (main, additional) = await (primary ?? [], focused ?? [])
-            results =
-                Array(main.prefix(3)) + Array(additional.prefix(3)) + Array(main.dropFirst(3))
-                + Array(additional.dropFirst(3))
-            results = results.enumerated().sorted {
-                let left = relevance($0.element, query: query)
-                let right = relevance($1.element, query: query)
-                return left == right ? $0.offset < $1.offset : left > right
-            }.map(\.element)
+            if publicSnippetsOnly {
+                results = try await searchResults(query, publicOnly: true)
+            } else {
+                async let primary = try? searchResults(query, publicOnly: publicSnippetsOnly)
+                let technical =
+                    query.range(
+                        of: #"\b(api|sdk|swiftui|webkit|javascript|python|typescript|programming|framework|library)\b"#,
+                        options: [.regularExpression, .caseInsensitive]) != nil
+                async let focused = try? searchResults(query + (technical ? " official documentation" : " official"), publicOnly: publicSnippetsOnly)
+                let (main, additional) = await (primary ?? [], focused ?? [])
+                results =
+                    Array(main.prefix(3)) + Array(additional.prefix(3)) + Array(main.dropFirst(3))
+                    + Array(additional.dropFirst(3))
+                results = results.enumerated().sorted {
+                    let left = relevance($0.element, query: query)
+                    let right = relevance($1.element, query: query)
+                    return left == right ? $0.offset < $1.offset : left > right
+                }.map(\.element)
+            }
         }
         var seen = Set<URL>()
         var hosts: [String: Int] = [:]
@@ -81,6 +85,11 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
             return true
         }
         results = Array(results.prefix(6))
+        if publicSnippetsOnly {
+            results = results.filter { PublicSearchNavigation.isPublicURL($0.url) && !$0.excerpt.isEmpty }
+            guard !results.isEmpty else { throw ChatGPTFailure.message("web search found no usable public snippets. try a more specific query.") }
+            return results
+        }
         reading?(results)
         let enriched = await withTaskGroup(of: (Int, WebSearchResult).self) { group in
             for (index, result) in results.enumerated() {
@@ -132,12 +141,17 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
         return 0
     }
 
-    private static func searchResults(_ query: String) async throws -> [WebSearchResult] {
+    private static func searchResults(_ query: String, publicOnly: Bool = false) async throws -> [WebSearchResult] {
         var fallback = URLComponents(string: "https://html.duckduckgo.com/html/")!
         fallback.queryItems = [URLQueryItem(name: "q", value: query)]
         let urls = [SearchEngine.google.url(for: query), fallback.url].compactMap { $0 }
-        let webView = makeWebView()
+        let webView = makeWebView(publicOnly: publicOnly)
+        let publicNavigation = publicOnly ? PublicSearchNavigation() : nil
+        if let publicNavigation {
+            webView.navigationDelegate = publicNavigation
+        }
         defer {
+            _ = publicNavigation
             webView.stopLoading()
             webView.navigationDelegate = nil
         }
@@ -167,9 +181,10 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
             "web search couldn’t load results. try again or open this question in your search engine.")
     }
 
-    private static func makeWebView() -> WKWebView {
+    private static func makeWebView(publicOnly: Bool = false) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = !publicOnly
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 1024, height: 768), configuration: configuration)
         view.customUserAgent = DesktopIdentity.userAgent(
@@ -188,13 +203,22 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
         return try await extractHTML(html, queryURL: url)
     }
 
-    static func extractHTML(_ html: String, queryURL: URL) async throws -> String {
-        let webView = makeWebView()
-        defer { webView.stopLoading() }
+    static func extractHTML(_ html: String, queryURL: URL, offlineOnly: Bool = false) async throws -> String {
+        let webView = makeWebView(publicOnly: offlineOnly)
+        let navigation = offlineOnly ? OfflinePageNavigation() : nil
+        if offlineOnly {
+            let rules = try await WKContentRuleListStore.default().compileContentRuleList(
+                forIdentifier: "loaf-offline-page-read", encodedContentRuleList:
+                    #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}}]"#)
+            if let rules { webView.configuration.userContentController.add(rules) }
+            else { throw URLError(.cannotLoadFromNetwork) }
+            webView.navigationDelegate = navigation
+        }
+        defer { _ = navigation; webView.stopLoading(); webView.navigationDelegate = nil }
 
         webView.loadHTMLString(
             "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'none'\">" + html,
-            baseURL: queryURL)
+            baseURL: offlineOnly ? nil : queryURL)
         for _ in 0..<50 {
             try await Task.sleep(for: .milliseconds(20))
             try Task.checkCancellation()

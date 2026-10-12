@@ -44,6 +44,20 @@ actor FaviconAssets {
                     kCGImageSourceShouldCacheImmediately: true,
                 ] as CFDictionary)
         else { return await Self.decodeVector(data) }
+        return Self.visibleImage(image)
+    }
+    nonisolated private static func visibleImage(_ image: CGImage) -> PreparedFavicon? {
+
+        guard let context = CGContext(
+            data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+            bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)
+        else { return nil }
+        context.clear(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard let pixels = context.data?.assumingMemoryBound(to: UInt8.self),
+            stride(from: 3, to: image.width * image.height * 4, by: 4).contains(where: { pixels[$0] > 0 })
+        else { return nil }
         return PreparedFavicon(image: image)
     }
     @MainActor private static func decodeVector(_ data: Data) -> PreparedFavicon? {
@@ -67,7 +81,7 @@ actor FaviconAssets {
         image.draw(
             in: NSRect(x: (128 - size.width) / 2, y: (128 - size.height) / 2, width: size.width, height: size.height))
         NSGraphicsContext.restoreGraphicsState()
-        return bitmap.cgImage.map { PreparedFavicon(image: $0) }
+        return bitmap.cgImage.flatMap { visibleImage($0) }
     }
     func write(_ data: Data, to file: URL) {
         guard data.count <= 1_000_000 else { return }

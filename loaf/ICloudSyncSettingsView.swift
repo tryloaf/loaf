@@ -14,10 +14,10 @@ struct ICloudSyncSettingsView: View {
             Toggle("sync with iCloud", isOn: Binding(
                 get: { sync.enabled }, set: { value in Task { await sync.setEnabled(value) } }
             )).disabled(sync.busy && !sync.enabled).id("icloud-sync")
-            Text("turn this on in loaf on each Mac signed in to the same Apple Account.")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("experimental. sync across Macs is still being validated.")
-                .font(.caption).foregroundStyle(.secondary)
+            disclaimers([
+                "turn this on in loaf on each Mac signed in to the same Apple Account.",
+                "experimental. sync across Macs is still being validated.",
+            ])
             HStack(spacing: 8) {
                 if sync.busy { ProgressView().controlSize(.small) }
                 Text(sync.status).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
@@ -35,16 +35,16 @@ struct ICloudSyncSettingsView: View {
             }
         }
         Section("what syncs") {
-            Text("profile names, icons, colors and order; pinned tabs and groups; start-page appearance; and browser preferences.")
-            Text("open website tabs appear below under other Macs. opening one creates a local tab in its profile. closing it here leaves the original tab on the other Mac.")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("private profiles, history, bookmarks, passwords, sign-ins, extensions, website permissions, notes, checklists, custom background images and local files stay on this Mac. network opt-ins, location access, download locations and device-specific settings also stay local.")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("sync uses your private iCloud database and CloudKit encrypted fields. loaf has no sync account or developer-operated sync server.")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("turning sync off keeps your local data and the existing iCloud copy. deleting a synced profile removes it from your other syncing Macs too.")
-                .font(.caption).foregroundStyle(.secondary)
-            Link("privacy policy", destination: BrowserBrand.website.appendingPathComponent("privacy"))
+            VStack(alignment: .leading, spacing: 12) {
+                Text("profile names, icons, colors and order; pinned tabs and groups; start-page appearance; and browser preferences.")
+                disclaimers([
+                    "open website tabs appear below under other Macs. opening one creates a local tab in its profile. closing it here leaves the original tab on the other Mac.",
+                    "private profiles, history, bookmarks, passwords, sign-ins, extensions, website permissions, notes, checklists, custom background images and local files stay on this Mac. network opt-ins, location access, download locations and device-specific settings also stay local.",
+                    "sync uses your private iCloud database and CloudKit encrypted fields. loaf has no sync account or developer-operated sync server.",
+                    "turning sync off keeps your local data and the existing iCloud copy. deleting a synced profile removes it from your other syncing Macs too.",
+                ])
+                Link("privacy policy", destination: BrowserBrand.website.appendingPathComponent("privacy"))
+            }.frame(maxWidth: .infinity, alignment: .leading)
         }
         if sync.enabled {
             Section("other Macs") {
@@ -95,5 +95,16 @@ struct ICloudSyncSettingsView: View {
         } message: {
             Text("this removes the iCloud copy for all your Macs. each Mac keeps its local data. turn sync on again on a Mac to start a new copy.")
         }
+    }
+
+    private func disclaimers(_ points: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(points, id: \.self) { point in
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Text("•").accessibilityHidden(true)
+                    Text(point).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }.font(.caption).foregroundStyle(.secondary)
     }
 }

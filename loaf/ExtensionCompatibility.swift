@@ -76,7 +76,7 @@ import WebKit
                 for (const method of methods) api[namespace][method] = (...args) => invoke(`unsupported.${namespace}.${method}`, {}, typeof args.at(-1) === 'function' ? args.at(-1) : undefined);
             }
         })();
-        """#
+        """# + "\n" + ExtensionUserScriptBridge.script
     static func prepare(_ folder: URL, extensionID: String? = nil) throws -> [String] {
         let file = folder.appendingPathComponent("manifest.json")
         var manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any] ?? [:]
@@ -84,16 +84,26 @@ import WebKit
             "loaf bridge: runtime browser metadata and permission-gated font listing",
             "Native messaging is limited to loaf's own compatibility adapter.",
         ]
+        if (manifest["permissions"] as? [String] ?? []).contains("userScripts") {
+            diagnostics.append(
+                "User scripts run in profile-local WebKit worlds with persistent registrations and manager messaging. Custom restrictive CSP and one-shot userScripts.execute are unsupported; document_idle uses WebKit's document-end timing."
+            )
+        }
         if extensionID == "mnjggcdmjocbbbhaepdhchncahnbgone" {
             diagnostics.append(try prepareSponsorBlock(folder, original: folder))
         }
         if extensionID == vimiumID {
             diagnostics.append(try prepareVimium(folder, original: folder))
         }
+        if extensionID == tampermonkeyID {
+            diagnostics.append(try prepareTampermonkey(folder, original: folder))
+        }
         let shim = folder.appendingPathComponent("_loaf_bridge.js")
         try Data(script.utf8).write(to: shim, options: .atomic)
         var permissions = manifest["permissions"] as? [String] ?? []
         if !permissions.contains("nativeMessaging") { permissions.append("nativeMessaging") }
+
+        if permissions.contains("userScripts"), !permissions.contains("scripting") { permissions.append("scripting") }
         manifest["permissions"] = permissions
 
         if var background = manifest["background"] as? [String: Any] {
@@ -153,6 +163,53 @@ import WebKit
     static let sponsorBlockMarker = "_loaf_sponsorblock_frame_v1"
     static let vimiumID = "dbepggeogbaibhgnhhndojpepiihcmeb"
     static let vimiumMarker = "_loaf_vimium_navigation_v1"
+    static let tampermonkeyID = "dhdgffkkebhmkfjojejmpbldmpobfkfo"
+    static let tampermonkeyMarker = "_loaf_tampermonkey_startup_v2"
+
+    static func prepareTampermonkey(_ runtime: URL, original: URL) throws -> String {
+        let file = original.appendingPathComponent("background.js")
+        guard (try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max) <= 2_000_000 else {
+            throw PackageError(reason: "This Tampermonkey worker exceeds the compatibility adapter's size limit.")
+        }
+        let source = try String(contentsOf: file, encoding: .utf8)
+
+        let regex = try NSRegularExpression(pattern: #"let ([\w$]+)=!0;\(async\(\)=>\{await null,\1=!1\}\)\(\);"#)
+        let range = NSRange(source.startIndex..., in: source)
+        guard regex.numberOfMatches(in: source, range: range) == 1 else {
+            throw PackageError(reason: "This Tampermonkey package needs a new startup compatibility adapter.")
+        }
+        let installed = try NSRegularExpression(pattern: #"\.onInstalled\.addListener\(\(([\w$]+)=>\{"#)
+        guard installed.numberOfMatches(in: source, range: range) == 1 else {
+            throw PackageError(reason: "This Tampermonkey package needs a new installation lifecycle adapter.")
+        }
+        var adapted: [String: String] = [:]
+        for path in ["background.js", "extension.js", "content.js", "offscreen.js"] {
+            let text =
+                path == "background.js"
+                ? source : try String(contentsOf: original.appendingPathComponent(path), encoding: .utf8)
+            guard text.utf8.count <= 2_000_000, text.contains("\"chrome-extension:\"") else {
+                throw PackageError(reason: "This Tampermonkey package needs a new resource protocol adapter.")
+            }
+            adapted[path] = text.replacingOccurrences(of: "\"chrome-extension:\"", with: "\"webkit-extension:\"")
+        }
+        adapted["background.js"] = regex.stringByReplacingMatches(
+            in: adapted["background.js"]!,
+            range: NSRange(adapted["background.js"]!.startIndex..., in: adapted["background.js"]!),
+            withTemplate: "let $1=!0;")
+
+        let worker = adapted["background.js"]!
+        adapted["background.js"] = installed.stringByReplacingMatches(
+            in: worker,
+            range: NSRange(worker.startIndex..., in: worker),
+            withTemplate:
+                ".onInstalled.addListener(($1=>{if($1.reason==='install'&&globalThis.__loafExtensionRestored)return;")
+        for (path, text) in adapted {
+            try Data(text.utf8).write(to: runtime.appendingPathComponent(path), options: .atomic)
+        }
+        try Data("1".utf8).write(to: runtime.appendingPathComponent(tampermonkeyMarker), options: .atomic)
+        return
+            "Tampermonkey's listener setup and restored installation events follow WebKit's lifecycle; internal pages use WebKit's extension protocol."
+    }
     static func prepareVimium(_ runtime: URL, original: URL) throws -> String {
         let path = "background_scripts/main.js"
         let file = original.appendingPathComponent(path)

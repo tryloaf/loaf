@@ -78,6 +78,7 @@ struct PasswordSettingsView: View {
                 if let deletion { vault.delete(deletion) }
                 deletion = nil
             }
+            Button("cancel", role: .cancel) { deletion = nil }
         } message: {
             if let deletion { Text(deletion.username + "\n" + deletion.origin) }
         }
@@ -329,6 +330,7 @@ private struct PasswordEditorView: View {
 private struct PasswordImportView: View {
     @ObservedObject var vault: PasswordManager
     @State private var replace = false
+    @State private var confirmReplacement = false
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 9) {
@@ -381,11 +383,20 @@ private struct PasswordImportView: View {
                     Spacer()
                     Button(
                         "import \(replace ? review.entries.count : review.entries.count - vault.matchingImportCount) accounts"
-                    ) { vault.commitImport(replaceExisting: replace) }.buttonStyle(.borderedProminent).keyboardShortcut(
+                    ) {
+                        if replace { confirmReplacement = true }
+                        else { vault.commitImport(replaceExisting: false) }
+                    }.buttonStyle(.borderedProminent).keyboardShortcut(
                         .defaultAction
-                    ).disabled(review.entries.isEmpty || !vault.unlocked)
+                    ).disabled((replace ? review.entries.count : review.entries.count - vault.matchingImportCount) == 0 || !vault.unlocked || vault.busy)
                 }
             }
         }.padding(26).frame(width: 490)
+        .confirmationDialog("replace saved passwords?", isPresented: $confirmReplacement, titleVisibility: .visible) {
+            Button("replace and import", role: .destructive) { vault.commitImport(replaceExisting: true) }
+            Button("cancel", role: .cancel) {}
+        } message: {
+            Text("This replaces \(vault.matchingImportCount) existing accounts’ passwords, titles and notes. It cannot be undone. Uncheck replace to keep those accounts.")
+        }
     }
 }

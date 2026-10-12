@@ -15,18 +15,19 @@ struct ChatGPTConnectionView: View {
                     Button(account.disconnecting ? "disconnecting…" : "disconnect") { account.disconnect() }.disabled(
                         account.disconnecting || account.connecting)
                 }
+                ChatModelPicker(account: account).controlSize(.small)
                 HStack(spacing: 12) {
                     Link("manage usage", destination: ChatGPTProtocol.usageURL)
-                    Button("check Luna access") { account.refreshCatalog() }.disabled(
+                    Button("refresh models") { account.refreshCatalog() }.disabled(
                         account.checkingModels || account.disconnecting)
                     if account.checkingModels {
                         ProgressView().controlSize(.mini)
-                    } else if account.lunaAvailable {
-                        Text("\(account.lunaName) available").foregroundStyle(.secondary)
+                    } else if !account.models.isEmpty {
+                        Text("\(account.models.count) models").foregroundStyle(.secondary)
                     }
                 }.font(.caption)
             } else {
-                Text("use your ChatGPT plan for answers with Luna and web sources").foregroundStyle(.secondary)
+                Text("use your ChatGPT plan for answers and web sources").foregroundStyle(.secondary)
             }
             if account.connecting {
                 HStack(spacing: 10) {
@@ -44,7 +45,7 @@ struct ChatGPTConnectionView: View {
                 if !account.connected { Link("manage usage", destination: ChatGPTProtocol.usageURL).font(.caption) }
             }
             Text(
-                "queries and follow-ups go to OpenAI when submitted. if built-in web search is unavailable, loaf fetches web results from Google, or DuckDuckGo if Google is unavailable, and sends those excerpts to OpenAI. Plus usage is shared with Codex and other connected apps. answers stay in memory on this Mac."
+                "queries, follow-ups, and any page context you allow go to OpenAI when submitted. if built-in web search is unavailable, loaf fetches web results from Google, or DuckDuckGo if Google is unavailable, and sends those excerpts to OpenAI. Plus usage is shared with Codex and other connected apps. saved chats are encrypted on this Mac; optional iCloud sync omits image attachments."
             )
             .font(.caption).foregroundStyle(.secondary)
         }
@@ -64,12 +65,13 @@ struct ChatGPTSearchView: View {
     @ObservedObject var account: ChatGPTAccount
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @FocusState private var focused: Bool
+    @State private var focused = false
     @State private var connectionVisible = false
     @State private var expandedSources = Set<UUID>()
     @State private var editingTurnID: UUID?
     @State private var editedQuery = ""
     @State private var copiedTurnID: UUID?
+    @State private var followsAnswer = true
     @FocusState private var editingFocused: Bool
 
     private var surface: Color { scheme == .dark ? Color(white: 0.09) : Color(white: 0.985) }
@@ -102,23 +104,32 @@ struct ChatGPTSearchView: View {
                                     answer(turn, first: index == 0).id(turn.id)
                                 }
                             }
+                            Color.clear.frame(height: 1).id("chat-bottom")
                         }
+                        .padding(.bottom, search.turns.isEmpty ? 0 : 24)
                         .padding(.vertical, search.turns.isEmpty ? 12 : 28)
                         .frame(maxWidth: 760)
                         .padding(.horizontal, 32)
                         .frame(maxWidth: .infinity, alignment: .top)
                     }
                     .scrollBounceBehavior(.basedOnSize)
+                    .overlay(alignment: .bottom) { ChatTranscriptEdge(surface: surface).frame(height: 56) }
+                    .onScrollGeometryChange(for: Bool.self) { geometry in
+                        geometry.contentSize.height - geometry.visibleRect.maxY < 90
+                    } action: { _, nearBottom in followsAnswer = nearBottom }
                     .onChange(of: search.turns.last?.id) { _, id in
+                        followsAnswer = true
                         if let id {
                             withAnimation(reduceMotion ? nil : .smooth(duration: 0.24)) {
                                 proxy.scrollTo(id, anchor: .top)
                             }
                         }
                     }
-
+                    .onChange(of: search.turns.last?.text) { _, _ in
+                        if followsAnswer { proxy.scrollTo("chat-bottom", anchor: .bottom) }
+                    }
                 }
-                composer.frame(maxWidth: 680).padding(.horizontal, 32)
+                composer.frame(maxWidth: 760).padding(.horizontal, 32)
                     .padding(.top, 10).padding(.bottom, 14).frame(maxWidth: .infinity)
             }
             .background(surface)
@@ -153,37 +164,32 @@ struct ChatGPTSearchView: View {
             GolzheimIcon(icon: .search, size: 16).foregroundStyle(.secondary)
             Text("ask loaf").font(.system(size: 13, weight: .medium))
             Spacer()
-            Picker(
-                "AI provider",
-                selection: Binding(
-                    get: { search.provider },
-                    set: { value in
-                        search.clear()
-                        store.preferences.aiProvider = value
-                        store.persistSoon()
-                    })
-            ) { ForEach(AppleIntelligence.visibleProviders, id: \.self) { Text($0.title).tag($0) } }
-            .labelsHidden().fixedSize().controlSize(.small)
-            if search.provider == .chatgpt {
-                Text(account.lunaName).font(.system(size: 11)).foregroundStyle(.secondary)
-            }
             if account.connected {
                 Button {
                     connectionVisible.toggle()
                 } label: {
-                    Image(systemName: "person.crop.circle").font(.system(size: 16)).frame(width: 28, height: 28)
+                    GolzheimIcon(icon: .profile, size: 14).frame(width: 28, height: 28)
                 }
                 .buttonStyle(.plain).foregroundStyle(connectionVisible ? .primary : .secondary)
                 .help("ChatGPT account").accessibilityLabel("ChatGPT account")
             }
             if !search.turns.isEmpty {
+                if !store.profile.privateMode {
+                    Button("save to chats") {
+                        do {
+                            try store.application.chatArchive.save(id: search.archiveID, profileID: store.selectedProfileID, turns: search.turns)
+                            store.feedback.show(.copied, icon: .check, text: "saved to chats")
+                            store.persistSoon()
+                        } catch { store.error = error.localizedDescription }
+                    }.buttonStyle(ChatControlStyle()).font(.system(size: 11))
+                }
                 Button {
                     search.clear()
                     expandedSources = []
                     focused = true
                 } label: {
-                    Label("new search", systemImage: "square.and.pencil").font(.system(size: 11))
-                }.buttonStyle(.plain).padding(.leading, 6).help("start a new search")
+                    GolzheimIcon(icon: .edit, size: 16, weight: 220).frame(width: 28, height: 28)
+                }.buttonStyle(ChatControlStyle()).help("start a new search").accessibilityLabel("new search")
             }
         }
         .padding(.horizontal, 28).frame(height: 48)
@@ -229,7 +235,7 @@ struct ChatGPTSearchView: View {
         } label: {
             HStack(spacing: 8) {
                 Text(query).font(.system(size: 12))
-                Image(systemName: "arrow.up.left").font(.system(size: 10)).foregroundStyle(.tertiary)
+                GolzheimIcon(icon: .external, size: 10).scaleEffect(x: -1, y: 1).foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
             .background(fieldSurface, in: Capsule())
@@ -267,7 +273,7 @@ struct ChatGPTSearchView: View {
                         editingTurnID = turn.id
                         editingFocused = true
                     } label: {
-                        Image(systemName: "pencil").font(.system(size: 12))
+                        GolzheimIcon(icon: .edit, size: 12)
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary).padding(.top, first ? 9 : 6)
                     .help("edit question").accessibilityLabel("edit question")
@@ -281,7 +287,7 @@ struct ChatGPTSearchView: View {
                         editingTurnID = nil
                         search.selectBranch(turn.id, offset: -1)
                     } label: {
-                        Image(systemName: "chevron.left")
+                        GolzheimIcon(icon: .back, size: 10)
                     }
                     .disabled(search.searching || branch.index == 0).help("previous question version")
                     Text("\(branch.index + 1) / \(branch.count)").monospacedDigit()
@@ -289,15 +295,15 @@ struct ChatGPTSearchView: View {
                         editingTurnID = nil
                         search.selectBranch(turn.id, offset: 1)
                     } label: {
-                        Image(systemName: "chevron.right")
+                        GolzheimIcon(icon: .forward, size: 10)
                     }
                     .disabled(search.searching || branch.index + 1 == branch.count).help("next question version")
                 }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
             }
             HStack(spacing: 6) {
-                Image(systemName: "sparkles").font(.system(size: 12))
+                GolzheimIcon(icon: .sparkle, size: 12)
                 Text("AI overview").font(.system(size: 12, weight: .medium))
-                Text("· " + (turn.provider == .chatgpt ? account.lunaName : "Apple Intelligence"))
+                Text("· " + (turn.modelName ?? turn.provider.title))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }.foregroundStyle(.secondary)
             if !turn.text.isEmpty {
@@ -331,9 +337,8 @@ struct ChatGPTSearchView: View {
                             if copiedTurnID == turn.id { copiedTurnID = nil }
                         }
                     } label: {
-                        Label(
-                            copiedTurnID == turn.id ? "copied" : "copy answer",
-                            systemImage: copiedTurnID == turn.id ? "checkmark" : "doc.on.doc")
+                        Label { Text(copiedTurnID == turn.id ? "copied" : "copy answer") }
+                        icon: { GolzheimIcon(icon: copiedTurnID == turn.id ? .check : .copy, size: 12) }
                     }.accessibilityLabel("copy answer")
                 }.font(.system(size: 11)).foregroundStyle(.secondary)
                     .buttonStyle(AnswerControlStyle()).transition(.opacity)
@@ -390,7 +395,7 @@ struct ChatGPTSearchView: View {
                                 Text(ChatGPTAnswerContent.siteName(citation.url))
                                     .font(.system(size: 11)).lineLimit(1)
                                 Spacer(minLength: 2)
-                                Image(systemName: "arrow.up.right").font(.system(size: 9))
+                                GolzheimIcon(icon: .external, size: 9)
                             }.foregroundStyle(.secondary)
                             Text(citation.title).font(.system(size: 12, weight: .medium)).lineLimit(2)
                                 .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
@@ -408,56 +413,48 @@ struct ChatGPTSearchView: View {
 
     private var composer: some View {
         VStack(spacing: 8) {
-            HStack(alignment: .bottom, spacing: 10) {
-                TextField(
-                    search.turns.isEmpty ? "search the web…" : "ask a follow-up…", text: $search.draft, axis: .vertical
-                )
-                .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...5)
-                .focused($focused).onSubmit { search.submit() }
-                .disabled(editingTurnID != nil).padding(.vertical, 4)
-                .accessibilityLabel(search.turns.isEmpty ? "search the web" : "ask a follow-up")
-                Button {
-                    if search.searching {
-                        search.stop()
-                        focused = true
-                    } else {
-                        search.submit()
+            ChatComposerSurface(focused: focused) {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let request = search.toolRequest {
+                        ChatToolApprovalView(request: request) { search.decideTool($0, requestID: request.id) }
                     }
-                } label: {
-                    Image(systemName: search.searching ? "stop.fill" : "arrow.up")
-                        .contentTransition(.symbolEffect(.replace))
-                        .font(.system(size: search.searching ? 10 : 14, weight: .medium))
-                        .frame(width: 28, height: 28)
-                        .foregroundStyle(search.searching || canSubmit ? surface : Color.secondary.opacity(0.6))
-                        .background(
-                            search.searching || canSubmit ? Color.primary : Color.primary.opacity(0.06),
-                            in: RoundedRectangle(cornerRadius: 8))
-                }.buttonStyle(AnswerControlStyle(cornerRadius: 8)).disabled(!search.searching && !canSubmit)
-                    .help(search.searching ? "stop search" : "search")
-                    .accessibilityLabel(search.searching ? "stop search" : "search")
+                    if let request = search.pageReadRequest {
+                        PageReadApprovalView(request: request) { search.decidePageReads($0, requestID: request.id) }
+                    }
+                    ChatDraftEditor(text: $search.draft,
+                                    placeholder: search.turns.isEmpty ? "search the web…" : "ask a follow-up…",
+                                    focused: Binding(get: { focused }, set: { focused = $0 }),
+                                    enabled: editingTurnID == nil) { search.submit() }
+                    HStack(spacing: 6) {
+                        Label { Text("web search") } icon: { GolzheimIcon(icon: .globe, size: 11) }
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 9).frame(height: 28)
+                            .background(Color.primary.opacity(0.045), in: Capsule())
+                        Spacer(minLength: 8)
+                        ChatModelMenu(account: account, provider: search.provider) { value in
+                            if value != search.provider {
+                                search.clear()
+                                store.preferences.aiProvider = value
+                                store.persistSoon()
+                            }
+                        }.frame(maxWidth: 240).disabled(search.searching)
+                        ChatSendButton(busy: search.searching, canSend: canSubmit) {
+                            if search.searching { search.stop(); focused = true }
+                            else { search.submit() }
+                        }
+                    }
+                }
             }
-            .padding(.horizontal, 12).padding(.vertical, 7).background(
-                fieldSurface, in: RoundedRectangle(cornerRadius: 12)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12).strokeBorder(
-                    focused ? profileTint(store.profile).opacity(0.5) : Color.primary.opacity(0.1),
-                    lineWidth: focused ? 1.5 : 1)
-            )
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: focused)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: canSubmit)
             HStack {
-                Text(
-                    search.draft.utf8.count > 8_000
-                        ? "shorten your question to continue"
-                        : search.provider != .chatgpt
-                            ? search.provider.title
-                            : account.connected ? "using ChatGPT plan" : "connect ChatGPT to search")
+                Text(search.draft.utf8.count > 8_000
+                     ? "shorten your question to continue"
+                     : search.provider != .chatgpt ? "generated on this Mac"
+                     : account.connected ? "using ChatGPT plan" : "connect ChatGPT to search")
                 Spacer()
                 if search.provider == .chatgpt && account.connected {
                     Link("manage usage", destination: ChatGPTProtocol.usageURL)
                 }
-            }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 4)
+            }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 6)
         }
     }
 

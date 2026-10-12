@@ -42,8 +42,6 @@ nonisolated enum ImportedPinnedTabs {
         return tabs
     }
 
-
-
     static func chromium(_ data: Data) throws -> [SavedTab] {
         guard data.count >= 8, data.count <= limit, data.starts(with: Data("SNSS".utf8)) else { throw invalid() }
         let version = integer(data, at: 4)

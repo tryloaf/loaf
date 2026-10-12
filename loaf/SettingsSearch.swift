@@ -10,8 +10,15 @@ struct SettingsSearchResult: Identifiable {
 
 enum SettingsSearch {
     static let entries: [SettingsSearchResult] = [
-        .init(id: "icloud-sync", section: "sync", title: "sync with iCloud · experimental",
-              keywords: "cloud Mac devices sidebar profiles pinned tabs groups preferences other Macs experimental"),
+        .init(
+            id: "new-tabs-at-top", section: "general", title: "add new tabs at the top",
+            keywords: "order insert bottom position"),
+        .init(
+            id: "download-cache", section: "general", title: "remove cached transfers after",
+            keywords: "downloads cleanup cache retention days"),
+        .init(
+            id: "icloud-sync", section: "sync", title: "sync with iCloud · experimental",
+            keywords: "cloud Mac devices sidebar profiles pinned tabs groups preferences other Macs experimental"),
         .init(
             id: "automatic-update-checks", section: "general", title: "check for updates automatically",
             keywords: "software Sparkle periodic background reminder version"),
@@ -56,9 +63,6 @@ enum SettingsSearch {
             keywords: "link destination url hover status bar toast preview"),
         .init(id: "link-groups", section: "general", title: "browsing trails", keywords: "links groups tab history"),
         .init(
-            id: "resize-transition", section: "appearance", title: "soften sidebar resizing",
-            keywords: "resize fade blur crossfade motion"),
-        .init(
             id: "tint-wonderbar", section: "appearance", title: "tint wonderbar",
             keywords: "omnibar theme container background colour color"),
         .init(
@@ -71,7 +75,7 @@ enum SettingsSearch {
             id: "sidebar-only-chrome", section: "appearance", title: "sidebar-only titlebar",
             keywords: "hide titlebar toolbar traffic lights gray grey dots window controls hover"),
         .init(
-            id: "capitalize-menus", section: "appearance", title: "capitalize menu items",
+            id: "capitalize-menus", section: "advanced", title: "capitalize menu labels",
             keywords: "context menus menu bar uppercase lowercase title case normal capitalization"),
         .init(
             id: "page-margins", section: "appearance", title: "keep page margins when sidebar is hidden",

@@ -6,10 +6,11 @@ struct CursorRegion: NSViewRepresentable {
     var changed: ((CGPoint, Bool) -> Void)?
     func makeNSView(context: Context) -> Region { Region() }
     func updateNSView(_ view: Region, context: Context) {
+        let enabled = context.environment.isEnabled && changed != nil
+        let geometryChanged = view.cursor !== cursor || (view.changed != nil) != enabled
         view.cursor = cursor
-        view.changed = context.environment.isEnabled ? changed : nil
-        view.window?.invalidateCursorRects(for: view)
-        view.refreshCursor()
+        view.changed = enabled ? changed : nil
+        if geometryChanged { view.window?.invalidateCursorRects(for: view) }
     }
     final class Region: NSView {
         var cursor = NSCursor.arrow
