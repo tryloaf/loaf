@@ -27,6 +27,7 @@ import WebKit
     func update() async {
         guard !updating else { return }
         updating = true
+        error = nil
         defer { updating = false }
         do {
             let (data, response) = try await URLSession.shared.data(

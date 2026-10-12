@@ -1,5 +1,5 @@
-import Combine
 import AppKit
+import Combine
 import Foundation
 
 nonisolated struct ChatTurn: Identifiable, Codable {
@@ -25,10 +25,13 @@ nonisolated struct ChatTurn: Identifiable, Codable {
     var attachedPages: [TabChatContext] = []
     var images: [ChatImageAttachment] = []
     var reasoningEffort: String?
+    var isSummary: Bool?
     var inputText: String {
-        let evidence = (context?.questionContext ?? "") + attachedPages.enumerated().map {
-            "\n\n" + $0.element.evidence(marker: "tab\($0.offset + 1)")
-        }.joined()
+        let evidence =
+            (context?.questionContext ?? "")
+            + attachedPages.enumerated().map {
+                "\n\n" + $0.element.evidence(marker: "tab\($0.offset + 1)")
+            }.joined()
         return evidence.isEmpty ? query : evidence + "\n\nUser question:\n" + query
     }
     init(id: UUID = UUID(), query: String) {
@@ -81,6 +84,7 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
     private var task: Task<Void, Never>?
     private var generation = UUID()
     let account: ChatGPTAccount
+    let claudeAccount: ClaudeAccount?
     let selectedProvider: () -> AIProvider
     let webSearch: ((String) async throws -> [WebSearchResult])?
     let readPage: (URL) async throws -> String
@@ -88,14 +92,19 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
     let enabled: () -> Bool
     let isSideChat: Bool
     private var providerOverride: AIProvider?
+    private var modelOverride: String?
     var provider: AIProvider { providerOverride ?? selectedProvider() }
+    var modelID: String? {
+        modelOverride == PageSummary.defaultLuna ? account.lunaModel ?? ChatGPTProtocol.model : modelOverride
+    }
     var available: Bool {
         available(for: provider)
     }
-    private var usesChatGPT: Bool { provider == .chatgpt || nodes.values.contains { $0.turn.provider == .chatgpt } }
+    var usesChatGPT: Bool { provider == .chatgpt || nodes.values.contains { $0.turn.provider == .chatgpt } }
     private var observations = Set<AnyCancellable>()
     init(
         account: ChatGPTAccount, provider: @escaping () -> AIProvider = { .chatgpt },
+        claudeAccount: ClaudeAccount? = nil,
         enabled: @escaping () -> Bool = { true },
         webSearch: ((String) async throws -> [WebSearchResult])? = nil,
         isSideChat: Bool = false,
@@ -103,6 +112,7 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
         capturePage: ((TabChatTarget) async throws -> TabChatCapture)? = nil
     ) {
         self.account = account
+        self.claudeAccount = claudeAccount
         self.selectedProvider = provider
         self.enabled = enabled
         self.webSearch = webSearch
@@ -110,11 +120,21 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
         self.readPage = readPage
         self.capturePage = capturePage
         account.$connected.dropFirst().sink { [weak self] connected in
-            if !connected, self?.usesChatGPT == true { self?.clear() }
+            if !connected { self?.providerDisconnected(.chatgpt) } else { self?.objectWillChange.send() }
         }.store(in: &observations)
         account.$disconnecting.dropFirst().sink { [weak self] disconnecting in
-            if disconnecting, self?.usesChatGPT == true { self?.clear() }
+            if disconnecting { self?.providerDisconnected(.chatgpt) }
         }.store(in: &observations)
+        claudeAccount?.$connected.dropFirst().sink { [weak self] connected in
+            if !connected { self?.providerDisconnected(.claude) }
+        }.store(in: &observations)
+        claudeAccount?.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &observations)
+    }
+    func use(provider: AIProvider, model: String? = nil) {
+        guard !searching else { return }
+        objectWillChange.send()
+        providerOverride = provider
+        modelOverride = model
     }
     func open(query: String, provider: AIProvider? = nil) {
         clear()
@@ -122,7 +142,10 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
         draft = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if available { submit() }
     }
-    func submit(context: TabChatContext? = nil, webQuery: String? = nil, captureTarget: TabChatTarget? = nil, attachedPages: [TabChatContext] = [], images: [ChatImageAttachment] = []) {
+    func submit(
+        context: TabChatContext? = nil, webQuery: String? = nil, captureTarget: TabChatTarget? = nil,
+        attachedPages: [TabChatContext] = [], images: [ChatImageAttachment] = [], summary: Bool = false
+    ) {
         let query = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, !searching, available else { return }
         guard query.utf8.count <= 8_000, attachedPages.count <= 5,
@@ -134,13 +157,17 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
         draft = ""
         var turn = ChatGPTSearchTurn(query: query)
         turn.provider = provider
+        turn.isSummary = summary ? true : nil
         turn.context = context
         turn.attachedPages = attachedPages
         turn.images = images
-        turn.reasoningEffort = provider == .chatgpt ? account.reasoningEffort : nil
+        turn.reasoningEffort = provider == .chatgpt && !summary ? account.reasoningEffort : nil
         turn.webQuery = webQuery
         turn.captureTarget = captureTarget
-        turn.modelID = provider == .chatgpt ? account.selectedModelID : nil
+        turn.modelID =
+            modelOverride
+            ?? (provider == .chatgpt
+                ? account.selectedModelID : provider == .claude ? claudeAccount?.selectedModelID : nil)
         append(turn, parent: turns.last?.id)
         respond(to: turn)
     }
@@ -152,6 +179,7 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
         guard canRetry(turnID), let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
         var replacement = ChatGPTSearchTurn(id: turnID, query: turns[index].query)
         replacement.provider = turns[index].provider
+        replacement.isSummary = turns[index].isSummary
         replacement.attachedPages = turns[index].attachedPages
         replacement.images = turns[index].images
         replacement.reasoningEffort = turns[index].reasoningEffort
@@ -174,6 +202,7 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
         else { return }
         var turn = ChatGPTSearchTurn(query: query)
         turn.provider = node.turn.provider
+        turn.isSummary = node.turn.isSummary
         turn.attachedPages = node.turn.attachedPages
         turn.images = node.turn.images
         turn.reasoningEffort = node.turn.reasoningEffort
@@ -217,10 +246,12 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
         turns = path
     }
     private func available(for provider: AIProvider) -> Bool {
-        enabled()
-            && (provider == .chatgpt
-                ? account.connected && !account.disconnecting
-                : AppleIntelligence.unavailableReason(for: provider) == nil)
+        guard enabled() else { return false }
+        switch provider {
+        case .chatgpt: return account.connected && !account.disconnecting
+        case .claude: return claudeAccount?.connected == true
+        case .onDevice, .privateCloud: return AppleIntelligence.unavailableReason(for: provider) == nil
+        }
     }
     private func respond(to turn: ChatGPTSearchTurn) {
         searching = true
@@ -261,7 +292,70 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
                 }
             }
             do {
+                if turnProvider == .claude {
+                    guard let claudeAccount else {
+                        throw ChatGPTFailure.message("connect Claude in intelligence settings.")
+                    }
+                    let model = try await claudeAccount.requireModel(turn.modelID)
+                    guard generation == current else { return }
+                    update(turnID) {
+                        $0.modelID = model.id
+                        $0.modelName = model.name
+                        $0.phase = .writing
+                    }
+                    let handler: ((String, String) async throws -> String)? =
+                        turn.isSummary == true
+                        ? nil
+                        : { [weak self] kind, value in
+                            guard let self, self.generation == current else { throw CancellationError() }
+                            return try await self.performWebTool(
+                                kind: kind, value: value, turnID: turnID, current: current)
+                        }
+                    try await ClaudeAnswerProvider.respond(
+                        account: claudeAccount,
+                        input: (turn.isSummary == true ? [] : history) + [["role": "user", "content": turn.inputText]],
+                        model: model.id, summary: turn.isSummary == true,
+                        question: turn.query, precedingQuestions: preceding.filter(\.complete).map(\.query),
+                        webTool: handler
+                    ) { [weak self] text in
+                        guard let self, self.generation == current else { return }
+                        self.update(turnID) {
+                            $0.text = text
+                            $0.citations =
+                                WebSearchService.citations(in: text, results: self.toolSources)
+                                + ($0.context?.citations(in: text, soleSource: self.toolSources.isEmpty) ?? [])
+                                + $0.attachedPages.enumerated().flatMap {
+                                    $0.element.citations(in: text, marker: "tab\($0.offset + 1)")
+                                }
+                        }
+                    }
+                    guard generation == current else { return }
+                    update(turnID) {
+                        $0.complete = true
+                        $0.phase = .complete
+                    }
+                    return
+                }
                 if turnProvider != .chatgpt {
+                    if turn.isSummary == true, let page = turn.context {
+                        update(turnID) {
+                            $0.phase = .writing
+                            $0.modelName = turnProvider.title
+                        }
+                        try await AppleIntelligence.summarize(page, provider: turnProvider) { [weak self] text in
+                            guard let self, self.generation == current else { return }
+                            self.update(turnID) {
+                                $0.text = text
+                                $0.citations = page.citations(in: text, soleSource: true)
+                            }
+                        }
+                        guard generation == current else { return }
+                        update(turnID) {
+                            $0.complete = true
+                            $0.phase = .complete
+                        }
+                        return
+                    }
                     let sources = try await sideSources(turn.webQuery, turnID: turnID, current: current)
                     try Task.checkCancellation()
                     guard generation == current else { return }
@@ -275,7 +369,8 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
                         pageContext: turn.context, attachedPages: turn.attachedPages,
                         searchWeb: { [weak self] value in
                             guard let self, self.generation == current else { throw CancellationError() }
-                            return try await self.performWebTool(kind: "search_web", value: value, turnID: turnID, current: current, compact: true)
+                            return try await self.performWebTool(
+                                kind: "search_web", value: value, turnID: turnID, current: current, compact: true)
                         }
                     ) {
                         [weak self] text in
@@ -285,7 +380,9 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
                             $0.citations =
                                 WebSearchService.citations(in: text, results: self.toolSources)
                                 + ($0.context?.citations(in: text, soleSource: self.toolSources.isEmpty) ?? [])
-                                + $0.attachedPages.enumerated().flatMap { $0.element.citations(in: text, marker: "tab\($0.offset + 1)") }
+                                + $0.attachedPages.enumerated().flatMap {
+                                    $0.element.citations(in: text, marker: "tab\($0.offset + 1)")
+                                }
                         }
                     }
                     guard generation == current else { return }
@@ -295,34 +392,49 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
                     }
                     return
                 }
-                let chosenModel = try await account.requireModel(turn.modelID)
+                let chosenModel: ChatModel
+                if turn.modelID == PageSummary.defaultLuna {
+                    chosenModel = try await account.requireLunaModel()
+                } else {
+                    chosenModel = try await account.requireModel(turn.modelID)
+                }
                 guard generation == current else { return }
                 update(turnID) {
                     $0.modelID = chosenModel.id
                     $0.modelName = chosenModel.name
                 }
                 guard turn.images.isEmpty || chosenModel.acceptsImages else {
-                    throw ChatGPTFailure.message("this model doesn’t accept images. choose an image-capable model or remove the attachment.")
+                    throw ChatGPTFailure.message(
+                        "this model doesn’t accept images. choose an image-capable model or remove the attachment.")
                 }
                 let model = chosenModel.id
                 let token = try await account.accessToken()
                 try Task.checkCancellation()
                 guard generation == current else { return }
-                var input = history + [["role": "user", "content": turn.inputText]]
-                if chosenModel.acceptsImages {
-                    var remainingBytes = ChatImageAttachment.maximumTotalBytes - turn.images.reduce(0, { $0 + $1.jpeg.count }) - (turn.capture?.jpeg.count ?? 0)
+                var input = (turn.isSummary == true ? [] : history) + [["role": "user", "content": turn.inputText]]
+                if chosenModel.acceptsImages && turn.isSummary != true {
+                    var remainingBytes =
+                        ChatImageAttachment.maximumTotalBytes - turn.images.reduce(0, { $0 + $1.jpeg.count })
+                        - (turn.capture?.jpeg.count ?? 0)
                     var remainingCount = max(0, ChatImageAttachment.maximumCount - turn.images.count)
                     let retained = Array(preceding.suffix(history.count / 2))
                     for index in retained.indices.reversed() {
                         let previous = retained[index]
-                        var content: [[String: Any]] = [["type": "input_text", "text": input[index * 2]["content"] as? String ?? ""]]
+                        var content: [[String: Any]] = [
+                            ["type": "input_text", "text": input[index * 2]["content"] as? String ?? ""]
+                        ]
                         for image in previous.images where remainingCount > 0 && image.jpeg.count <= remainingBytes {
                             content.append(["type": "input_image", "image_url": image.imageURL, "detail": "high"])
-                            remainingBytes -= image.jpeg.count; remainingCount -= 1
+                            remainingBytes -= image.jpeg.count
+                            remainingCount -= 1
                         }
                         if let capture = previous.capture, remainingCount > 0, capture.jpeg.count <= remainingBytes {
-                            content += [["type": "input_text", "text": capture.evidence], ["type": "input_image", "image_url": capture.imageURL, "detail": "high"]]
-                            remainingBytes -= capture.jpeg.count; remainingCount -= 1
+                            content += [
+                                ["type": "input_text", "text": capture.evidence],
+                                ["type": "input_image", "image_url": capture.imageURL, "detail": "high"],
+                            ]
+                            remainingBytes -= capture.jpeg.count
+                            remainingCount -= 1
                         }
                         if content.count > 1 { input[index * 2]["content"] = content }
                     }
@@ -330,13 +442,20 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
                 let sources = try await sideSources(turn.webQuery, turnID: turnID, current: current)
                 try Task.checkCancellation()
                 guard generation == current else { return }
-                try await stream(input: input, model: model, token: token, sources: sources, turnID: turnID, current: current)
+                try await stream(
+                    input: input, model: model, token: token, sources: sources, turnID: turnID, current: current)
 
-            } catch is CancellationError {} catch {
+            } catch {
                 guard generation == current else { return }
                 update(turnID) {
                     $0.error =
-                        turnProvider == .chatgpt ? self.account.friendly(error) : AppleIntelligence.friendly(error)
+                        error is CancellationError
+                        ? ChatGPTFailure.interrupted.localizedDescription
+                        : turnProvider == .chatgpt
+                            ? self.account.friendly(error)
+                            : turnProvider == .claude
+                                ? self.claudeAccount?.friendly(error) ?? error.localizedDescription
+                                : AppleIntelligence.friendly(error)
                 }
             }
         }
@@ -359,16 +478,21 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
                 }
                 return try await self.requestCapture(target, reason: reason, turnID: turnID, current: current)
             } : nil
-        let webHandler: ((String, String) async throws -> String)? = unavailableCaptureModels.contains(model) ? nil : { [weak self] kind, value in
-            guard let self, self.generation == current else { throw CancellationError() }
-            return try await self.performWebTool(kind: kind, value: value, turnID: turnID, current: current)
-        }
+        let webHandler: ((String, String) async throws -> String)? =
+            unavailableCaptureModels.contains(model)
+            ? nil
+            : { [weak self] kind, value in
+                guard let self, self.generation == current else { throw CancellationError() }
+                return try await self.performWebTool(kind: kind, value: value, turnID: turnID, current: current)
+            }
         do {
             try await ChatGPTAnswerProvider.respond(
                 account: account, token: token, input: input, model: model, sources: sources,
                 allowsNativeSearch: false, initialCapture: turn?.capture, capturePage: captureHandler,
                 images: turn?.images ?? [], reasoningEffort: turn?.reasoningEffort,
-                webTool: webHandler
+                webTool: webHandler, summary: turn?.isSummary == true,
+                question: turn?.query,
+                precedingQuestions: turns.prefix(while: { $0.id != turnID }).filter(\.complete).map(\.query)
             ) { [weak self] snapshot in
                 self?.receive(snapshot, turnID: turnID, generation: current, sources: sources)
             }
@@ -382,7 +506,10 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
             unavailableCaptureModels.insert(model)
             update(turnID) { $0.captureStatus = "read-only tools unavailable for this model · using text" }
             try await ChatGPTAnswerProvider.respond(
-                account: account, token: token, input: input, model: model, sources: sources, allowsNativeSearch: false, images: turn?.images ?? [], reasoningEffort: turn?.reasoningEffort
+                account: account, token: token, input: input, model: model, sources: sources, allowsNativeSearch: false,
+                images: turn?.images ?? [], reasoningEffort: turn?.reasoningEffort, summary: turn?.isSummary == true,
+                question: turn?.query,
+                precedingQuestions: turns.prefix(while: { $0.id != turnID }).filter(\.complete).map(\.query)
             ) { [weak self] snapshot in
                 self?.receive(snapshot, turnID: turnID, generation: current, sources: sources)
             }
@@ -459,13 +586,19 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
     }
     func decidePageReads(_ decision: PageReadDecision, requestID: UUID) {
         guard pageReadRequest?.id == requestID, let continuation = pageReadContinuation else { return }
-        if decision == .allowAll { allowsAllPageReads = true; allowedTools.insert("fetch_page") }
+        if decision == .allowAll {
+            allowsAllPageReads = true
+            allowedTools.insert("fetch_page")
+        }
         if decision == .deny { deniedTools.insert("fetch_page") }
         pageReadContinuation = nil
         pageReadRequest = nil
         continuation.resume(returning: decision != .deny)
     }
-    func revokePageReads() { allowsAllPageReads = false; allowedTools.remove("fetch_page") }
+    func revokePageReads() {
+        allowsAllPageReads = false
+        allowedTools.remove("fetch_page")
+    }
     private func requestCapture(_ target: TabChatTarget, reason: String, turnID: UUID, current: UUID) async throws
         -> TabChatCapture?
     {
@@ -526,17 +659,34 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
             $0.sources = snapshot.sources + publicSources.map { .init(url: $0.url, title: $0.title) }
             $0.citations +=
                 $0.capture?.citations(in: snapshot.text, soleSource: publicSources.isEmpty && $0.attachedPages.isEmpty)
-                ?? $0.context?.citations(in: snapshot.text, soleSource: publicSources.isEmpty && $0.attachedPages.isEmpty) ?? []
+                ?? $0.context?.citations(
+                    in: snapshot.text, soleSource: publicSources.isEmpty && $0.attachedPages.isEmpty) ?? []
             for (index, context) in $0.attachedPages.enumerated() {
                 $0.citations += context.citations(in: snapshot.text, marker: "tab\(index + 1)")
             }
             $0.phase = snapshot.phase
             if sources == nil { $0.searchQuery = snapshot.query }
-            $0.citations = Array(Dictionary(grouping: $0.citations, by: \.id).compactMap { $0.value.first }).sorted { $0.start < $1.start }
+            $0.citations = Array(Dictionary(grouping: $0.citations, by: \.id).compactMap { $0.value.first }).sorted {
+                $0.start < $1.start
+            }
             $0.complete = snapshot.complete
         }
     }
-    func stop() {
+    private func providerDisconnected(_ provider: AIProvider) {
+        let activeProvider = activeTurnID.flatMap { nodes[$0]?.turn.provider }
+        if activeProvider == provider {
+            stop(
+                message:
+                    "\(provider.title) disconnected. reconnect in intelligence settings, then retry this answer.")
+        }
+        if self.provider == provider || activeProvider == provider {
+            allowedTools = []
+            allowsAllPageReads = false
+            allowsAllCaptures = false
+        }
+        objectWillChange.send()
+    }
+    func stop(message: String = "answer stopped. this answer is unfinished.") {
         generation = UUID()
         task?.cancel()
         let pendingTool = toolContinuation
@@ -554,7 +704,7 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
         task = nil
         searching = false
         if let id = activeTurnID, let turn = turns.first(where: { $0.id == id }), !turn.complete, turn.error == nil {
-            update(id) { $0.error = "answer stopped. this answer is unfinished." }
+            update(id) { $0.error = message }
         }
         activeTurnID = nil
     }
@@ -567,6 +717,7 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
         selectedBranch = [:]
         draft = ""
         providerOverride = nil
+        modelOverride = nil
         allowedTools = []
         deniedTools = []
         toolSources = []
@@ -582,7 +733,10 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
             append(turn, parent: turns.last?.id)
         }
     }
-    func revokeWebTools() { allowedTools = []; allowsAllPageReads = false }
+    func revokeWebTools() {
+        allowedTools = []
+        allowsAllPageReads = false
+    }
     func decideTool(_ decision: PageReadDecision, requestID: UUID) {
         guard let request = toolRequest, request.id == requestID, let continuation = toolContinuation else { return }
         if decision == .allowAll {
@@ -604,26 +758,42 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
             toolRequest = ChatToolRequest(kind: kind, value: value)
         }
     }
-    private func performWebTool(kind: String, value: String, turnID: UUID, current: UUID, compact: Bool = false) async throws -> String {
+    private func performWebTool(kind: String, value: String, turnID: UUID, current: UUID, compact: Bool = false)
+        async throws -> String
+    {
         guard enabled(), value.utf8.count <= 2_000 else { throw CancellationError() }
         if kind == "fetch_page" {
             guard let url = URL(string: value), PublicSearchNavigation.isPublicURL(url),
-                toolSources.contains(where: { $0.url == url }) || nodes[turnID]?.turn.query.contains(value) == true else {
+                toolSources.contains(where: { $0.url == url }) || nodes[turnID]?.turn.query.contains(value) == true
+            else {
                 return "Unavailable: fetch only public URLs supplied by the user or returned by this chat’s search."
             }
         }
         let approved = await approveTool(kind: kind, value: value, turnID: turnID)
         try Task.checkCancellation()
         guard generation == current, enabled() else { throw CancellationError() }
-        guard approved else { update(turnID) { $0.phase = .writing }; return "User denied this tool. Continue from available evidence." }
+        guard approved else {
+            update(turnID) { $0.phase = .writing }
+            return "User denied this tool. Continue from available evidence."
+        }
         if kind == "search_web" {
-            update(turnID) { $0.phase = .searching; $0.searchQuery = value; $0.externalSources = true }
+            update(turnID) {
+                $0.phase = .searching
+                $0.searchQuery = value
+                $0.externalSources = true
+            }
             let results: [WebSearchResult]
-            if let webSearch { results = try await webSearch(value) }
-            else { results = try await WebSearchService.search(value, publicSnippetsOnly: true) }
+            if let webSearch {
+                results = try await webSearch(value)
+            } else {
+                results = try await WebSearchService.search(value, publicSnippetsOnly: true)
+            }
             try Task.checkCancellation()
             guard generation == current, enabled() else { throw CancellationError() }
-            for source in results.prefix(6) where PublicSearchNavigation.isPublicURL(source.url) && !toolSources.contains(where: { $0.url == source.url }) {
+            for source in results.prefix(6)
+            where PublicSearchNavigation.isPublicURL(source.url)
+                && !toolSources.contains(where: { $0.url == source.url })
+            {
                 if toolSources.count < 18 { toolSources.append(source) }
             }
         } else if kind == "fetch_page", let url = URL(string: value) {
@@ -635,16 +805,31 @@ nonisolated enum PageReadDecision { case allow, allowAll, deny }
                 toolSources[index].excerpt = String(text.prefix(12_000))
                 toolSources[index].contentFetched = true
             } else {
-                toolSources.append(WebSearchResult(url: url, title: url.host ?? "page", excerpt: String(text.prefix(12_000)), contentFetched: true))
+                toolSources.append(
+                    WebSearchResult(
+                        url: url, title: url.host ?? "page", excerpt: String(text.prefix(12_000)), contentFetched: true)
+                )
             }
-        } else { return "Unknown tool." }
-        update(turnID) { $0.phase = .writing; $0.sources = toolSources.map { .init(url: $0.url, title: $0.title) } }
+        } else {
+            return "Unknown tool."
+        }
+        update(turnID) {
+            $0.phase = .writing
+            $0.sources = toolSources.map { .init(url: $0.url, title: $0.title) }
+        }
         let evidence = compact ? Array(toolSources.prefix(3)) : toolSources
-        guard !evidence.isEmpty else { return "No relevant web results found. Answer from existing knowledge and state any specific gap." }
+        guard !evidence.isEmpty else {
+            return "No relevant web results found. Answer from existing knowledge and state any specific gap."
+        }
         return evidence.enumerated().map {
-            let excerpt = compact ? WebSearchService.relevantExcerpt($0.element.excerpt, query: value, limit: 500) : $0.element.excerpt
-            let title = compact ? String($0.element.title.prefix(120)) : $0.element.title + " — " + $0.element.url.absoluteString
-            return "[\($0.offset + 1)] \(title) (\($0.element.contentFetched ? "page extract" : "search snippet"))\n\(excerpt)"
+            let excerpt =
+                compact
+                ? WebSearchService.relevantExcerpt($0.element.excerpt, query: value, limit: 500) : $0.element.excerpt
+            let title =
+                compact
+                ? String($0.element.title.prefix(120)) : $0.element.title + " — " + $0.element.url.absoluteString
+            return
+                "[\($0.offset + 1)] \(title) (\($0.element.contentFetched ? "page extract" : "search snippet"))\n\(excerpt)"
         }.joined(separator: "\n\n")
     }
     private func update(_ id: UUID, _ change: (inout ChatGPTSearchTurn) -> Void) {

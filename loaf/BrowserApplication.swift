@@ -31,7 +31,9 @@ import WebKit
         file: directory.appendingPathComponent("start-timers.json"),
         validProfiles: Set(profiles.filter { !$0.privateMode }.map(\.id)))
     private let suppliedChatGPTAccount: ChatGPTAccount?
+    private let suppliedClaudeAccount: ClaudeAccount?
     lazy var chatGPTAccount = suppliedChatGPTAccount ?? ChatGPTAccount()
+    lazy var claudeAccount = suppliedClaudeAccount ?? ClaudeAccount()
     let favicons: FaviconService
     let sites = PopularSites()
     let tabPreviews = TabPreviewCache()
@@ -56,20 +58,29 @@ import WebKit
     func setAIFeaturesEnabled(_ enabled: Bool) {
         preferences.aiFeaturesEnabled = enabled
         if !enabled {
-            if [.chatgpt, .appleIntelligence, .perplexity, .googleAIOverview].contains(preferences.alternateSearch?.provider) { preferences.alternateSearch?.enabled = false }
+            if [.chatgpt, .claude, .appleIntelligence, .perplexity, .googleAIOverview].contains(
+                preferences.alternateSearch?.provider)
+            {
+                preferences.alternateSearch?.enabled = false
+            }
             for window in windows { window.closeSideChat() }
-            for runtime in runtimes.values { for tab in runtime.tabs.values {
-                tab.existingChatGPTSearch?.clear(); tab.existingSideChat?.clear()
-            } }
+            for runtime in runtimes.values {
+                for tab in runtime.tabs.values {
+                    tab.existingChatGPTSearch?.clear()
+                    tab.existingSideChat?.endSession()
+                }
+            }
         }
         persistSoon()
     }
 
     init(
         directory override: URL? = nil, prepareServices: Bool = true, chatGPTAccount: ChatGPTAccount? = nil,
+        claudeAccount: ClaudeAccount? = nil,
         faviconService: FaviconService? = nil
     ) {
         suppliedChatGPTAccount = chatGPTAccount
+        suppliedClaudeAccount = claudeAccount
         directory =
             override
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -152,7 +163,11 @@ import WebKit
             preferences.alternateSearch?.provider = .google
         }
         if preferences.aiFeaturesEnabled == false {
-            if [.chatgpt, .appleIntelligence, .perplexity, .googleAIOverview].contains(preferences.alternateSearch?.provider) { preferences.alternateSearch?.enabled = false }
+            if [.chatgpt, .claude, .appleIntelligence, .perplexity, .googleAIOverview].contains(
+                preferences.alternateSearch?.provider)
+            {
+                preferences.alternateSearch?.enabled = false
+            }
         }
         downloads.configure(directory: directory)
         downloads.cleanupCache(olderThanDays: preferences.downloadCacheDays ?? 7)
@@ -309,9 +324,10 @@ import WebKit
     }
     func deleteProfile(_ id: UUID) async throws {
         guard canDeleteProfile(id) else {
-            throw ProfileImport.Failure(message: busyProfileIDs.contains(id)
-                ? "Wait for this profile’s data operation to finish before deleting it."
-                : "Keep at least one regular profile in loaf.")
+            throw ProfileImport.Failure(
+                message: busyProfileIDs.contains(id)
+                    ? "Wait for this profile’s data operation to finish before deleting it."
+                    : "Keep at least one regular profile in loaf.")
         }
 
         var pending = pendingProfileDeletions
@@ -543,7 +559,8 @@ import WebKit
         saveTask = nil
         guard let snapshot = sessionSnapshot() else { throw CocoaError(.fileWriteUnknown) }
         let data = try SessionWrite(snapshot: snapshot).encoded()
-        try sessionWriter.commit(data, to: directory.appendingPathComponent("session.json"), revision: sessionWriter.reserve())
+        try sessionWriter.commit(
+            data, to: directory.appendingPathComponent("session.json"), revision: sessionWriter.reserve())
         cloudSync.capture(snapshot)
     }
 }

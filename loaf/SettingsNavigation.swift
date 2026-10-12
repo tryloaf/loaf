@@ -1,9 +1,34 @@
 import AppKit
 import SwiftUI
 
+struct SettingsActionButton: View {
+    let title: String
+    let busy: Bool
+    let disabled: Bool
+    let role: ButtonRole?
+    let action: () -> Void
+    init(_ title: String, busy: Bool, disabled: Bool = false, role: ButtonRole? = nil, action: @escaping () -> Void) {
+        self.title = title
+        self.busy = busy
+        self.disabled = disabled
+        self.role = role
+        self.action = action
+    }
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(title, role: role, action: action).disabled(busy || disabled)
+            if busy {
+                ProgressView().progressViewStyle(.circular).controlSize(.small)
+                    .accessibilityLabel(title + " in progress")
+            }
+        }
+    }
+}
+
 nonisolated enum SettingsNavigation {
     static let sections = [
-        "general", "appearance", "search", "profiles", "websites", "privacy", "passwords", "extensions", "advanced",
+        "general", "appearance", "sidebar", "search", "intelligence", "profiles", "websites", "privacy", "passwords",
+        "extensions", "advanced",
         "sync",
     ]
     enum Shortcut: Equatable {

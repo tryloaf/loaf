@@ -83,7 +83,9 @@ import WebKit
         let key = "web." + tab.id.uuidString + "." + id
         targets = targets.filter { $0.value.tab != nil }
         targets[key] = .init(tab: tab, profileID: tab.profileID, navigation: tab.navigationID)
-        if targets.count > 200 { targets = [key: .init(tab: tab, profileID: tab.profileID, navigation: tab.navigationID)] }
+        if targets.count > 200 {
+            targets = [key: .init(tab: tab, profileID: tab.profileID, navigation: tab.navigationID)]
+        }
         UNUserNotificationCenter.current().delegate = self
         try await UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: key, content: content, trigger: nil))
@@ -95,7 +97,9 @@ import WebKit
     }
     func forgetProfile(_ id: UUID) {
         let identifiers = targets.filter { $0.value.profileID == id }.map(\.key)
-        if !identifiers.isEmpty { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: identifiers) }
+        if !identifiers.isEmpty {
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: identifiers)
+        }
         for identifier in identifiers { targets.removeValue(forKey: identifier) }
         deliveries.removeValue(forKey: id)
     }

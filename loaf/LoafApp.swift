@@ -35,13 +35,18 @@ import WebKit
         _ alert: NSAlert, for sender: NSApplication,
         completion: @escaping (NSApplication.ModalResponse) -> Void
     ) {
-        let window = sender.keyWindow ?? sender.mainWindow ?? coordinator?.commandState?.nativeWindow
-        sender.activate()
-        if let window, window.attachedSheet == nil, !window.isMiniaturized {
-            window.makeKeyAndOrderFront(nil)
-            alert.beginSheetModal(for: window, completionHandler: completion)
-        } else {
-            DispatchQueue.main.async { completion(alert.runModal()) }
+
+        DispatchQueue.main.async { [weak self] in
+            let window = sender.keyWindow ?? sender.mainWindow ?? self?.coordinator?.commandState?.nativeWindow
+            sender.unhide(nil)
+            sender.activate(ignoringOtherApps: true)
+            if let window, window.attachedSheet == nil {
+                if window.isMiniaturized { window.deminiaturize(nil) }
+                window.makeKeyAndOrderFront(nil)
+                alert.beginSheetModal(for: window, completionHandler: completion)
+            } else {
+                completion(alert.runModal())
+            }
         }
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

@@ -16,6 +16,8 @@ The compatibility layer implements the Manifest V3 `userScripts` registration AP
 
 Other extension APIs still depend on WebKit. Some Tampermonkey network interception and CSP modification features can report a `dNr` diagnostic. Support for a manager does not guarantee every userscript or GM API works.
 
+Shazam 2.7.0 omits its declared developer-tools page and font styles. Its runtime copy drops the missing page reference and uses the macOS system font. Song recognition requires Chrome's `tabCapture` API, which loaf does not implement. The popup shows that limitation and handles failed capture without passing an invalid stream to Web Audio; saved history remains accessible. Existing installations migrate on restoration or when re-enabled. The original package and approved permissions stay unchanged.
+
 ## verification
 
 The integration check installs the signed Tampermonkey Chrome package and imports a real script that uses `GM_setValue` and `GM_getValue`. It also checks isolated and main worlds, frame IDs, runtime messages and ports, URL matching, atomic registration, partial updates, permission revocation, profile isolation, disabling, and restoration.

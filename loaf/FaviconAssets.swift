@@ -48,10 +48,11 @@ actor FaviconAssets {
     }
     nonisolated private static func visibleImage(_ image: CGImage) -> PreparedFavicon? {
 
-        guard let context = CGContext(
-            data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
-            bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)
+        guard
+            let context = CGContext(
+                data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+                bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)
         else { return nil }
         context.clear(CGRect(x: 0, y: 0, width: image.width, height: image.height))
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))

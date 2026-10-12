@@ -135,7 +135,8 @@ nonisolated struct WeatherSnapshot: Codable {
         let token = UUID()
         requestID = token
         let coordinate = location.coordinate
-        let place = WeatherPlace(name: "current location", latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let place = WeatherPlace(
+            name: "current location", latitude: coordinate.latitude, longitude: coordinate.longitude)
         guard place.valid else {
             fail(token)
             return
@@ -413,7 +414,10 @@ struct WeatherRefresh: ViewModifier {
     private let calendar: Calendar
     private let prefix: String
 
-    init(defaults: UserDefaults = .standard, calendar: Calendar = .autoupdatingCurrent, prefix: String = "loaf.weather.location") {
+    init(
+        defaults: UserDefaults = .standard, calendar: Calendar = .autoupdatingCurrent,
+        prefix: String = "loaf.weather.location"
+    ) {
         self.defaults = defaults
         self.calendar = calendar
         self.prefix = prefix
@@ -428,7 +432,8 @@ struct WeatherRefresh: ViewModifier {
             defaults.set(day, forKey: prefix + ".day")
             defaults.set(0, forKey: prefix + ".count")
         }
-        let hasBaseline = defaults.object(forKey: prefix + ".latitude") != nil
+        let hasBaseline =
+            defaults.object(forKey: prefix + ".latitude") != nil
             && defaults.object(forKey: prefix + ".longitude") != nil
         if hasBaseline {
             let previous = CLLocation(

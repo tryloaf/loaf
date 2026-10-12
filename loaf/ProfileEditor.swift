@@ -151,11 +151,15 @@ struct ProfileEditor: View {
                         if importingIcon { ProgressView().controlSize(.small) }
                     }.disabled(importingIcon)
                     if let iconError { Text(iconError).font(.callout).foregroundStyle(.red) }
-                    GolzheimPicker(selection: Binding(get: { icon }, set: {
-                        icon = $0
-                        customIconPNG = nil
-                        iconError = nil
-                    })).disabled(importingIcon)
+                    GolzheimPicker(
+                        selection: Binding(
+                            get: { icon },
+                            set: {
+                                icon = $0
+                                customIconPNG = nil
+                                iconError = nil
+                            })
+                    ).disabled(importingIcon)
                 }
             }.frame(maxHeight: 580)
             if let deletionError { Text(deletionError).font(.callout).foregroundStyle(.red) }
@@ -163,8 +167,11 @@ struct ProfileEditor: View {
                 if !store.profileFor(profileID).privateMode {
                     Button("delete profile…", role: .destructive) { confirmDeletion = true }
                         .disabled(!store.application.canDeleteProfile(profileID))
-                        .help(store.application.canDeleteProfile(profileID)
-                              ? "delete this profile and its local browsing data" : "keep at least one regular profile")
+                        .help(
+                            store.application.canDeleteProfile(profileID)
+                                ? "delete this profile and its local browsing data"
+                                : "keep at least one regular profile"
+                        )
 
                         .tint(.red)
                 }
@@ -196,22 +203,27 @@ struct ProfileEditor: View {
                 iconError = nil
                 Task { @MainActor in
                     defer { importingIcon = false }
-                    do { customIconPNG = try await ProfileIconAsset.importPNG(from: url) }
-                    catch {
-                        iconError = "Couldn’t read this icon. Use a PNG up to 1 MB or a self-contained SVG up to 128 KB."
+                    do { customIconPNG = try await ProfileIconAsset.importPNG(from: url) } catch {
+                        iconError =
+                            "Couldn’t read this icon. Use a PNG up to 1 MB or a self-contained SVG up to 128 KB."
                     }
                 }
             }
-            .confirmationDialog("delete \(store.profileFor(profileID).name)?", isPresented: $confirmDeletion, titleVisibility: .visible) {
+            .confirmationDialog(
+                "delete \(store.profileFor(profileID).name)?", isPresented: $confirmDeletion, titleVisibility: .visible
+            ) {
                 Button("delete profile", role: .destructive) {
                     deleting = true
                     Task {
-                        do { try await store.application.deleteProfile(profileID); dismiss() }
-                        catch {
+                        do {
+                            try await store.application.deleteProfile(profileID)
+                            dismiss()
+                        } catch {
                             if store.application.profiles.contains(where: { $0.id == profileID }) {
                                 deletionError = error.localizedDescription
                             } else {
-                                store.error = "The profile was deleted, but some data cleanup is pending: \(error.localizedDescription)"
+                                store.error =
+                                    "The profile was deleted, but some data cleanup is pending: \(error.localizedDescription)"
                                 dismiss()
                             }
                         }
@@ -220,16 +232,20 @@ struct ProfileEditor: View {
                 }
                 Button("cancel", role: .cancel) {}
             } message: {
-                Text((store.application.cloudSync.enabled ? "Deleting this synced profile also removes it from your other syncing Macs. " : "") + "This deletes this profile’s tabs, history, bookmarks, cookies, saved passwords, and extensions from this Mac. It cannot be undone. Downloaded files stay where they are.")
+                Text(
+                    (store.application.cloudSync.enabled
+                        ? "Deleting this synced profile also removes it from your other syncing Macs. " : "")
+                        + "This deletes this profile’s tabs, history, bookmarks, cookies, saved passwords, and extensions from this Mac. It cannot be undone. Downloaded files stay where they are."
+                )
             }.onAppear {
-            let profile = store.profileFor(profileID)
-            name = profile.name
-            icon = profile.emoji
-            customIconPNG = profile.customIconPNG
-            tint = profile.tint
-            strength = profile.personalization?.tintStrength ?? 0.06
-            customTint = profile.personalization?.customTint
-            transparency = ProfileTransparency.bounded(profile.personalization?.windowTransparency ?? 0)
-        }
+                let profile = store.profileFor(profileID)
+                name = profile.name
+                icon = profile.emoji
+                customIconPNG = profile.customIconPNG
+                tint = profile.tint
+                strength = profile.personalization?.tintStrength ?? 0.06
+                customTint = profile.personalization?.customTint
+                transparency = ProfileTransparency.bounded(profile.personalization?.windowTransparency ?? 0)
+            }
     }
 }

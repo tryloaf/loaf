@@ -55,7 +55,8 @@ enum ChatGPTAnswerContent {
             result.append(
                 Block(
                     style: style, raw: slice(from, to), start: from, language: language,
-                    citations: turn.citations.filter { $0.start >= from && $0.end <= to }, streaming: !turn.complete && turn.error == nil))
+                    citations: turn.citations.filter { $0.start >= from && $0.end <= to },
+                    streaming: !turn.complete && turn.error == nil))
         }
         func flush() {
             if let from = paragraphStart {
@@ -120,7 +121,9 @@ enum ChatGPTAnswerContent {
         return Fence(character: character, count: count, language: String(language.prefix(40)))
     }
 
-    static func attributed(_ raw: String, start: Int, citations: [ChatGPTCitation], streaming: Bool = false) -> AttributedString {
+    static func attributed(_ raw: String, start: Int, citations: [ChatGPTCitation], streaming: Bool = false)
+        -> AttributedString
+    {
         let scalars = Array(raw.unicodeScalars)
         var result = AttributedString()
         var position = 0
@@ -156,7 +159,11 @@ enum ChatGPTAnswerContent {
         var index = text.startIndex
         while index < text.endIndex {
             let char = text[index]
-            if char == "\\" { index = text.index(after: index); if index < text.endIndex { index = text.index(after: index) }; continue }
+            if char == "\\" {
+                index = text.index(after: index)
+                if index < text.endIndex { index = text.index(after: index) }
+                continue
+            }
             if char == "*" || char == "_" || char == "`" {
                 let runEnd = text[index...].firstIndex(where: { $0 != char }) ?? text.endIndex
                 let token = String(text[index..<runEnd])
@@ -167,17 +174,26 @@ enum ChatGPTAnswerContent {
                     index = runEnd
                     continue
                 }
-                if stack.last == token { stack.removeLast() }
-                else if runEnd == text.endIndex { result = String(result.dropLast(token.count)) }
-                else if after?.isWhitespace != true { stack.append(token) }
+                if stack.last == token {
+                    stack.removeLast()
+                } else if runEnd == text.endIndex {
+                    result = String(result.dropLast(token.count))
+                } else if after?.isWhitespace != true {
+                    stack.append(token)
+                }
                 index = runEnd
-            } else { index = text.index(after: index) }
+            } else {
+                index = text.index(after: index)
+            }
         }
 
         if let start = result.range(of: "[", options: .backwards),
-            result[start.upperBound...].contains("](") && !result[start.upperBound...].hasSuffix(")") {
+            result[start.upperBound...].contains("](") && !result[start.upperBound...].hasSuffix(")")
+        {
             let suffix = result[start.upperBound...]
-            if let labelEnd = suffix.range(of: "](") { result = String(result[..<start.lowerBound]) + suffix[..<labelEnd.lowerBound] }
+            if let labelEnd = suffix.range(of: "](") {
+                result = String(result[..<start.lowerBound]) + suffix[..<labelEnd.lowerBound]
+            }
         } else if let start = result.range(of: "[", options: .backwards), !result[start.upperBound...].contains("]") {
             result.remove(at: start.lowerBound)
         }
@@ -198,7 +214,8 @@ enum ChatGPTAnswerContent {
                 citation.valid
             else { continue }
             result += String(String.UnicodeScalarView(scalars[position..<citation.start]))
-            result += citation.pageContextID == nil
+            result +=
+                citation.pageContextID == nil
                 ? "[\(siteName(citation.url))](\(citation.url.absoluteString))" : "[page]"
             position = citation.end
         }
@@ -231,7 +248,9 @@ struct ChatGPTAnswerBody: View {
                             Text(marker).font(.system(size: compact ? 14 : 16)).foregroundStyle(.secondary)
                                 .frame(width: 18, alignment: .trailing).padding(.top, compact ? 1 : 2)
                         }
-                        ChatGPTInlineAnswer(block: block, icons: icons, streaming: !turn.complete && turn.error == nil, compact: compact)
+                        ChatGPTInlineAnswer(
+                            block: block, icons: icons, streaming: !turn.complete && turn.error == nil, compact: compact
+                        )
                     }
                 }
             }
@@ -240,8 +259,10 @@ struct ChatGPTAnswerBody: View {
         .task(id: iconIdentity) {
             icons = [:]
             var seen = Set<String>()
-            let urls = turn.citations.filter { $0.pageContextID == nil }.map(\.url).filter { seen.insert(BrowserAddress.websiteOrigin($0) ?? "").inserted }
-                .prefix(32)
+            let urls = turn.citations.filter { $0.pageContextID == nil }.map(\.url).filter {
+                seen.insert(BrowserAddress.websiteOrigin($0) ?? "").inserted
+            }
+            .prefix(32)
             let service = store.application.favicons
             let scope = privateID
             await withTaskGroup(of: (String, NSImage?).self) { group in
@@ -300,9 +321,12 @@ struct ChatGPTCodeSnippet: View {
                     copied = Self.copy(code, to: .general)
                     copyRevision += 1
                 } label: {
-                    Label { Text(copied ? "copied" : "copy code") }
-                    icon: { GolzheimIcon(icon: copied ? .check : .copy, size: 11) }
-                        .font(.system(size: 11))
+                    Label {
+                        Text(copied ? "copied" : "copy code")
+                    } icon: {
+                        GolzheimIcon(icon: copied ? .check : .copy, size: 11)
+                    }
+                    .font(.system(size: 11))
                 }.buttonStyle(.plain).foregroundStyle(.secondary).help("copy code without formatting")
                     .accessibilityLabel(copied ? "code copied" : "copy code")
             }.padding(.horizontal, 14).padding(.vertical, 10)

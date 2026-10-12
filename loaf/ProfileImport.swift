@@ -186,9 +186,10 @@ nonisolated enum ProfileImport {
         }
         if source.pathExtension.lowercased() == "html" {
             return [
-                sanitize(.init(
-                    name: source.deletingPathExtension().lastPathComponent,
-                    bookmarks: try BookmarkImport.html(String(decoding: read(source), as: UTF8.self))))
+                sanitize(
+                    .init(
+                        name: source.deletingPathExtension().lastPathComponent,
+                        bookmarks: try BookmarkImport.html(String(decoding: read(source), as: UTF8.self))))
             ]
         }
         return try snapshot(source)
@@ -243,7 +244,8 @@ nonisolated enum ProfileImport {
                     && seenVisits.insert([$0.address, String($0.date.timeIntervalSince1970)]).inserted
             }.sorted { $0.date > $1.date }.prefix(20_000))
         var seenBookmarks = Set<String>()
-        item.bookmarks = Array(item.bookmarks.filter { validURL($0.address) && seenBookmarks.insert($0.address).inserted }.prefix(20_000))
+        item.bookmarks = Array(
+            item.bookmarks.filter { validURL($0.address) && seenBookmarks.insert($0.address).inserted }.prefix(20_000))
         var uniqueCookies: [CookieTransfer] = []
         var cookieValues: [[String]: CookieTransfer] = [:]
         var conflictingCookies = Set<[String]>()
@@ -251,7 +253,9 @@ nonisolated enum ProfileImport {
             guard let parsed = cookie.cookie() else { continue }
             let identity = cookieIdentity(parsed)
             if let previous = cookieValues[identity] {
-                if previous.value != cookie.value || previous.secure != cookie.secure || previous.httpOnly != cookie.httpOnly {
+                if previous.value != cookie.value || previous.secure != cookie.secure
+                    || previous.httpOnly != cookie.httpOnly
+                {
                     conflictingCookies.insert(identity)
                 }
             } else {
@@ -259,10 +263,11 @@ nonisolated enum ProfileImport {
                 uniqueCookies.append(cookie)
             }
         }
-        item.cookies = Array(uniqueCookies.filter {
-            guard let cookie = $0.cookie() else { return false }
-            return !conflictingCookies.contains(cookieIdentity(cookie))
-        }.prefix(10_000))
+        item.cookies = Array(
+            uniqueCookies.filter {
+                guard let cookie = $0.cookie() else { return false }
+                return !conflictingCookies.contains(cookieIdentity(cookie))
+            }.prefix(10_000))
         item.tabs = Array(item.tabs.filter { $0.address.map(validURL) == true }.prefix(500))
         var seenFolders = Set<UUID>()
         item.folders = Array(item.folders.filter { seenFolders.insert($0.id).inserted }.prefix(1_000))
@@ -271,12 +276,16 @@ nonisolated enum ProfileImport {
             item.history[index].count = max(1, min(item.history[index].count, 1_000_000))
             item.history[index].sessionID = nil
         }
-        for index in item.bookmarks.indices { item.bookmarks[index].title = String(item.bookmarks[index].title.prefix(500)) }
+        for index in item.bookmarks.indices {
+            item.bookmarks[index].title = String(item.bookmarks[index].title.prefix(500))
+        }
         for index in item.folders.indices { item.folders[index].name = String(item.folders[index].name.prefix(80)) }
         let labels = ["history entries", "bookmarks", "cookies", "saved tabs"]
         let counts = [item.history.count, item.bookmarks.count, item.cookies.count, item.tabs.count]
         for index in counts.indices where counts[index] < originalCounts[index] {
-            item.warnings.append("\(originalCounts[index] - counts[index]) \(labels[index]) excluded because they were invalid, expired, duplicated, conflicting or exceeded import limits.")
+            item.warnings.append(
+                "\(originalCounts[index] - counts[index]) \(labels[index]) excluded because they were invalid, expired, duplicated, conflicting or exceeded import limits."
+            )
         }
         let folderIDs = Set(item.folders.map(\.id))
         for index in item.bookmarks.indices
@@ -716,15 +725,26 @@ nonisolated enum ProfileImport {
 
 extension ProfileImport {
 
-    static func merging(_ preview: ProfileImportPreview, into original: Profile, history: Bool, bookmarks: Bool) throws -> Profile {
+    static func merging(_ preview: ProfileImportPreview, into original: Profile, history: Bool, bookmarks: Bool) throws
+        -> Profile
+    {
         var profile = original
         if history {
             var known = Set(profile.history.map { [$0.address, String($0.date.timeIntervalSince1970)] })
-            let additions = preview.history.filter { known.insert([$0.address, String($0.date.timeIntervalSince1970)]).inserted }
-            guard additions.isEmpty || profile.history.count + additions.count <= 50_000 else {
-                throw Failure(message: "There isn’t room for this history in \(profile.name). Create a new profile or leave history unchecked. Your existing history has been kept.")
+            let additions = preview.history.filter {
+                known.insert([$0.address, String($0.date.timeIntervalSince1970)]).inserted
             }
-            profile.history += additions.map { var visit = $0; visit.id = UUID(); return visit }
+            guard additions.isEmpty || profile.history.count + additions.count <= 50_000 else {
+                throw Failure(
+                    message:
+                        "There isn’t room for this history in \(profile.name). Create a new profile or leave history unchecked. Your existing history has been kept."
+                )
+            }
+            profile.history += additions.map {
+                var visit = $0
+                visit.id = UUID()
+                return visit
+            }
             profile.history.sort { $0.date > $1.date }
         }
         if bookmarks {
@@ -760,8 +780,9 @@ extension BrowserWindowState {
         _ source: ProfileImportPreview, name: String, newProfile: Bool, history: Bool, bookmarks: Bool, cookies: Bool,
         tabs: Bool = false
     ) async throws {
-        _ = try await importProfiles([source], names: [name], newProfile: newProfile, history: history,
-                                    bookmarks: bookmarks, cookies: cookies, tabs: tabs, destinationID: selectedProfileID)
+        _ = try await importProfiles(
+            [source], names: [name], newProfile: newProfile, history: history,
+            bookmarks: bookmarks, cookies: cookies, tabs: tabs, destinationID: selectedProfileID)
     }
 
     @discardableResult func importProfiles(
@@ -769,20 +790,26 @@ extension BrowserWindowState {
         cookies: Bool, tabs: Bool = false, destinationID: UUID
     ) async throws -> [UUID] {
         guard !application.profileImportInProgress, !application.busyProfileIDs.contains(destinationID),
-              let destination = application.profiles.first(where: { $0.id == destinationID }), !destination.privateMode,
-              !sources.isEmpty, sources.count == names.count, newProfile || sources.count == 1,
-              !newProfile || application.profiles.count + sources.count <= 8 else {
-            throw ProfileImport.Failure(message: "Choose an available regular profile with room to import. loaf supports up to 8 profiles.")
+            let destination = application.profiles.first(where: { $0.id == destinationID }), !destination.privateMode,
+            !sources.isEmpty, sources.count == names.count, newProfile || sources.count == 1,
+            !newProfile || application.profiles.count + sources.count <= 8
+        else {
+            throw ProfileImport.Failure(
+                message: "Choose an available regular profile with room to import. loaf supports up to 8 profiles.")
         }
         let previews = sources.map(ProfileImport.sanitize)
         let cleanNames = names.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40)) }
-        guard !newProfile || cleanNames.allSatisfy({ !$0.isEmpty }), previews.allSatisfy({
-            history && !$0.history.isEmpty || bookmarks && !$0.bookmarks.isEmpty || cookies && !$0.cookies.isEmpty || tabs && !$0.tabs.isEmpty
-        }) else {
+        guard !newProfile || cleanNames.allSatisfy({ !$0.isEmpty }),
+            previews.allSatisfy({
+                history && !$0.history.isEmpty || bookmarks && !$0.bookmarks.isEmpty || cookies && !$0.cookies.isEmpty
+                    || tabs && !$0.tabs.isEmpty
+            })
+        else {
             throw ProfileImport.Failure(message: "Choose a name and readable data for every profile being imported.")
         }
         guard !cookies || newProfile else {
-            throw ProfileImport.Failure(message: "Create a new profile to import cookies. Existing profile sign-ins are kept untouched.")
+            throw ProfileImport.Failure(
+                message: "Create a new profile to import cookies. Existing profile sign-ins are kept untouched.")
         }
         try Task.checkCancellation()
         application.profileImportInProgress = true
@@ -792,9 +819,11 @@ extension BrowserWindowState {
             application.profileImportInProgress = false
             application.busyProfileIDs.subtract(importedIDs + [destinationID])
         }
-        let originals = newProfile ? cleanNames.enumerated().map { index, name in
-            Profile(name: name, tint: (application.profiles.count + index) % 4)
-        } : [profileFor(destinationID)]
+        let originals =
+            newProfile
+            ? cleanNames.enumerated().map { index, name in
+                Profile(name: name, tint: (application.profiles.count + index) % 4)
+            } : [profileFor(destinationID)]
         let prepared = try zip(previews, originals).map {
             try ProfileImport.merging($0.0, into: $0.1, history: history, bookmarks: bookmarks)
         }
@@ -802,14 +831,19 @@ extension BrowserWindowState {
         application.busyProfileIDs.formUnion(importedIDs)
         let previousProfiles = application.profiles
         let previousWorkspaces = workspaces
-        if newProfile { application.profiles.append(contentsOf: prepared) }
-        else { updateProfile(destinationID) { $0 = prepared[0] } }
-        do { try application.persistImport() }
-        catch {
+        if newProfile {
+            application.profiles.append(contentsOf: prepared)
+        } else {
+            updateProfile(destinationID) { $0 = prepared[0] }
+        }
+        do { try application.persistImport() } catch {
             application.profiles = previousProfiles
             workspaces = previousWorkspaces
             try? application.persistImport()
-            throw ProfileImport.Failure(message: "The import couldn’t be saved and was stopped before cookies were written or websites opened. Check available disk space and folder access, then try again.")
+            throw ProfileImport.Failure(
+                message:
+                    "The import couldn’t be saved and was stopped before cookies were written or websites opened. Check available disk space and folder access, then try again."
+            )
         }
 
         for (preview, profile) in zip(previews, prepared) {

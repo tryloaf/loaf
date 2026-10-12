@@ -525,7 +525,10 @@ struct PointerCapturePosition {
         let selected =
             hit?.responds(to: NSSelectorFromString("isSelected")) == true
             && (hit?.value(forKey: "selected") as? Bool == true)
-        let replacements = ["search", "openlinkinnewwindow", "openlinkinnewtab", "openimageinnewwindow", "openmediainnewwindow", "reload", "goback", "goforward"]
+        let replacements = [
+            "search", "openlinkinnewwindow", "openlinkinnewtab", "openimageinnewwindow", "openmediainnewwindow",
+            "reload", "goback", "goforward",
+        ]
         let replacedIdentifiers: Set<String> = [
             "WKMenuItemIdentifierOpenLinkInNewWindow", "WKMenuItemIdentifierOpenLinkInNewTab",
             "WKMenuItemIdentifierOpenImageInNewWindow", "WKMenuItemIdentifierOpenMediaInNewWindow",
@@ -538,8 +541,12 @@ struct PointerCapturePosition {
         menu.allowsContextMenuPlugIns = false
         for item in menu.items {
             let action = item.action.map(NSStringFromSelector)?.lowercased() ?? ""
-            let windowURL = action.contains("openimageinnewwindow") || item.identifier?.rawValue == "WKMenuItemIdentifierOpenImageInNewWindow" ? image
-                : action.contains("openmediainnewwindow") || item.identifier?.rawValue == "WKMenuItemIdentifierOpenMediaInNewWindow" ? media : nil
+            let windowURL =
+                action.contains("openimageinnewwindow")
+                    || item.identifier?.rawValue == "WKMenuItemIdentifierOpenImageInNewWindow"
+                ? image
+                : action.contains("openmediainnewwindow")
+                    || item.identifier?.rawValue == "WKMenuItemIdentifierOpenMediaInNewWindow" ? media : nil
             if let windowURL, !["http", "https"].contains(windowURL.scheme), item.action != nil {
                 nativeWindowActions.append((item, windowURL))
             }

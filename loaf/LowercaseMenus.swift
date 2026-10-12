@@ -146,7 +146,7 @@ extension NSMenuItem {
 @MainActor final class LoafMainMenus: NSObject, NSMenuDelegate, NSMenuItemValidation {
     private enum Command: String {
         case about, updates, settings, newWindow, newTab, newPrivateWindow, closeTab, save, printPage
-        case find, location, sidebar, sideChat, reload, reloadFromOrigin, reader, zoomIn, zoomOut, actualSize
+        case find, location, sidebar, sideChat, summarize, reload, reloadFromOrigin, reader, zoomIn, zoomOut, actualSize
         case back, forward, history, reopenTab, reopenWindow, bookmark, favorites
         case nextTab, previousTab, pin, duplicate, downloads, previousProfile, nextProfile, editProfile, addProfile
         case inspector, inlineInspector, detachedInspector, source, report, help
@@ -291,6 +291,7 @@ extension NSMenuItem {
         let view = appendMenu("View", to: main)
         add("Toggle Sidebar", .sidebar, key: "s", to: view)
         add("Toggle Side Chat", .sideChat, key: "l", flags: [.command, .shift], to: view)
+        add("Summarize Page", .summarize, to: view)
         add("Reload", .reload, key: "r", to: view)
         add("Reload Without Cache", .reloadFromOrigin, key: "r", flags: [.command, .shift], to: view)
         add("Reading View", .reader, key: "r", flags: [.command, .option], to: view)
@@ -438,6 +439,9 @@ extension NSMenuItem {
                 if item.representedObject as? String == Command.sideChat.rawValue {
                     item.isHidden = coordinator.application.preferences.aiFeaturesEnabled == false
                     item.keyEquivalent = item.isHidden ? "" : "l"
+                }
+                if item.representedObject as? String == Command.summarize.rawValue {
+                    item.isHidden = coordinator.application.preferences.aiFeaturesEnabled == false
                 }
                 let enabled = validateMenuItem(item)
                 if item.isEnabled != enabled { item.isEnabled = enabled }
@@ -659,6 +663,7 @@ extension NSMenuItem {
         switch command {
         case .save: return store?.selectedTab?.url != nil && store?.selectedTab?.loading == false
         case .sideChat: return store?.canShowSideChat == true
+        case .summarize: return store?.canSummarizePage == true
         case .bookmark, .duplicate: return store?.selectedTab?.url != nil
         case .back: return store?.selectedTab?.canGoBack == true
         case .forward: return store?.selectedTab?.canGoForward == true
@@ -709,6 +714,7 @@ extension NSMenuItem {
         case .location: coordinator.activateBrowser()?.openOmnibar()
         case .sidebar: store?.sidebarVisible.toggle()
         case .sideChat: store?.toggleSideChat()
+        case .summarize: store?.summarizePage()
         case .reload: store?.selectedTab?.reload()
         case .reloadFromOrigin: store?.selectedTab?.reloadFromOrigin()
         case .reader: if let tab = store?.selectedTab { Task { await tab.toggleReader() } }

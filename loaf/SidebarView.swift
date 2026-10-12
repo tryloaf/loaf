@@ -27,6 +27,7 @@ struct SidebarView: View {
     @State private var profileDropPosition: ProfileDropPosition?
     @State private var traySection: TraySection?
     @State private var trayProgress: CGFloat = 0
+    @State private var trayBaseHeight: CGFloat = 48
     @State private var traySettleTask: Task<Void, Never>?
     @State private var extensionProgress: CGFloat = 0
     @State private var extensionTask: Task<Void, Never>?
@@ -35,40 +36,47 @@ struct SidebarView: View {
     @State private var extensionOverflow = false
     @State private var drop: TabDropPosition?
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                WindowDragArea().frame(maxWidth: .infinity, minHeight: 40)
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
                 HStack(spacing: 0) {
-                    IconButton(icon: .back, label: "back (⌘[)") { store.selectedTab?.webView.goBack() }.disabled(
-                        !(store.selectedTab?.canGoBack ?? false))
-                    IconButton(icon: .forward, label: "forward (⌘])") { store.selectedTab?.webView.goForward() }
-                        .disabled(!(store.selectedTab?.canGoForward ?? false))
-                    IconButton(icon: store.selectedTab?.loading == true ? .close : .reload, label: "reload (⌘R)") {
-                        if store.selectedTab?.loading == true {
-                            store.selectedTab?.webView.stopLoading()
-                        } else {
-                            store.selectedTab?.reload()
+                    WindowDragArea().frame(maxWidth: .infinity, minHeight: 40)
+                    HStack(spacing: 0) {
+                        IconButton(icon: .back, label: "back (⌘[)") { store.selectedTab?.webView.goBack() }.disabled(
+                            !(store.selectedTab?.canGoBack ?? false))
+                        IconButton(icon: .forward, label: "forward (⌘])") { store.selectedTab?.webView.goForward() }
+                            .disabled(!(store.selectedTab?.canGoForward ?? false))
+                        IconButton(icon: store.selectedTab?.loading == true ? .close : .reload, label: "reload (⌘R)") {
+                            if store.selectedTab?.loading == true {
+                                store.selectedTab?.webView.stopLoading()
+                            } else {
+                                store.selectedTab?.reload()
+                            }
+                        }
+                    }.offset(y: store.chromeControlsCenterY - 20 - (floating ? 3 : 0))
+                }.padding(.trailing, 8).frame(height: 40).fixedSize(horizontal: false, vertical: true)
+                    .overlay(alignment: .topLeading) {
+                        if store.usesSidebarOnlyChrome {
+                            SidebarWindowControls(floating: floating, tint: NSColor(profileTint(store.profile))).frame(
+                                width: 76, height: 32)
                         }
                     }
-                }.offset(y: store.chromeControlsCenterY - 20 - (floating ? 3 : 0))
-            }.padding(.trailing, 8).frame(height: 40)
-                .overlay(alignment: .topLeading) {
-                    if store.usesSidebarOnlyChrome {
-                        SidebarWindowControls(floating: floating, tint: NSColor(profileTint(store.profile))).frame(
-                            width: 76, height: 32)
+                address.padding(.horizontal, 8)
+                profileTabs
+                VStack(spacing: 8) {
+                    SidebarMediaPlayers(store: store, collection: store.sidebarMedia)
+                    if !store.preferences.weatherCity.isEmpty && store.profile.personalization?.sidebarWeather != false
+                    {
+                        weather
                     }
-                }
-            address.padding(.horizontal, 8)
-            profileTabs
-            VStack(spacing: 8) {
-                SidebarMediaPlayers(store: store, collection: store.sidebarMedia)
-                if !store.preferences.weatherCity.isEmpty && store.profile.personalization?.sidebarWeather != false {
-                    weather
-                }
 
-            }.padding(.horizontal, 8).padding(.bottom, 8)
-            tray
+                }.padding(.horizontal, 8).padding(.bottom, 8)
+                Color.clear.frame(height: trayBaseHeight)
 
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+            .overlay(alignment: .bottom) {
+                tray(availableHeight: max(0, geometry.size.height - 40)).zIndex(3)
+            }
         }
         .animation(nil, value: store.extensionsVisible)
         .animation(nil, value: extensionProgress)
@@ -258,20 +266,28 @@ struct SidebarView: View {
             }
         }
     }
-    private var tray: some View {
+    private func tray(availableHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
-            SidebarTrayContent(
-                store: store, section: Binding(get: { traySection ?? .downloads }, set: { traySection = $0 })
-            ) { setTray(nil) }
-            .frame(height: TrayMetrics.contentHeight).opacity(min(1, max(0, trayProgress)))
-            .frame(height: max(0, TrayMetrics.contentHeight * trayProgress), alignment: .top).clipped()
+            ScrollView {
+                SidebarTrayContent(
+                    store: store, section: Binding(get: { traySection ?? .downloads }, set: { traySection = $0 })
+                ) { setTray(nil) }
+                .frame(height: TrayMetrics.contentHeight).opacity(min(1, max(0, trayProgress)))
+            }
+            .scrollIndicators(.hidden)
+            .frame(
+                height: min(max(0, availableHeight - trayBaseHeight), max(0, TrayMetrics.contentHeight * trayProgress)),
+                alignment: .top
+            ).clipped()
             .allowsHitTesting(trayProgress > 0.95).accessibilityHidden(trayProgress < 0.95)
-            extensionStrip.opacity(extensionProgress)
-                .offset(y: 6 * (1 - extensionProgress))
-                .frame(height: extensionStripHeight * extensionProgress, alignment: .top).clipped()
-                .allowsHitTesting(store.extensionsVisible).accessibilityHidden(!store.extensionsVisible)
-            SoftwareUpdateReminder().padding(.horizontal, 8)
-            footer.zIndex(1)
+            VStack(spacing: 0) {
+                extensionStrip.opacity(extensionProgress)
+                    .offset(y: 6 * (1 - extensionProgress))
+                    .frame(height: extensionStripHeight * extensionProgress, alignment: .top).clipped()
+                    .allowsHitTesting(store.extensionsVisible).accessibilityHidden(!store.extensionsVisible)
+                SoftwareUpdateReminder().padding(.horizontal, 8)
+                footer.zIndex(1)
+            }.onGeometryChange(for: CGFloat.self, of: { $0.size.height + 8 }) { trayBaseHeight = $0 }
         }
         .background {
             ProfileWindowSurface(
@@ -317,27 +333,31 @@ struct SidebarView: View {
     }
     private var extensionStripHeight: CGFloat {
         let overflow = max(0, orderedExtensions.count - 4)
-        return 36 + (overflow > 0 ? 18 : 0) + (extensionOverflow && overflow > 0 ? CGFloat(min(4, (overflow + 4) / 5)) * 32 + 8 : 0)
+        return 36 + (overflow > 0 ? 18 : 0)
+            + (extensionOverflow && overflow > 0 ? CGFloat(min(4, (overflow + 4) / 5)) * 32 + 8 : 0)
     }
     private var extensionStrip: some View {
         let enabled = orderedExtensions
         let pinned = Array(enabled.prefix(4))
         let overflow = Array(enabled.dropFirst(4))
         return VStack(spacing: 4) {
-            if !overflow.isEmpty {
-                Button {
-                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.2)) { extensionOverflow.toggle() }
-                } label: {
-                    GolzheimIcon(icon: extensionOverflow ? .disclosureDown : .disclosureUp, size: 12)
-                        .frame(maxWidth: .infinity).frame(height: 14)
-                }.buttonStyle(LoafButtonStyle()).help(extensionOverflow ? "hide other extensions" : "show other extensions")
-            }
             if extensionOverflow, !overflow.isEmpty {
                 ScrollView {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 5), spacing: 4) {
                         ForEach(overflow) { extensionButton($0) }
                     }.padding(4)
                 }.scrollIndicators(.hidden).frame(height: CGFloat(min(4, (overflow.count + 4) / 5)) * 32 + 4)
+            }
+            if !overflow.isEmpty {
+                Button {
+                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.2)) { extensionOverflow.toggle() }
+                } label: {
+                    GolzheimIcon(icon: extensionOverflow ? .disclosureDown : .disclosureUp, size: 12)
+                        .frame(maxWidth: .infinity).frame(height: 14)
+                }.buttonStyle(LoafButtonStyle()).help(
+                    extensionOverflow ? "hide other extensions" : "show other extensions"
+                )
+                .accessibilityLabel(extensionOverflow ? "hide other extensions" : "show other extensions")
             }
             HStack(spacing: 0) {
                 ForEach(pinned) { extensionButton($0) }

@@ -30,7 +30,11 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
     private var externalSearchModels = Set<String>()
     var useExternalWebSearch: Bool {
         get { selectedModelID.map { externalSearchModels.contains($0) } ?? false }
-        set { if let id = selectedModelID { if newValue { externalSearchModels.insert(id) } else { externalSearchModels.remove(id) } } }
+        set {
+            if let id = selectedModelID {
+                if newValue { externalSearchModels.insert(id) } else { externalSearchModels.remove(id) }
+            }
+        }
     }
     func usesExternalSearch(for model: String) -> Bool { externalSearchModels.contains(model) }
     func markExternalSearch(for model: String) { externalSearchModels.insert(model) }
@@ -76,7 +80,9 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
     func selectModel(_ id: String) {
         guard models.contains(where: { $0.id == id }), !disconnecting else { return }
         selectedModelID = id
-        if !models.first(where: { $0.id == id })!.reasoningEfforts.contains(reasoningEffort ?? "") { reasoningEffort = nil }
+        if !models.first(where: { $0.id == id })!.reasoningEfforts.contains(reasoningEffort ?? "") {
+            reasoningEffort = nil
+        }
         defaults.set(id, forKey: modelPreferenceKey)
         error = nil
     }
@@ -235,6 +241,11 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
         }
         return model
     }
+    func requireLunaModel() async throws -> ChatModel {
+        if models.isEmpty { refreshCatalog() }
+        if let catalogTask { await catalogTask.value }
+        return try await requireModel(lunaModel ?? ChatGPTProtocol.model)
+    }
     private func checkModels() async {
         checkingModels = true
         defer { checkingModels = false }
@@ -243,8 +254,9 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
             var request = URLRequest(url: URL(string: ChatGPTProtocol.resource + "/models")!)
             request.setValue("Bearer " + (try await accessToken()), forHTTPHeaderField: "Authorization")
             let body = try await data(request)
-            let object = try JSONSerialization.jsonObject(with: body) as? [String: Any]
-            let models = object?["models"] as? [[String: Any]] ?? object?["data"] as? [[String: Any]] ?? []
+            guard let object = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+                let models = object["models"] as? [[String: Any]] ?? object["data"] as? [[String: Any]]
+            else { throw ChatGPTFailure.interrupted }
             try Task.checkCancellation()
             guard generation == current else { return }
             self.models = ChatModel.catalog(models)
@@ -254,7 +266,6 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
             error = selectedModel == nil ? ChatGPTFailure.unavailable.localizedDescription : nil
         } catch is CancellationError {} catch {
             if generation == current {
-                models = []
                 self.error = friendly(error)
             }
         }
@@ -336,6 +347,7 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
     }
     func friendly(_ error: Error) -> String {
         (error as? ChatGPTFailure)?.localizedDescription
+            ?? ChatGPTFailure.networkMessage(error, service: "ChatGPT")
             ?? "couldn’t reach ChatGPT. check your connection and try again."
     }
     private func hostID() -> String {

@@ -131,7 +131,9 @@ struct HistoryView: View {
             presentation.replaceCookies([], profile: store.selectedProfileID)
             await refreshCookies()
         }
-        .confirmationDialog("delete \(deletionIDs.count) visits?", isPresented: $confirmDeletion, titleVisibility: .visible) {
+        .confirmationDialog(
+            "delete \(deletionIDs.count) visits?", isPresented: $confirmDeletion, titleVisibility: .visible
+        ) {
             Button("delete visits", role: .destructive) {
                 guard let id = deletionProfileID, !store.application.busyProfileIDs.contains(id) else { return }
                 let ids = deletionIDs
@@ -266,7 +268,8 @@ struct FavoritesView: View {
                     }
                     ForEach(bookmarks) { favorite in
                         HStack(spacing: 9) {
-                            WebsiteIcon(url: URL(string: favorite.address), store: store).clipShape(RoundedRectangle(cornerRadius: 4))
+                            WebsiteIcon(url: URL(string: favorite.address), store: store).clipShape(
+                                RoundedRectangle(cornerRadius: 4))
                             Button {
                                 store.navigate(favorite.address, inNewTab: true)
                             } label: {
@@ -314,19 +317,27 @@ struct FavoritesView: View {
                 }.frame(maxWidth: 600).padding(28).frame(maxWidth: .infinity)
             }
         }.onChange(of: store.selectedProfileID) { _, _ in folderID = nil }
-            .confirmationDialog("delete bookmark?", isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } }), titleVisibility: .visible) {
+            .confirmationDialog(
+                "delete bookmark?", isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } }),
+                titleVisibility: .visible
+            ) {
                 Button("delete bookmark", role: .destructive) {
                     guard let bookmark = deletion, let id = deletionProfileID,
-                          !store.application.busyProfileIDs.contains(id) else { return }
+                        !store.application.busyProfileIDs.contains(id)
+                    else { return }
                     store.updateProfile(id) { $0.favorites.removeAll { $0.id == bookmark.id } }
                     deletion = nil
                 }
                 Button("cancel", role: .cancel) { deletion = nil }
             } message: {
-                Text("This removes \(deletion?.title ?? "this bookmark") from \(deletionProfileName). It cannot be undone.")
+                Text(
+                    "This removes \(deletion?.title ?? "this bookmark") from \(deletionProfileName). It cannot be undone."
+                )
             }
             .sheet(isPresented: Binding(get: { importPreview != nil }, set: { if !$0 { importPreview = nil } })) {
-                if let importPreview { ProfileImportView(store: store, initialPreview: importPreview, preferNewProfile: false) }
+                if let importPreview {
+                    ProfileImportView(store: store, initialPreview: importPreview, preferNewProfile: false)
+                }
             }
             .onChange(of: store.profile.bookmarkFolders?.map(\.id)) { _, ids in
                 if let folderID, ids?.contains(folderID) != true { self.folderID = nil }
@@ -343,10 +354,14 @@ struct FavoritesView: View {
             let access = url.startAccessingSecurityScopedResource()
             defer { if access { url.stopAccessingSecurityScopedResource() } }
             do {
-                let previews = try await Task.detached(priority: .userInitiated) { try ProfileImport.preview(url) }.value
+                let previews = try await Task.detached(priority: .userInitiated) { try ProfileImport.preview(url) }
+                    .value
                 guard store.selectedProfileID == profileID else { return }
                 guard previews.count == 1 else {
-                    throw ProfileImport.Failure(message: "This export contains multiple profiles. Use import browsing data in settings to review all of them.")
+                    throw ProfileImport.Failure(
+                        message:
+                            "This export contains multiple profiles. Use import browsing data in settings to review all of them."
+                    )
                 }
                 var preview = previews.first ?? ProfileImportPreview(name: "bookmarks")
                 guard !preview.bookmarks.isEmpty else {
@@ -450,11 +465,11 @@ struct DownloadRow: View {
         HStack(spacing: 10) {
             GolzheimIcon(icon: .download, size: 22)
             VStack(alignment: .leading, spacing: 5) {
-                Text(item.name).font(.system(size: 13)).lineLimit(1).help(item.name)
+                Text(item.name).font(.system(size: 13)).lineLimit(1).help(item.name).strikethrough(item.fileMissing)
                 if let error = item.error {
                     Text(error).font(.system(size: 11)).foregroundStyle(.secondary)
                 } else if item.finished {
-                    Text("saved").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(item.compactStatus).font(.system(size: 11)).foregroundStyle(.secondary)
                 } else {
                     ProgressView(value: item.fraction).frame(maxWidth: 300)
                 }
@@ -472,10 +487,11 @@ struct DownloadControls: View {
     var body: some View {
         HStack(spacing: 2) {
             if item.finished, let destination = item.destination {
-                IconButton(icon: .external, label: "open file") { NSWorkspace.shared.open(destination) }
-                IconButton(icon: .folder, label: "show in finder") {
+                IconButton(icon: .external, label: "open file", size: 12) { NSWorkspace.shared.open(destination) }
+                    .disabled(item.fileMissing)
+                IconButton(icon: .folder, label: "show in finder", size: 12) {
                     NSWorkspace.shared.activateFileViewerSelecting([destination])
-                }
+                }.disabled(item.fileMissing)
             } else if item.active {
                 IconButton(icon: .pause, label: "pause download") { manager.pause(item) }.disabled(item.starting)
                 IconButton(icon: .close, label: "stop download") { manager.cancel(item) }
@@ -497,8 +513,9 @@ struct DownloadActions: View {
     var store: BrowserStore?
     var body: some View {
         if item.finished, let destination = item.destination {
-            Button("open") { NSWorkspace.shared.open(destination) }
-            Button("show in finder") { NSWorkspace.shared.activateFileViewerSelecting([destination]) }
+            Button("open") { NSWorkspace.shared.open(destination) }.disabled(item.fileMissing)
+            Button("show in finder") { NSWorkspace.shared.activateFileViewerSelecting([destination]) }.disabled(
+                item.fileMissing)
         } else {
             Toggle("open when finished", isOn: $item.openWhenFinished).onChange(of: item.openWhenFinished) { _, _ in
                 manager.persist()

@@ -2,7 +2,7 @@ import AppKit
 
 nonisolated struct SearchRedirect: Codable, Sendable {
     enum Provider: String, Codable, CaseIterable, Sendable {
-        case perplexity, chatgpt, appleIntelligence, duckduckgo, google, googleAIOverview, bing, ecosia, yahoo,
+        case perplexity, chatgpt, claude, appleIntelligence, duckduckgo, google, googleAIOverview, bing, ecosia, yahoo,
             startpage, kagi, wikipedia, custom
     }
     static var availableProviders: [Provider] { Provider.allCases.filter { $0 != .googleAIOverview } }
@@ -28,7 +28,7 @@ nonisolated struct SearchRedirect: Codable, Sendable {
     var template: String {
         switch provider {
         case .perplexity: "https://www.perplexity.ai/search?s=o&q={query}"
-        case .chatgpt, .appleIntelligence: ""
+        case .chatgpt, .claude, .appleIntelligence: ""
         case .ecosia: SearchEngine.ecosia.template
         case .yahoo: SearchEngine.yahoo.template
         case .startpage: SearchEngine.startpage.template
@@ -49,12 +49,13 @@ nonisolated struct SearchRedirect: Codable, Sendable {
                 : provider == .custom
                     ? "custom…"
                     : [
-                        Provider.perplexity: "Perplexity", .duckduckgo: "DuckDuckGo", .google: "Google",
+                        Provider.perplexity: "Perplexity", .claude: "Claude", .duckduckgo: "DuckDuckGo",
+                        .google: "Google",
                         .googleAIOverview: "Google AI Overview", .bing: "Bing", .kagi: "Kagi", .wikipedia: "Wikipedia",
                         .ecosia: "Ecosia", .yahoo: "Yahoo", .startpage: "Startpage",
                     ][provider] ?? provider.rawValue
     }
-    var valid: Bool { provider == .chatgpt || provider == .appleIntelligence || url(for: "loaf") != nil }
+    var valid: Bool { [.chatgpt, .claude, .appleIntelligence].contains(provider) || url(for: "loaf") != nil }
     func url(for input: String) -> URL? {
         let query = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, template.components(separatedBy: "{query}").count == 2,

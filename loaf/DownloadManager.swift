@@ -43,6 +43,7 @@ struct DownloadRecord: Codable {
     @Published var name = "preparing download…"
     @Published var destination: URL?
     @Published var finished = false
+    @Published private(set) var fileMissing = false
     @Published var error: String?
     @Published var fraction = 0.0
     @Published var resumeData: Data?
@@ -76,6 +77,40 @@ struct DownloadRecord: Codable {
         resumeData = record.resumeData
         transfer = record.transfer.map { URL(fileURLWithPath: $0) }
         bookmark = record.bookmark
+        refreshFileAvailability()
+    }
+    func refreshFileAvailability() {
+        guard finished, let destination else { return }
+        var stale = false
+        let scoped = bookmark.flatMap {
+            try? URL(
+                resolvingBookmarkData: $0, options: [.withSecurityScope, .withoutUI], relativeTo: nil,
+                bookmarkDataIsStale: &stale)
+        }
+        let scope = scoped ?? destination
+        let access = scope.startAccessingSecurityScopedResource()
+        defer { if access { scope.stopAccessingSecurityScopedResource() } }
+        let file =
+            folderBookmark ? (scoped?.appendingPathComponent(destination.lastPathComponent) ?? destination) : scope
+        do {
+            let reachable = try file.checkResourceIsReachable()
+            var relationship: FileManager.URLRelationship = .other
+            if reachable {
+                try? FileManager.default.getRelationship(
+                    &relationship, of: .trashDirectory, in: .userDomainMask, toItemAt: file)
+            }
+            let inTrash = relationship == .contains
+            let missing = !reachable || inTrash
+            if fileMissing != missing { fileMissing = missing }
+            if !missing, self.destination != file { self.destination = file }
+        } catch {
+            let error = error as NSError
+            if error.domain == NSCocoaErrorDomain
+                && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code)
+            {
+                if !fileMissing { fileMissing = true }
+            }
+        }
     }
     var active: Bool { !finished && error == nil && (download != nil || starting) }
     var canResume: Bool { !active && !finished && resumeData != nil }
@@ -83,6 +118,12 @@ struct DownloadRecord: Codable {
     var canRetrySave: Bool {
         download == nil && fraction == 1 && !finished
             && transfer.map { FileManager.default.fileExists(atPath: $0.path) } == true
+    }
+    var compactStatus: String {
+        if finished { return fileMissing ? "deleted" : "saved" }
+        if error != nil && (transferComplete || canRetrySave) { return "save failed" }
+        if let error { return error.localizedCaseInsensitiveContains("cancel") ? "cancelled" : "failed" }
+        return "\(Int(fraction * 100))%"
     }
     var record: DownloadRecord {
         DownloadRecord(
@@ -99,6 +140,7 @@ struct DownloadRecord: Codable {
     private var dockView: DownloadDockProgress?
     private var dockTimer: Timer?
     private var cacheTimer: Timer?
+    private var availabilityTimer: Timer?
     var cacheRetentionDays: () -> Int = { 7 }
     var hasActiveDownloads: Bool { items.contains { $0.active } }
     private var file: URL?
@@ -165,6 +207,17 @@ struct DownloadRecord: Codable {
         cacheTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { if let self { self.cleanupCache(olderThanDays: self.cacheRetentionDays()) } }
         }
+        availabilityTimer?.invalidate()
+        availabilityTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard NSApp.isActive else { return }
+                self?.refreshFileAvailability()
+            }
+        }
+        refreshFileAvailability()
+    }
+    func refreshFileAvailability() {
+        for item in items where item.finished { item.refreshFileAvailability() }
     }
     func persist() {
         updateDockProgress()
@@ -417,7 +470,7 @@ struct DownloadRecord: Codable {
             item.reservedDestination = false
             item.error = nil
             item.transfer = nil
-            item.bookmark = nil
+            item.refreshFileAvailability()
             if item.openWhenFinished { NSWorkspace.shared.open(destination) }
         } catch { item.error = "transfer complete, save failed: " + error.localizedDescription }
         persist()

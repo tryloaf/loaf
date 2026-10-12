@@ -197,7 +197,9 @@ struct ContentView: View {
                                                             width: max(
                                                                 0,
                                                                 geometry.size.width - store.pageLeadingInset
-                                                                    - store.pageEdgeInset - store.sideChatReservedWidth(in: geometry.size.width)),
+                                                                    - store.pageEdgeInset
+                                                                    - store.sideChatReservedWidth(
+                                                                        in: geometry.size.width)),
                                                             height: max(
                                                                 0,
                                                                 geometry.size.height - 2 * store.pageEdgeInset
@@ -321,12 +323,19 @@ struct ContentView: View {
                     FullscreenWindowControls().frame(width: 76, height: 32)
                 }
             }
-            .sheet(isPresented: Binding(get: {
-                store.sideChatVisible && store.canShowSideChat && store.sideChatReservedWidth(in: geometry.size.width) == 0
-            }, set: { visible in
-                if !visible, store.sideChatReservedWidth(in: geometry.size.width) == 0 { store.closeSideChat() }
-            })) {
-                if let tab = store.selectedTab { SideChatPanel(store: store, tab: tab).id(tab.id).frame(width: 400, height: 620) }
+            .sheet(
+                isPresented: Binding(
+                    get: {
+                        store.sideChatVisible && store.canShowSideChat
+                            && store.sideChatReservedWidth(in: geometry.size.width) == 0
+                    },
+                    set: { visible in
+                        if !visible, store.sideChatReservedWidth(in: geometry.size.width) == 0 { store.closeSideChat() }
+                    })
+            ) {
+                if let tab = store.selectedTab {
+                    SideChatPanel(store: store, tab: tab).id(tab.id).frame(width: 400, height: 620)
+                }
             }
         }
         .ignoresSafeArea().frame(minWidth: 800, minHeight: 540)

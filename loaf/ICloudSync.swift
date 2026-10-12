@@ -65,7 +65,9 @@ nonisolated struct ICloudSyncJournal: Codable {
         if FileManager.default.fileExists(atPath: file.path) {
             do {
                 journal = try JSONDecoder().decode(ICloudSyncJournal.self, from: Data(contentsOf: file))
-                guard journal.version == 1, journal.counter < UInt64.max - 2 else { throw ICloudSyncFailure.invalidData }
+                guard journal.version == 1, journal.counter < UInt64.max - 2 else {
+                    throw ICloudSyncFailure.invalidData
+                }
                 enabled = journal.enabled
             } catch {
                 failed = true
@@ -83,17 +85,22 @@ nonisolated struct ICloudSyncJournal: Codable {
     deinit { refreshTask?.cancel() }
 
     private static var signedForICloud: Bool {
-        guard FileManager.default.fileExists(atPath: Bundle.main.bundleURL
-            .appendingPathComponent("Contents/embedded.provisionprofile").path) else { return false }
+        guard
+            FileManager.default.fileExists(
+                atPath: Bundle.main.bundleURL
+                    .appendingPathComponent("Contents/embedded.provisionprofile").path)
+        else { return false }
         var code: SecCode?
         var info: CFDictionary?
         var staticCode: SecStaticCode?
         guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
             SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode,
-            SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+            SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info)
+                == errSecSuccess,
             let values = info as? [String: Any],
             let entitlements = values[kSecCodeInfoEntitlementsDict as String] as? [String: Any],
-            let services = entitlements["com.apple.developer.icloud-services"] as? [String], services.contains("CloudKit"),
+            let services = entitlements["com.apple.developer.icloud-services"] as? [String],
+            services.contains("CloudKit"),
             let containers = entitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
         else { return false }
         return containers.contains(containerIdentifier)
@@ -104,7 +111,11 @@ nonisolated struct ICloudSyncJournal: Codable {
         await start(explicit: false)
     }
     func setEnabled(_ value: Bool) async {
-        if !value { stop(message: "sync is off"); busy = false; return }
+        if !value {
+            stop(message: "sync is off")
+            busy = false
+            return
+        }
         guard !busy, !needsCacheRepair else { return }
         if failed {
             do {
@@ -113,7 +124,11 @@ nonisolated struct ICloudSyncJournal: Codable {
                     guard journal.version == 1 else { throw ICloudSyncFailure.invalidData }
                 }
                 failed = false
-            } catch { needsCacheRepair = true; status = "sync data couldn’t be restored. Reset the local sync cache to retry."; return }
+            } catch {
+                needsCacheRepair = true
+                status = "sync data couldn’t be restored. Reset the local sync cache to retry."
+                return
+            }
         }
         await start(explicit: true)
     }
@@ -126,7 +141,10 @@ nonisolated struct ICloudSyncJournal: Codable {
         starting = true
         busy = true
         let ticket = generation
-        defer { starting = false; busy = false }
+        defer {
+            starting = false
+            busy = false
+        }
         do {
             let container = CKContainer(identifier: Self.containerIdentifier)
             let accountStatus = try await container.accountStatus()
@@ -181,9 +199,13 @@ nonisolated struct ICloudSyncJournal: Codable {
             Task { await self.refresh() }
         } catch {
             if ticket == generation {
-                if error is CKError { status = Self.message(error) }
-                else if journal.enabled { pause(error) }
-                else { status = Self.message(error) }
+                if error is CKError {
+                    status = Self.message(error)
+                } else if journal.enabled {
+                    pause(error)
+                } else {
+                    status = Self.message(error)
+                }
             }
         }
     }
@@ -239,7 +261,10 @@ nonisolated struct ICloudSyncJournal: Codable {
     }
     func refresh() async {
         guard enabled, !failed else { return }
-        if engine == nil { await start(explicit: false); return }
+        if engine == nil {
+            await start(explicit: false)
+            return
+        }
         guard !busy, let engine else { return }
         busy = true
         let ticket = generation
@@ -250,7 +275,8 @@ nonisolated struct ICloudSyncJournal: Codable {
             try await engine.fetchChanges()
             guard enabled, self.engine === engine else { return }
             if bootstrapping {
-                var configuration = CKSyncEngine.Configuration(database: engine.database,
+                var configuration = CKSyncEngine.Configuration(
+                    database: engine.database,
                     stateSerialization: journal.engineState, delegate: self)
                 configuration.automaticallySync = true
                 let automatic = CKSyncEngine(configuration)
@@ -259,7 +285,9 @@ nonisolated struct ICloudSyncJournal: Codable {
                 automatic.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: Self.zoneID))])
                 enqueueDirty(automatic)
                 try await automatic.sendChanges()
-            } else { try await engine.sendChanges() }
+            } else {
+                try await engine.sendChanges()
+            }
         } catch { if enabled && ticket == generation { status = Self.message(error) } }
     }
     func capture(_ snapshot: BrowserSnapshot) {
@@ -298,18 +326,23 @@ nonisolated struct ICloudSyncJournal: Codable {
             for profile in profiles {
                 let values = try application.chatArchive.syncValues(profileID: profile.id)
 
-                for (id, data) in values { try journal.edit("chat." + profile.id.uuidString + "." + id, values: ["conversation": data]) }
+                for (id, data) in values {
+                    try journal.edit("chat." + profile.id.uuidString + "." + id, values: ["conversation": data])
+                }
                 let prefix = "chat." + profile.id.uuidString + "."
-                for name in Array(journal.baseline.keys) where name.hasPrefix(prefix) && values[String(name.dropFirst(prefix.count))] == nil {
+                for name in Array(journal.baseline.keys)
+                where name.hasPrefix(prefix) && values[String(name.dropFirst(prefix.count))] == nil {
                     try journal.edit(name, values: [:])
                 }
             }
         }
         var preferences = try ICloudSyncProjection.preferences(snapshot.preferences)
         preferences["profileOrder"] = try ICloudSyncProjection.data(profiles.map { $0.id.uuidString })
-        preferences["appearanceMode"] = try ICloudSyncProjection.data(UserDefaults.standard.string(forKey: "loaf.appearance") ?? "system")
+        preferences["appearanceMode"] = try ICloudSyncProjection.data(
+            UserDefaults.standard.string(forKey: "loaf.appearance") ?? "system")
         try journal.edit("preferences", values: preferences)
-        var mac = ICloudSyncProjection.mac(snapshot, id: journal.deviceID, name: Host.current().localizedName ?? "Mac", now: .distantPast)
+        var mac = ICloudSyncProjection.mac(
+            snapshot, id: journal.deviceID, name: Host.current().localizedName ?? "Mac", now: .distantPast)
         guard mac.tabs.count <= 2000 else { throw ICloudSyncFailure.tooLarge }
         let name = "mac." + journal.deviceID
         let baseline = try ICloudSyncProjection.encoded(mac)
@@ -351,7 +384,8 @@ nonisolated struct ICloudSyncJournal: Codable {
             case .quotaExceeded: return "iCloud storage is full. Free up space, then sync again."
             case .notAuthenticated: return "sign in to iCloud in System Settings to resume sync"
             case .permissionFailure, .badContainer, .missingEntitlement: return "iCloud isn’t configured for this build"
-            case .serviceUnavailable, .requestRateLimited, .zoneBusy: return "iCloud is temporarily unavailable — changes are queued"
+            case .serviceUnavailable, .requestRateLimited, .zoneBusy:
+                return "iCloud is temporarily unavailable — changes are queued"
             default: return "iCloud sync needs attention (\(ck.code.rawValue)); local data is retained"
             }
         }
@@ -372,7 +406,9 @@ nonisolated struct ICloudSyncJournal: Codable {
             guard let decoded = CKRecord(coder: coder) else { throw ICloudSyncFailure.invalidData }
             coder.finishDecoding()
             record = decoded
-        } else { record = CKRecord(recordType: Self.recordType, recordID: recordID(name)) }
+        } else {
+            record = CKRecord(recordType: Self.recordType, recordID: recordID(name))
+        }
         record.encryptedValues["payloadV1"] = try JSONEncoder().encode(document) as CKRecordValue
         return record
     }
@@ -393,27 +429,35 @@ nonisolated struct ICloudSyncJournal: Codable {
         var profiles = application.profiles
         let deletions = journal.documents.filter { $0.key.hasPrefix("profile.") && $0.value.deleted }.keys
             .compactMap { UUID(uuidString: String($0.dropFirst(8))) }
-        for (name, document) in journal.documents.sorted(by: { $0.key < $1.key }) where name.hasPrefix("profile.") && !document.deleted {
+        for (name, document) in journal.documents.sorted(by: { $0.key < $1.key })
+        where name.hasPrefix("profile.") && !document.deleted {
             guard let id = UUID(uuidString: String(name.dropFirst(8))) else { throw ICloudSyncFailure.invalidData }
             let original = profiles.first { $0.id == id } ?? Profile(id: id, name: "profile")
             guard !original.privateMode else { throw ICloudSyncFailure.invalidData }
             let updated = try ICloudSyncProjection.applyProfile(document, to: original)
-            if let index = profiles.firstIndex(where: { $0.id == id }) { profiles[index] = updated }
-            else { profiles.append(updated) }
+            if let index = profiles.firstIndex(where: { $0.id == id }) {
+                profiles[index] = updated
+            } else {
+                profiles.append(updated)
+            }
         }
         guard profiles.count <= 64 else { throw ICloudSyncFailure.tooLarge }
         var preferences = application.preferences
         if let document = journal.documents["preferences"] {
             preferences = try ICloudSyncProjection.applyPreferences(document, to: preferences)
-            let regular = try ICloudSyncProjection.ordered(profiles.filter { !$0.privateMode }, document: document, key: "profileOrder")
+            let regular = try ICloudSyncProjection.ordered(
+                profiles.filter { !$0.privateMode }, document: document, key: "profileOrder")
             profiles = regular + profiles.filter(\.privateMode)
         }
         var macs: [SyncedMac] = []
-        for (name, document) in journal.documents where name.hasPrefix("mac.") && name != "mac." + journal.deviceID && !document.deleted {
+        for (name, document) in journal.documents
+        where name.hasPrefix("mac.") && name != "mac." + journal.deviceID && !document.deleted {
             guard let data = document.fields["snapshot"]?.value else { continue }
             var mac = try JSONDecoder().decode(SyncedMac.self, from: data)
             guard name == "mac." + mac.id, mac.tabs.count <= 2000 else { throw ICloudSyncFailure.invalidData }
-            mac.tabs = mac.tabs.filter { ICloudSyncProjection.address($0.address) != nil && !deletions.contains($0.profileID) }
+            mac.tabs = mac.tabs.filter {
+                ICloudSyncProjection.address($0.address) != nil && !deletions.contains($0.profileID)
+            }
             mac.name = String(mac.name.prefix(128))
 
             if mac.updatedAt > Date().addingTimeInterval(-30 * 86_400) { macs.append(mac) }
@@ -427,9 +471,12 @@ nonisolated struct ICloudSyncJournal: Codable {
             for (name, document) in journal.documents where name.hasPrefix("chat.") && !document.deleted {
                 let parts = name.split(separator: ".")
                 guard parts.count == 3, let profileID = UUID(uuidString: String(parts[1])),
-                    let chatID = UUID(uuidString: String(parts[2])), profiles.contains(where: { $0.id == profileID && !$0.privateMode }) else { continue }
+                    let chatID = UUID(uuidString: String(parts[2])),
+                    profiles.contains(where: { $0.id == profileID && !$0.privateMode })
+                else { continue }
                 if let field = document.fields["conversation"] {
-                    try application.chatArchive.merge(profileID: profileID, document: SyncDocument(fields: [chatID.uuidString: field]))
+                    try application.chatArchive.merge(
+                        profileID: profileID, document: SyncDocument(fields: [chatID.uuidString: field]))
                 }
             }
         }
@@ -443,8 +490,9 @@ nonisolated struct ICloudSyncJournal: Codable {
 
         for id in deletions where application.canDeleteProfile(id) {
             Task {
-                do { try await application.deleteProfile(id) }
-                catch { application.error = "Synced profile cleanup is pending: \(error.localizedDescription)" }
+                do { try await application.deleteProfile(id) } catch {
+                    application.error = "Synced profile cleanup is pending: \(error.localizedDescription)"
+                }
             }
         }
         otherMacs = macs.sorted { $0.updatedAt > $1.updatedAt }
@@ -454,8 +502,10 @@ nonisolated struct ICloudSyncJournal: Codable {
             journal.baseline["profile." + profile.id.uuidString] = try ICloudSyncProjection.profile(profile)
         }
         var baseline = try ICloudSyncProjection.preferences(application.preferences)
-        baseline["profileOrder"] = try ICloudSyncProjection.data(application.profiles.filter { !$0.privateMode && !deletions.contains($0.id) }.map { $0.id.uuidString })
-        baseline["appearanceMode"] = try ICloudSyncProjection.data(UserDefaults.standard.string(forKey: "loaf.appearance") ?? "system")
+        baseline["profileOrder"] = try ICloudSyncProjection.data(
+            application.profiles.filter { !$0.privateMode && !deletions.contains($0.id) }.map { $0.id.uuidString })
+        baseline["appearanceMode"] = try ICloudSyncProjection.data(
+            UserDefaults.standard.string(forKey: "loaf.appearance") ?? "system")
         journal.baseline["preferences"] = baseline
     }
 
@@ -500,9 +550,12 @@ nonisolated struct ICloudSyncJournal: Codable {
                     let name = record.recordID.recordName
                     journal.systemFields[name] = try archive(record)
                     if let data = record.encryptedValues["payloadV1"] as? Data,
-                        try JSONDecoder().decode(SyncDocument.self, from: data) == journal.documents[name] {
+                        try JSONDecoder().decode(SyncDocument.self, from: data) == journal.documents[name]
+                    {
                         journal.dirty.remove(name)
-                    } else { journal.dirty.insert(name) }
+                    } else {
+                        journal.dirty.insert(name)
+                    }
                 }
                 for failure in event.failedRecordSaves {
                     let name = failure.record.recordID.recordName
@@ -528,37 +581,59 @@ nonisolated struct ICloudSyncJournal: Codable {
                         journal.systemFields[name] = nil
                         journal.dirty.remove(name)
                         try applyDocuments()
-                    default: operationFailed = true; status = Self.message(failure.error)
+                    default:
+                        operationFailed = true
+                        status = Self.message(failure.error)
                     }
                 }
                 enqueueDirty(syncEngine)
-                if event.failedRecordSaves.isEmpty && !operationFailed { lastSync = Date(); status = journal.dirty.isEmpty ? "up to date" : "syncing with iCloud…" }
+                if event.failedRecordSaves.isEmpty && !operationFailed {
+                    lastSync = Date()
+                    status = journal.dirty.isEmpty ? "up to date" : "syncing with iCloud…"
+                }
             case .sentDatabaseChanges(let event):
                 if event.savedZones.contains(where: { $0.zoneID == Self.zoneID }) { journal.zoneEstablished = true }
-                if let error = event.failedZoneSaves.first?.error { operationFailed = true; status = Self.message(error) }
+                if let error = event.failedZoneSaves.first?.error {
+                    operationFailed = true
+                    status = Self.message(error)
+                }
             case .didFetchRecordZoneChanges(let event):
-                if let error = event.error { operationFailed = true; status = Self.message(error) }
-            case .willFetchChanges: operationFailed = false; status = "syncing with iCloud…"
+                if let error = event.error {
+                    operationFailed = true
+                    status = Self.message(error)
+                }
+            case .willFetchChanges:
+                operationFailed = false
+                status = "syncing with iCloud…"
             case .willSendChanges: if !operationFailed { status = "syncing with iCloud…" }
             case .didFetchChanges, .didSendChanges:
-                if journal.dirty.isEmpty && !operationFailed { lastSync = Date(); status = "up to date" }
+                if journal.dirty.isEmpty && !operationFailed {
+                    lastSync = Date()
+                    status = "up to date"
+                }
             default: break
             }
             try save()
         } catch { pause(error) }
     }
-    func nextRecordZoneChangeBatch(_ context: CKSyncEngine.SendChangesContext, syncEngine: CKSyncEngine) async -> CKSyncEngine.RecordZoneChangeBatch? {
+    func nextRecordZoneChangeBatch(_ context: CKSyncEngine.SendChangesContext, syncEngine: CKSyncEngine) async
+        -> CKSyncEngine.RecordZoneChangeBatch?
+    {
         guard enabled, !failed, engine === syncEngine else { return nil }
         do {
             try captureCurrent()
-            let changes = syncEngine.state.pendingRecordZoneChanges.filter { context.options.scope.contains($0) }.prefix(200)
+            let changes = syncEngine.state.pendingRecordZoneChanges.filter { context.options.scope.contains($0) }
+                .prefix(200)
             var records: [CKRecord] = []
             for change in changes {
                 if case .saveRecord(let id) = change, let record = try record(id.recordName) { records.append(record) }
             }
             guard !records.isEmpty else { return nil }
             return CKSyncEngine.RecordZoneChangeBatch(recordsToSave: records, recordIDsToDelete: [])
-        } catch { pause(error); return nil }
+        } catch {
+            pause(error)
+            return nil
+        }
     }
     func resetLocalCache() async {
         guard !busy else { return }
@@ -574,7 +649,8 @@ nonisolated struct ICloudSyncJournal: Codable {
         await old?.cancelOperations()
         do {
             if FileManager.default.fileExists(atPath: file.path) {
-                let backup = file.deletingLastPathComponent().appendingPathComponent("icloud-sync-backup-" + UUID().uuidString + ".json")
+                let backup = file.deletingLastPathComponent().appendingPathComponent(
+                    "icloud-sync-backup-" + UUID().uuidString + ".json")
                 try FileManager.default.copyItem(at: file, to: backup)
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
             }
@@ -583,7 +659,11 @@ nonisolated struct ICloudSyncJournal: Codable {
             failed = false
             needsCacheRepair = false
             status = "local sync cache reset. Turn sync on to reconnect to iCloud."
-        } catch { failed = true; needsCacheRepair = true; status = error.localizedDescription }
+        } catch {
+            failed = true
+            needsCacheRepair = true
+            status = error.localizedDescription
+        }
     }
     func removeCloudData() async {
         guard !busy, Self.signedForICloud, !needsCacheRepair else { return }
@@ -597,10 +677,13 @@ nonisolated struct ICloudSyncJournal: Codable {
             guard try await container.accountStatus() == .available else { throw ICloudSyncFailure.unavailable }
             let accountID = try await container.userRecordID().recordName
             if let previous = journal.accountID, previous != accountID { throw ICloudSyncFailure.accountChanged }
-            do { _ = try await container.privateCloudDatabase.deleteRecordZone(withID: Self.zoneID) }
-            catch let error as CKError where error.code == .zoneNotFound { }
+            do { _ = try await container.privateCloudDatabase.deleteRecordZone(withID: Self.zoneID) } catch let error
+                as CKError where error.code == .zoneNotFound
+            {}
             let deviceID = journal.deviceID
-            journal = ICloudSyncJournal(); journal.deviceID = deviceID; journal.accountID = accountID
+            journal = ICloudSyncJournal()
+            journal.deviceID = deviceID
+            journal.accountID = accountID
             try save()
             failed = false
             status = "iCloud data removed. Local profiles, tabs and settings are kept."

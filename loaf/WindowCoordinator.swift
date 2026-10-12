@@ -468,18 +468,22 @@ import WebKit
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if !terminating, !UpdateInstallationState.shared.isInstalling, let state = state(for: sender),
-           !application.busyProfileIDs.isDisjoint(with: Set(state.workspaces.keys).union([state.selectedProfileID])) {
-            state.error = "A browsing-data operation is still running in this window. Wait for it to finish before closing it."
+            !application.busyProfileIDs.isDisjoint(with: Set(state.workspaces.keys).union([state.selectedProfileID]))
+        {
+            state.error =
+                "A browsing-data operation is still running in this window. Wait for it to finish before closing it."
             return false
         }
         guard !terminating, !UpdateInstallationState.shared.isInstalling,
-            application.preferences.warnBeforeClosingOtherProfiles != false, let state = state(for: sender) else { return true }
+            application.preferences.warnBeforeClosingOtherProfiles != false, let state = state(for: sender)
+        else { return true }
         let others = state.workspaces.filter { $0.key != state.selectedProfileID && !$0.value.tabs.isEmpty }
         guard !others.isEmpty else { return true }
         let count = others.values.reduce(0) { $0 + $1.tabs.count }
         let alert = NSAlert()
         alert.messageText = "close tabs in other profiles?"
-        alert.informativeText = "This window also contains \(count) tabs in \(others.count) other profiles. Closing it closes those tabs too."
+        alert.informativeText =
+            "This window also contains \(count) tabs in \(others.count) other profiles. Closing it closes those tabs too."
         alert.addButton(withTitle: "close window").keyEquivalent = ""
         let cancel = alert.addButton(withTitle: "cancel")
         cancel.keyEquivalent = "\u{1b}"

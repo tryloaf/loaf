@@ -1,6 +1,6 @@
 import AppKit
-import SwiftUI
 import ImageIO
+import SwiftUI
 import UniformTypeIdentifiers
 
 nonisolated struct ChatImageAttachment: Codable, Identifiable, Sendable {
@@ -20,16 +20,21 @@ nonisolated struct ChatImageAttachment: Codable, Identifiable, Sendable {
         }
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
         guard data.count <= maximumFileBytes, let source = CGImageSourceCreateWithData(data as CFData, nil),
-            let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: 2048
-            ] as CFDictionary) else { throw ChatGPTFailure.message("this file isn’t a supported image.") }
+            let image = CGImageSourceCreateThumbnailAtIndex(
+                source, 0,
+                [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 2048,
+                ] as CFDictionary)
+        else { throw ChatGPTFailure.message("this file isn’t a supported image.") }
         let output = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil) else {
+        guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil)
+        else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+        CGImageDestinationAddImage(
+            destination, image, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileReadCorruptFile) }
         return Self(id: UUID(), name: url.lastPathComponent, jpeg: output as Data)
     }
@@ -43,8 +48,11 @@ struct ChatToolApprovalView: View {
             Label(request.kind == "search_web" ? "allow web search?" : "allow site fetch?", systemImage: "network")
                 .font(.system(size: 12, weight: .medium))
             Text(request.value).font(.system(size: 12)).textSelection(.enabled).lineLimit(3)
-            Text(request.kind == "search_web" ? "this query will be sent to web search." : "loaf will read this public page without your cookies.")
-                .font(.system(size: 10)).foregroundStyle(.secondary)
+            Text(
+                request.kind == "search_web"
+                    ? "this query will be sent to web search." : "loaf will read this public page without your cookies."
+            )
+            .font(.system(size: 10)).foregroundStyle(.secondary)
             ChatApprovalActions(decide: decide)
         }.padding(12).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
     }

@@ -248,9 +248,9 @@ private struct TrayDownloadRow: View {
         HStack(spacing: 6) {
             GolzheimIcon(icon: .download, size: 16)
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.name).font(.system(size: 11)).lineLimit(1).help(item.name)
+                Text(item.name).font(.system(size: 11)).lineLimit(1).help(item.name).strikethrough(item.fileMissing)
                 if item.finished || item.error != nil {
-                    Text(item.finished ? "saved" : item.error ?? "interrupted")
+                    Text(item.finished ? item.compactStatus : item.error ?? "interrupted")
                         .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                 } else {
                     ProgressView(value: item.fraction).progressViewStyle(.linear).controlSize(.mini)

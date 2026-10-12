@@ -81,6 +81,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         let search = ChatGPTSearch(
             account: store.application.chatGPTAccount,
             provider: { [weak store] in store?.preferences.aiProvider ?? .chatgpt },
+            claudeAccount: store.application.claudeAccount,
             enabled: { [weak store] in store.map { $0.preferences.aiFeaturesEnabled != false } ?? false })
         existingChatGPTSearch = search
         return search
@@ -488,7 +489,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
 
     func dispose() {
         guard !isDisposed else { return }
-        existingSideChat?.clear()
+        existingSideChat?.endSession()
         existingSideChat = nil
         existingChatGPTSearch?.clear()
         existingChatGPTSearch = nil

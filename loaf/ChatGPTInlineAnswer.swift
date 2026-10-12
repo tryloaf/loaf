@@ -1,6 +1,6 @@
 import AppKit
-import SwiftUI
 import CoreImage
+import SwiftUI
 
 private extension NSAttributedString.Key {
     static let loafCitationLabel = NSAttributedString.Key("loaf.citation.label")
@@ -42,7 +42,8 @@ struct ChatGPTInlineAnswer: NSViewRepresentable {
     func updateNSView(_ view: CitationTextView, context: Context) {
         context.coordinator.open = { url in openURL(url) }
         let signature =
-            block.raw + "|\(block.style)|\(scheme)|\(compact)|\(block.streaming)|" + block.citations.map(\.id).joined(separator: "|")
+            block.raw + "|\(block.style)|\(scheme)|\(compact)|\(block.streaming)|"
+            + block.citations.map(\.id).joined(separator: "|")
             + icons.keys.sorted().joined(separator: "|")
         let manager = view.layoutManager as? StreamingAnswerLayoutManager
         manager?.reduceMotion = reduceMotion
@@ -69,7 +70,9 @@ struct ChatGPTInlineAnswer: NSViewRepresentable {
         return CGSize(width: width, height: ceil(manager.usedRect(for: container).height))
     }
 
-    static func render(block: ChatGPTAnswerContent.Block, icons: [String: NSImage], dark: Bool, compact: Bool = false) -> NSAttributedString {
+    static func render(block: ChatGPTAnswerContent.Block, icons: [String: NSImage], dark: Bool, compact: Bool = false)
+        -> NSAttributedString
+    {
         let size: CGFloat
         let weight: NSFont.Weight
         if case .heading(let level) = block.style {
@@ -147,7 +150,8 @@ struct ChatGPTInlineAnswer: NSViewRepresentable {
             } else {
                 let color = NSColor(white: dark ? 0.62 : 0.48, alpha: 1)
                 if let globe = Golzheim.image(LoafIcon.globe.rawValue, size: 12)
-                    ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil) {
+                    ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+                {
                     let tinted = NSImage(size: globe.size, flipped: false) { rect in
                         globe.draw(in: rect)
                         color.setFill()
@@ -213,7 +217,11 @@ struct ChatGPTInlineAnswer: NSViewRepresentable {
         var open: ((URL) -> Void)?
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
             let url = (link as? URL) ?? (link as? String).flatMap(URL.init(string:))
-            if let url, ChatGPTProtocol.safeSourceURL(url.absoluteString) != nil || ChatGPTCitation.contextID(url) != nil { open?(url) }
+            if let url,
+                ChatGPTProtocol.safeSourceURL(url.absoluteString) != nil || ChatGPTCitation.contextID(url) != nil
+            {
+                open?(url)
+            }
             return true
         }
     }
@@ -237,9 +245,13 @@ final class StreamingAnswerLayoutManager: NSLayoutManager {
     }
 
     func receive(previous: String, current: String, animate: Bool) {
-        guard animate, !current.isEmpty else { settle(); return }
+        guard animate, !current.isEmpty else {
+            settle()
+            return
+        }
 
-        let old = Array(previous.utf16), new = Array(current.utf16)
+        let old = Array(previous.utf16)
+        let new = Array(current.utf16)
         var prefix = 0
         while prefix < min(old.count, new.count), old[prefix] == new[prefix] { prefix += 1 }
         reveals.removeAll { NSMaxRange($0.range) > prefix }
@@ -279,7 +291,10 @@ final class StreamingAnswerLayoutManager: NSLayoutManager {
         let now = ProcessInfo.processInfo.systemUptime
         reveals.removeAll { now - $0.started >= duration }
         textContainers.first?.textView?.needsDisplay = true
-        if reveals.isEmpty { timer?.invalidate(); timer = nil }
+        if reveals.isEmpty {
+            timer?.invalidate()
+            timer = nil
+        }
     }
 
     override func drawGlyphs(forGlyphRange glyphs: NSRange, at origin: NSPoint) {
@@ -299,7 +314,8 @@ final class StreamingAnswerLayoutManager: NSLayoutManager {
             let intersection = NSIntersectionRange(animated, glyphs)
             guard intersection.length > 0 else { continue }
             if cursor < intersection.location {
-                super.drawGlyphs(forGlyphRange: NSRange(location: cursor, length: intersection.location - cursor), at: origin)
+                super.drawGlyphs(
+                    forGlyphRange: NSRange(location: cursor, length: intersection.location - cursor), at: origin)
             }
             let progress = min(1, max(0, (now - reveal.started) / duration))
             let eased = 1 - pow(1 - progress, 3)
@@ -324,7 +340,9 @@ final class StreamingAnswerLayoutManager: NSLayoutManager {
                     var rect = reveals[index].bounds
                     rect.origin.x += origin.x
                     rect.origin.y += origin.y
-                    displayed.draw(in: rect, from: .zero, operation: .sourceOver, fraction: eased, respectFlipped: true, hints: nil)
+                    displayed.draw(
+                        in: rect, from: .zero, operation: .sourceOver, fraction: eased, respectFlipped: true, hints: nil
+                    )
                 }
             }
             cursor = NSMaxRange(intersection)
@@ -336,11 +354,13 @@ final class StreamingAnswerLayoutManager: NSLayoutManager {
 
     private func glyphImage(_ range: NSRange, bounds: NSRect) -> NSImage? {
         guard bounds.width > 0, bounds.height > 0,
-              let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(bounds.width * 2),
-                                        pixelsHigh: Int(bounds.height * 2), bitsPerSample: 8, samplesPerPixel: 4,
-                                        hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-                                        bytesPerRow: 0, bitsPerPixel: 0),
-              let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+            let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: Int(bounds.width * 2),
+                pixelsHigh: Int(bounds.height * 2), bitsPerSample: 8, samplesPerPixel: 4,
+                hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                bytesPerRow: 0, bitsPerPixel: 0),
+            let context = NSGraphicsContext(bitmapImageRep: rep)
+        else { return nil }
         rep.size = bounds.size
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context.cgContext, flipped: true)

@@ -35,19 +35,16 @@ enum SettingsSearch {
             id: "quit-warning", section: "general", title: "warn before quitting",
             keywords: "quit exit confirmation unsaved work command q"),
         .init(
-            id: "ai-features", section: "search", title: "AI features",
-            keywords: "enable disable ChatGPT Apple Intelligence answers models"),
-        .init(
             id: "sleep-tabs", section: "general", title: "sleep idle tabs",
             keywords: "memory performance suspend unload battery thirty minutes"),
         .init(
             id: "custom-new-tab", section: "general", title: "custom new tab URL",
             keywords: "homepage start page website"),
         .init(
-            id: "browsing-time", section: "general", title: "local browsing time",
+            id: "browsing-time", section: "advanced", title: "local browsing time",
             keywords: "tracking screen time private consent statistics widgets"),
         .init(
-            id: "power-saver", section: "general", title: "power saver",
+            id: "power-saver", section: "advanced", title: "power saver",
             keywords: "battery low energy percentage background"),
         .init(
             id: "import-data", section: "profiles", title: "import browsing data",
@@ -89,14 +86,36 @@ enum SettingsSearch {
             id: "default-browser", section: "general", title: "default browser",
             keywords: "open links default application"),
         .init(
-            id: "weather", section: "general", title: "weather city and provider",
+            id: "start-page", section: "general", title: "customize start page",
+            keywords: "widgets background wallpaper favorites clock notes sidebar weather"),
+        .init(
+            id: "sidebar-weather", section: "sidebar", title: "show weather in sidebar",
+            keywords: "compact forecast widget"),
+        .init(
+            id: "weather", section: "sidebar", title: "weather city and provider",
             keywords: "forecast location fahrenheit celsius temperature weatherkit"),
         .init(
             id: "google-suggestions", section: "search", title: "search suggestions",
             keywords: "autocomplete wonderbar prediction Google DuckDuckGo Wikipedia provider"),
         .init(
             id: "alternate-search", section: "search", title: "alternate search shortcut",
-            keywords: "provider redirect perplexity custom command return ai overview chatgpt luna ask loaf"),
+            keywords: "provider redirect perplexity custom command return quick answer chatgpt luna ask loaf"),
+        .init(
+            id: "ai-features", section: "intelligence", title: "intelligence features and answer provider",
+            keywords:
+                "ai artificial intelligence apple intelligence chatgpt claude local on device ask loaf disable models"),
+        .init(
+            id: "summaries", section: "intelligence", title: "page summaries",
+            keywords: "tl dr tldr summarize summary model luna apple intelligence claude"),
+        .init(
+            id: "chatgpt-connection", section: "intelligence", title: "ChatGPT connection",
+            keywords: "connect account sign in model luna usage"),
+        .init(
+            id: "claude-connection", section: "intelligence", title: "Claude connection",
+            keywords: "anthropic api key billing model connect"),
+        .init(
+            id: "saved-chats", section: "intelligence", title: "saved chats",
+            keywords: "sync transcripts icloud encrypted"),
         .init(
             id: "site-discovery", section: "search", title: "remote site discovery",
             keywords: "popular websites catalog suggestions"),

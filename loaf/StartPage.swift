@@ -76,7 +76,7 @@ struct StartPage: View, Equatable {
                 widgets: widgets, sizes: liveSizes, positions: livePositions ?? preferences.widgetPositions ?? [:],
                 width: width)
             let gridHeight = layout.height + (editing ? layout.gridStride.height * 2 : 0)
-            ZStack {
+            ZStack(alignment: .topLeading) {
                 background.frame(width: geometry.size.width, height: geometry.size.height).clipped()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
@@ -183,7 +183,7 @@ struct StartPage: View, Equatable {
                     }.frame(width: width).padding(.horizontal, 32).padding(.top, snapshot.sidebarPresented ? 40 : 24)
                         .padding(.bottom, 32).frame(maxWidth: .infinity)
                 }
-            }.clipped()
+            }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading).clipped()
         }.environment(
             \.colorScheme,
             preferences.background == "profile" && !snapshot.privateMode
@@ -227,7 +227,9 @@ struct StartPage: View, Equatable {
         let compact = preferences.widgetSizes?[widget] == .square
         switch widget {
         case "search":
-            Button { store.openOmnibar(query: "") } label: {
+            Button {
+                store.openOmnibar(query: "")
+            } label: {
                 HStack(spacing: 12) {
                     GolzheimIcon(icon: .search, size: 16)
                     Text("search or surf...").font(.system(size: 16))
@@ -473,7 +475,8 @@ struct StartWidgetDropDelegate: DropDelegate {
     }
     func dropUpdated(info: DropInfo) -> DropProposal? {
         guard editing, let dragged else { return DropProposal(operation: .forbidden) }
-        let size: StartWidgetSize = dragged == "search" ? .banner : store.profile.personalization?.widgetSizes?[dragged] ?? .small
+        let size: StartWidgetSize =
+            dragged == "search" ? .banner : store.profile.personalization?.widgetSizes?[dragged] ?? .small
         position = layout.position(at: info.location, size: size)
         return DropProposal(operation: .move)
     }
@@ -487,7 +490,8 @@ struct StartWidgetDropDelegate: DropDelegate {
         else { return false }
         let profileID = store.selectedProfileID
         let target = layout.position(
-            at: info.location, size: expected == "search" ? .banner : store.profile.personalization?.widgetSizes?[expected] ?? .small)
+            at: info.location,
+            size: expected == "search" ? .banner : store.profile.personalization?.widgetSizes?[expected] ?? .small)
         provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
             Task { @MainActor in
                 defer {
@@ -657,7 +661,8 @@ struct StartWidgetCard<Content: View>: View {
             }
         }.overlay {
             if editing && id == "search" {
-                StartWidgetDragHandle(payload: StartWidgetDrag(window: store.id, profile: store.selectedProfileID, widget: id),
+                StartWidgetDragHandle(
+                    payload: StartWidgetDrag(window: store.id, profile: store.selectedProfileID, widget: id),
                     title: "search or surf…", dragged: $dragged, ended: dropCleanup,
                     removed: { update { $0.hiddenWidgets.append(id) } })
             }
@@ -715,7 +720,11 @@ struct StartWidgetCard<Content: View>: View {
                         $0.widgetSizes?[id] = value
                     }
                 })
-        ) { ForEach(id == "search" ? [.banner] : StartWidgetSize.allCases.filter { $0 != .banner }, id: \.self) { Text($0.rawValue).tag($0) } }
+        ) {
+            ForEach(id == "search" ? [.banner] : StartWidgetSize.allCases.filter { $0 != .banner }, id: \.self) {
+                Text($0.rawValue).tag($0)
+            }
+        }
         if id == "clock" {
             Toggle(
                 "24-hour time",
@@ -849,12 +858,13 @@ struct StartDownloadsWidget: View {
     let limit: Int
     var body: some View {
         StartDownloadsContent(
-            manager: store.downloads, profileID: store.selectedProfileID, limit: limit,
+            manager: store.downloads, store: store, profileID: store.selectedProfileID, limit: limit,
             open: { store.showPage(.downloads) })
     }
 }
 private struct StartDownloadsContent: View {
     @ObservedObject var manager: DownloadManager
+    let store: BrowserStore
     let profileID: UUID
     let limit: Int
     let open: () -> Void
@@ -872,25 +882,37 @@ private struct StartDownloadsContent: View {
             if items.isEmpty {
                 Text("recent downloads will appear here").font(.system(size: 13)).foregroundStyle(.secondary)
             }
-            ForEach(items) { item in StartDownloadItem(item: item) }
+            ForEach(items) { item in StartDownloadItem(item: item, manager: manager, store: store) }
         }
     }
 }
-private struct StartDownloadItem: View {
+struct StartDownloadItem: View {
     @ObservedObject var item: DownloadItem
-    private var status: String {
-        if item.finished { return "saved" }
-        if let error = item.error { return error.localizedCaseInsensitiveContains("cancel") ? "cancelled" : "failed" }
-        return "\(Int(item.fraction * 100))%"
-    }
+    let manager: DownloadManager
+    let store: BrowserStore
+    @State private var detailsVisible = false
     var body: some View {
-        HStack(spacing: 8) {
-            GolzheimIcon(icon: item.finished ? .check : .download, size: 12)
-            Text(item.name).font(.system(size: 12)).lineLimit(1).minimumScaleFactor(0.85).help(item.name)
-            Spacer(minLength: 0)
-            Text(status).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
-                .help(item.error ?? status)
-        }
+        Button {
+            if item.finished, let destination = item.destination {
+                NSWorkspace.shared.open(destination)
+            } else {
+                detailsVisible = true
+            }
+        } label: {
+            HStack(spacing: 8) {
+                GolzheimIcon(icon: item.finished ? .check : .download, size: 12)
+                Text(item.name).font(.system(size: 12)).lineLimit(1).minimumScaleFactor(0.85).strikethrough(
+                    item.fileMissing)
+                Spacer(minLength: 0)
+                Text(item.compactStatus).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
+            }.contentShape(Rectangle())
+        }.buttonStyle(LoafButtonStyle()).help(item.error ?? item.name)
+            .accessibilityLabel(item.name + ", " + item.compactStatus)
+            .accessibilityHint(item.finished ? "open file" : "show download details and recovery actions")
+            .popover(isPresented: $detailsVisible) {
+                DownloadRow(item: item, manager: manager, store: store).padding(12).frame(width: 360)
+            }
+            .contextMenu { DownloadActions(item: item, manager: manager, store: store) }
     }
 }
 

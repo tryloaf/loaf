@@ -1,10 +1,23 @@
 import Combine
-import UniformTypeIdentifiers
 import SwiftUI
+import UniformTypeIdentifiers
 
 extension BrowserWindowState {
     var canShowSideChat: Bool {
         preferences.aiFeaturesEnabled != false && selectedTab != nil && selectedTab?.isDisposed == false
+    }
+    var canSummarizePage: Bool {
+        canShowSideChat && selectedTab?.page == .web && selectedTab?.url != nil
+            && selectedTab?.existingSideChat?.session.searching != true
+            && selectedTab?.existingSideChat?.capturing != true
+    }
+    func summarizePage() {
+        guard canSummarizePage, let tab = selectedTab else { return }
+        sideChatOpeningTask?.cancel()
+        sideChatOpeningTask = nil
+        sideChatVisible = true
+        sideChatFocusID = UUID()
+        tab.sideChat.summarize()
     }
     func sideChatReservedWidth(in windowWidth: CGFloat) -> CGFloat {
         guard sideChatVisible, canShowSideChat else { return 0 }
@@ -52,6 +65,9 @@ struct SideChatToggle: View {
             }.buttonStyle(LoafButtonStyle()).focusable(false).disabled(!store.canShowSideChat)
                 .help("side chat (⇧⌘L)").accessibilityLabel("toggle side chat")
                 .accessibilityValue(store.sideChatVisible ? "open" : "closed")
+                .contextMenu {
+                    Button("summarize page") { store.summarizePage() }.disabled(!store.canSummarizePage)
+                }
         }
     }
 }
@@ -95,29 +111,40 @@ struct SideChatResizeHandle: View {
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
         do {
-            guard images.count + panel.urls.count <= ChatImageAttachment.maximumCount else { throw ChatGPTFailure.message("attach up to 4 images.") }
+            guard images.count + panel.urls.count <= ChatImageAttachment.maximumCount else {
+                throw ChatGPTFailure.message("attach up to 4 images.")
+            }
             let attachments = try panel.urls.map(ChatImageAttachment.read)
-            guard (images + attachments).reduce(0, { $0 + $1.jpeg.count }) <= ChatImageAttachment.maximumTotalBytes else { throw ChatGPTFailure.message("attachments must total less than 20 MB.") }
+            guard (images + attachments).reduce(0, { $0 + $1.jpeg.count }) <= ChatImageAttachment.maximumTotalBytes
+            else { throw ChatGPTFailure.message("attachments must total less than 20 MB.") }
             images += attachments
             error = nil
         } catch { self.error = error.localizedDescription }
     }
-    func saveChat() {
-        guard let tab, let store = tab.store, !store.profileFor(tab.profileID).privateMode else { return }
+    @discardableResult func saveChat() -> Bool {
+        guard let tab, let store = tab.store else { return session.turns.isEmpty }
+        guard !store.profileFor(tab.profileID).privateMode else { return true }
         do {
             try store.application.chatArchive.save(id: savedChatID, profileID: tab.profileID, turns: session.turns)
             store.persistSoon()
-        } catch { self.error = error.localizedDescription }
+            return true
+        } catch {
+            self.error = "chat couldn’t be saved. your conversation is still here. " + error.localizedDescription
+            return false
+        }
     }
     func restoreChat(_ chat: SavedChat) {
-        saveChat()
-        clear()
+        guard clear() else { return }
         savedChatID = chat.id
         session.restore(chat.turns)
         includePage = false
     }
     @Published var includePage = true
-    @Published var cloudSharingAllowed = false
+    @Published var cloudSharingAllowed = false {
+        didSet { permittedCloudProvider = cloudSharingAllowed ? session.provider : nil }
+    }
+    private var permittedCloudProvider: AIProvider?
+    @Published private(set) var summaryPending = false
     @Published private(set) var capturing = false
     @Published private(set) var preview: TabChatContext?
     @Published private(set) var error: String?
@@ -127,6 +154,7 @@ struct SideChatResizeHandle: View {
     private var task: Task<Void, Never>?
     private var generation = UUID()
     private var observations = Set<AnyCancellable>()
+    private var disconnectError: String?
 
     init(tab: BrowserTab, account: ChatGPTAccount) {
         self.tab = tab
@@ -134,6 +162,7 @@ struct SideChatResizeHandle: View {
         session = ChatSession(
             account: account,
             provider: { [weak tab] in tab?.store?.preferences.aiProvider ?? .chatgpt },
+            claudeAccount: tab.store?.application.claudeAccount,
             enabled: { [weak tab] in
                 tab.map { !$0.isDisposed && $0.store?.preferences.aiFeaturesEnabled != false } ?? false
             },
@@ -142,26 +171,54 @@ struct SideChatResizeHandle: View {
                 guard let tab else { throw CancellationError() }
                 return try await TabChatCaptureService.capture(tab, target: target)
             })
-        account.$disconnecting.dropFirst().sink { [weak self] value in if value { self?.clear() } }.store(
+        account.$disconnecting.dropFirst().sink { [weak self] value in
+            if value { self?.providerDisconnected(.chatgpt) }
+        }.store(
             in: &observations)
-        account.$connected.dropFirst().sink { [weak self] value in if !value { self?.clear() } }.store(
+        account.$connected.dropFirst().sink { [weak self] value in
+            if !value { self?.providerDisconnected(.chatgpt) } else { self?.providerReconnected(.chatgpt) }
+        }.store(
             in: &observations)
+        session.claudeAccount?.$connected.dropFirst().sink { [weak self] value in
+            if !value { self?.providerDisconnected(.claude) } else { self?.providerReconnected(.claude) }
+        }.store(in: &observations)
         session.$turns.dropFirst().debounce(for: .milliseconds(600), scheduler: RunLoop.main)
             .sink { [weak self] _ in self?.saveChat() }.store(in: &observations)
         tab.$url.dropFirst().removeDuplicates().sink { [weak self] _ in self?.pageChanged() }.store(in: &observations)
     }
+    private func providerDisconnected(_ provider: AIProvider) {
+        guard session.provider == provider else { return }
+        generation = UUID()
+        task?.cancel()
+        task = nil
+        capturing = false
+        summaryPending = false
+        cloudSharingAllowed = false
+        disconnectError = "\(provider.title) disconnected. reconnect in intelligence settings to send again."
+        error = disconnectError
+        saveChat()
+    }
+    private func providerReconnected(_ provider: AIProvider) {
+        guard session.provider == provider else { return }
+        if error == disconnectError { error = nil }
+        disconnectError = nil
+    }
     var hasEarlierAttachments: Bool {
-        session.turns.contains { $0.context != nil || $0.capture != nil || !$0.attachedPages.isEmpty || !$0.images.isEmpty }
+        session.turns.contains {
+            $0.context != nil || $0.capture != nil || !$0.attachedPages.isEmpty || !$0.images.isEmpty
+        }
     }
     var needsCloudPermission: Bool {
-        (includePage || !attachedTabIDs.isEmpty || !images.isEmpty || hasEarlierAttachments)
-            && session.provider == .chatgpt && !cloudSharingAllowed
+        (summaryPending || includePage || !attachedTabIDs.isEmpty || !images.isEmpty || hasEarlierAttachments)
+            && session.provider.usesCloud && (!cloudSharingAllowed || permittedCloudProvider != session.provider)
     }
     var canSubmit: Bool {
         !capturing && !session.searching && session.available && !needsCloudPermission
-            && !session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && session.draft.utf8.count <= 8_000
-            && (images.isEmpty || (session.provider == .chatgpt && session.account.selectedModel?.acceptsImages == true))
+            && (summaryPending
+                || (!session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && session.draft.utf8.count <= 8_000
+                    && (images.isEmpty
+                        || (session.provider == .chatgpt && session.account.selectedModel?.acceptsImages == true))))
     }
     func captureSelection() async {
         guard let tab else { return }
@@ -183,6 +240,27 @@ struct SideChatResizeHandle: View {
         removeSelection()
     }
     func showPreview() { capture(send: false) }
+    func summarize() {
+        guard !capturing, !session.searching, let tab, let store = tab.store,
+            tab.page == .web, tab.url != nil, store.preferences.aiFeaturesEnabled != false
+        else { return }
+        guard saveChat() else { return }
+        let draft = session.draft
+        session.clear()
+        session.draft = draft
+        savedChatID = UUID()
+        preview = nil
+        error = nil
+        cloudSharingAllowed = false
+        let provider = PageSummary.provider(preferences: store.preferences)
+        session.use(provider: provider, model: PageSummary.model(preferences: store.preferences, provider: provider))
+        summaryPending = true
+        if canSubmit { submit() }
+    }
+    func allowCloudSharing() {
+        cloudSharingAllowed = true
+        if summaryPending && canSubmit { submit() }
+    }
     func submit() {
         guard canSubmit else { return }
         capture(send: true)
@@ -191,11 +269,12 @@ struct SideChatResizeHandle: View {
     private func capture(send: Bool) {
         guard !capturing, let tab, !tab.isDisposed else { return }
         error = nil
-        let question = session.draft
+        let summary = summaryPending
+        let question = summary ? "summarize this page" : session.draft
         let provider = session.provider
-        let sharesPage = includePage
-        let extraTabs = attachedTabs
-        let attachedImages = images
+        let sharesPage = summary || includePage
+        let extraTabs = summary ? [] : attachedTabs
+        let attachedImages = summary ? [] : images
         let captureTarget = sharesPage ? TabChatTarget(tab) : nil
         if send && needsCloudPermission { return }
         generation = UUID()
@@ -210,7 +289,8 @@ struct SideChatResizeHandle: View {
                 }
             }
             do {
-                let selected = selectionNavigation == tab.navigationID && selectionURL == tab.url ? selection : nil
+                let selected =
+                    !summary && selectionNavigation == tab.navigationID && selectionURL == tab.url ? selection : nil
                 let context = sharesPage ? try await TabChatContextService.capture(tab, selection: selected) : nil
                 var contexts: [TabChatContext] = []
                 for other in extraTabs { contexts.append(try await TabChatContextService.capture(other)) }
@@ -218,15 +298,17 @@ struct SideChatResizeHandle: View {
                 guard generation == current, !tab.isDisposed else { return }
                 preview = context
                 if send {
-                    guard session.provider == provider, includePage == sharesPage,
+                    guard session.provider == provider, summary || includePage == sharesPage,
                         session.available, !needsCloudPermission,
                         tab.store?.preferences.aiFeaturesEnabled != false
                     else { throw ChatGPTFailure.message("chat settings changed while reading the page. send again.") }
+                    let draft = session.draft
                     session.draft = question
                     session.submit(
                         context: context,
-                        captureTarget: captureTarget, attachedPages: contexts, images: attachedImages)
-                    images = []
+                        captureTarget: captureTarget, attachedPages: contexts, images: attachedImages, summary: summary)
+                    summaryPending = false
+                    if summary { session.draft = draft } else { images = [] }
                 }
             } catch is CancellationError {} catch {
                 if generation == current { self.error = error.localizedDescription }
@@ -238,9 +320,15 @@ struct SideChatResizeHandle: View {
         task?.cancel()
         task = nil
         capturing = false
+        summaryPending = false
         session.stop()
     }
-    func clear() {
+    @discardableResult func clear() -> Bool {
+        guard saveChat() else { return false }
+        discardCurrentChat()
+        return true
+    }
+    func endSession() {
         saveChat()
         discardCurrentChat()
     }
@@ -253,6 +341,7 @@ struct SideChatResizeHandle: View {
         preview = nil
         error = nil
         cloudSharingAllowed = false
+        summaryPending = false
         removeSelection()
     }
 }
@@ -263,6 +352,7 @@ struct SideChatPanel: View {
     @ObservedObject var state: SideChatState
     @ObservedObject var session: ChatSession
     @ObservedObject var account: ChatGPTAccount
+    @ObservedObject var claude: ClaudeAccount
     @ObservedObject var archive: ChatArchive
     @State private var focused = false
     @State private var previewVisible = false
@@ -280,6 +370,7 @@ struct SideChatPanel: View {
         state = tab.sideChat
         session = tab.sideChat.session
         account = store.application.chatGPTAccount
+        claude = store.application.claudeAccount
         archive = store.application.chatArchive
     }
     var body: some View {
@@ -287,17 +378,30 @@ struct SideChatPanel: View {
             HStack(spacing: 4) {
                 Text("ask loaf").font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary)
                 Spacer()
+                Button {
+                    store.summarizePage()
+                } label: {
+                    Text("tl;dr").padding(.horizontal, 8).frame(height: 28)
+                }
+                .font(.system(size: 12)).help("summarize this page").accessibilityLabel("summarize page")
+                .disabled(!store.canSummarizePage)
                 if !store.profile.privateMode {
                     Menu {
                         ForEach(archive.chats.filter { $0.profileID == store.selectedProfileID }) { chat in
                             Menu(chat.title) {
-                                Button("open chat") { state.restoreChat(chat); focused = true }
+                                Button("open chat") {
+                                    state.restoreChat(chat)
+                                    focused = true
+                                }
                                 Button("delete chat…", role: .destructive) { deletingChat = chat }
                             }
                         }
                         if archive.chats.isEmpty { Text("no saved chats") }
-                    } label: { GolzheimIcon(icon: .history, size: 16, weight: 220).frame(width: 28, height: 28) }
-                    .menuStyle(.button).menuIndicator(.hidden).accessibilityLabel("saved chats").help("saved chats").disabled(session.searching || state.capturing)
+                    } label: {
+                        GolzheimIcon(icon: .history, size: 16, weight: 220).frame(width: 28, height: 28)
+                    }
+                    .menuStyle(.button).menuIndicator(.hidden).accessibilityLabel("saved chats").help("saved chats")
+                    .disabled(session.searching || state.capturing)
                 }
                 Button {
                     state.clear()
@@ -315,7 +419,8 @@ struct SideChatPanel: View {
             }.buttonStyle(ChatControlStyle()).foregroundStyle(.secondary)
                 .padding(.leading, 20).padding(.trailing, 12).frame(height: 52)
             if let error = archive.error {
-                Text(error).font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.bottom, 8)
+                Text(error).font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 16).padding(
+                    .bottom, 8)
             }
             ScrollViewReader { proxy in
                 ScrollView {
@@ -330,6 +435,8 @@ struct SideChatPanel: View {
                                 }.padding(.top, 32).padding(.bottom, 12)
                             } else if session.provider == .chatgpt {
                                 ChatGPTConnectionView(account: account)
+                            } else if session.provider == .claude {
+                                ClaudeConnectionView(account: claude)
                             } else {
                                 Text(
                                     AppleIntelligence.unavailableReason(for: session.provider)
@@ -343,7 +450,10 @@ struct SideChatPanel: View {
                                 Text(turn.query).font(.system(size: 14)).lineSpacing(4).textSelection(.enabled)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .padding(.horizontal, 13).padding(.vertical, 10)
-                                    .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    .background(
+                                        Color.primary.opacity(0.055),
+                                        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    )
                                     .padding(.leading, 28)
                                     .frame(maxWidth: .infinity, alignment: .trailing)
                                 if let context = turn.context { PageContextReference(context: context) }
@@ -358,12 +468,20 @@ struct SideChatPanel: View {
                                     Button {
                                         shownCapture = capture
                                     } label: {
-                                        Label { Text("screenshot · " + capture.title) } icon: { GolzheimIcon(icon: .camera, size: 11) }
-                                            .lineLimit(1).font(.system(size: 11)).foregroundStyle(.secondary)
+                                        Label {
+                                            Text("screenshot · " + capture.title)
+                                        } icon: {
+                                            GolzheimIcon(icon: .camera, size: 11)
+                                        }
+                                        .lineLimit(1).font(.system(size: 11)).foregroundStyle(.secondary)
                                     }.buttonStyle(.plain).help("view the screenshot shared for this answer")
                                 }
                                 if let query = turn.webQuery {
-                                    Label { Text(query) } icon: { GolzheimIcon(icon: .globe, size: 11) }.font(.system(size: 11)).foregroundStyle(
+                                    Label {
+                                        Text(query)
+                                    } icon: {
+                                        GolzheimIcon(icon: .globe, size: 11)
+                                    }.font(.system(size: 11)).foregroundStyle(
                                         .secondary)
                                 }
                                 if !turn.text.isEmpty { ChatGPTAnswerBody(turn: turn, store: store, compact: true) }
@@ -385,14 +503,17 @@ struct SideChatPanel: View {
                                     HStack(spacing: 4) {
                                         Button {
                                             NSPasteboard.general.clearContents()
-                                            NSPasteboard.general.setString(ChatGPTAnswerContent.copyText(turn), forType: .string)
+                                            NSPasteboard.general.setString(
+                                                ChatGPTAnswerContent.copyText(turn), forType: .string)
                                             copiedTurnID = turn.id
                                             Task { @MainActor in
                                                 try? await Task.sleep(for: .seconds(2))
                                                 if copiedTurnID == turn.id { copiedTurnID = nil }
                                             }
                                         } label: {
-                                            GolzheimIcon(icon: copiedTurnID == turn.id ? .check : .copy, size: 14, weight: 220).frame(width: 28, height: 28)
+                                            GolzheimIcon(
+                                                icon: copiedTurnID == turn.id ? .check : .copy, size: 14, weight: 220
+                                            ).frame(width: 28, height: 28)
                                         }.help(copiedTurnID == turn.id ? "copied" : "copy answer")
                                             .accessibilityLabel("copy answer")
                                         Spacer()
@@ -413,7 +534,9 @@ struct SideChatPanel: View {
                 }
                 .onScrollGeometryChange(for: Bool.self) { geometry in
                     geometry.contentSize.height - geometry.visibleRect.maxY < 80
-                } action: { _, nearBottom in followsAnswer = nearBottom }
+                } action: { _, nearBottom in
+                    followsAnswer = nearBottom
+                }
                 .onChange(of: session.turns.last?.id) { _, id in
                     followsAnswer = true
                     if let id { proxy.scrollTo(id, anchor: .top) }
@@ -431,7 +554,8 @@ struct SideChatPanel: View {
                 if let id = ChatGPTCitation.contextID(url) {
                     if let capture = session.turns.compactMap(\.capture).first(where: { $0.id == id }) {
                         shownCapture = capture
-                    } else if let context = session.turns.flatMap({ ($0.context.map { [$0] } ?? []) + $0.attachedPages }).first(where: { $0.id == id }) {
+                    } else if let context = session.turns.flatMap({ ($0.context.map { [$0] } ?? []) + $0.attachedPages }
+                    ).first(where: { $0.id == id }) {
                         shownContext = context
                     } else {
                         return .discarded
@@ -453,13 +577,14 @@ struct SideChatPanel: View {
         .popover(item: $shownCapture) { capture in
             PageCapturePreview(capture: capture).padding(16).frame(width: 380)
         }
-        .confirmationDialog("delete saved chat?",
+        .confirmationDialog(
+            "delete saved chat?",
             isPresented: Binding(get: { deletingChat != nil }, set: { if !$0 { deletingChat = nil } }),
-            titleVisibility: .visible) {
+            titleVisibility: .visible
+        ) {
             Button("delete chat", role: .destructive) {
                 guard let chat = deletingChat else { return }
-                do { try store.application.deleteSavedChat(chat.id) }
-                catch { store.error = error.localizedDescription }
+                do { try store.application.deleteSavedChat(chat.id) } catch { store.error = error.localizedDescription }
                 deletingChat = nil
             }
             Button("cancel", role: .cancel) { deletingChat = nil }
@@ -478,6 +603,7 @@ struct SideChatPanel: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 10) {
+            ChatConnectionRecovery(session: session, store: store)
             if let request = session.toolRequest {
                 ChatToolApprovalView(request: request) { session.decideTool($0, requestID: request.id) }
             }
@@ -490,7 +616,9 @@ struct SideChatPanel: View {
             ChatComposerSurface(focused: focused) {
                 VStack(alignment: .leading, spacing: 10) {
                     if state.includePage || !state.attachedTabs.isEmpty || !state.images.isEmpty {
-                        ChatAttachmentList(count: (state.includePage ? 1 : 0) + state.attachedTabs.count + state.images.count) {
+                        ChatAttachmentList(
+                            count: (state.includePage ? 1 : 0) + state.attachedTabs.count + state.images.count
+                        ) {
                             VStack(spacing: 6) {
                                 if state.includePage {
                                     ChatAttachmentRow(
@@ -501,12 +629,17 @@ struct SideChatPanel: View {
                                             state.showPreview()
                                             previewVisible = true
                                         },
-                                        removeLabel: state.selection == nil ? "remove attached page" : "remove selection",
-                                        removeHelp: state.selection == nil ? "remove page" : "use the page instead of the selection",
+                                        removeLabel: state.selection == nil
+                                            ? "remove attached page" : "remove selection",
+                                        removeHelp: state.selection == nil
+                                            ? "remove page" : "use the page instead of the selection",
                                         canRemove: !state.capturing && !session.searching
                                     ) {
-                                        if state.selection != nil { state.removeSelection() }
-                                        else { state.includePage = false }
+                                        if state.selection != nil {
+                                            state.removeSelection()
+                                        } else {
+                                            state.includePage = false
+                                        }
                                     }
                                     .popover(isPresented: $previewVisible) { preview }
                                 }
@@ -536,44 +669,71 @@ struct SideChatPanel: View {
                             }
                         }
                     }
-                    ChatDraftEditor(text: $session.draft,
-                                    placeholder: session.turns.isEmpty ? "ask anything…" : "ask a follow-up…",
-                                    focused: Binding(get: { focused }, set: { focused = $0 }),
-                                    enabled: !state.capturing && !session.searching) { state.submit() }
+                    ChatDraftEditor(
+                        text: $session.draft,
+                        placeholder: session.turns.isEmpty ? "ask anything…" : "ask a follow-up…",
+                        focused: Binding(get: { focused }, set: { focused = $0 }),
+                        enabled: !state.capturing && !session.searching
+                    ) { state.submit() }
                     HStack(spacing: 4) {
                         Menu {
-                            Toggle(state.selection == nil ? "include this page" : "include selected text", isOn: $state.includePage)
-                                .disabled(tab.page != .web || tab.url == nil)
+                            Toggle(
+                                state.selection == nil ? "include this page" : "include selected text",
+                                isOn: $state.includePage
+                            )
+                            .disabled(tab.page != .web || tab.url == nil)
                             Menu("attach another tab") {
-                                ForEach(store.tabs.filter { $0.page == .web && $0.url != nil && $0 !== tab && !state.attachedTabIDs.contains($0.id) }) { other in
-                                    Button(other.sidebarTitle) { if state.attachedTabIDs.count < 5 { state.attachedTabIDs.append(other.id) } }
+                                ForEach(
+                                    store.tabs.filter {
+                                        $0.page == .web && $0.url != nil && $0 !== tab
+                                            && !state.attachedTabIDs.contains($0.id)
+                                    }
+                                ) { other in
+                                    Button(other.sidebarTitle) {
+                                        if state.attachedTabIDs.count < 5 { state.attachedTabIDs.append(other.id) }
+                                    }
                                 }
                             }.disabled(state.attachedTabIDs.count >= 5)
                             Button("attach images…") { state.attachImage() }
-                                .disabled(session.provider != .chatgpt || account.selectedModel?.acceptsImages != true || state.images.count >= 4)
+                                .disabled(
+                                    session.provider != .chatgpt || account.selectedModel?.acceptsImages != true
+                                        || state.images.count >= 4)
                             Button("reset web permissions") { session.revokeWebTools() }
-                            if session.allowsAllPageReads { Button("reset page-read permission") { session.revokePageReads() } }
-                            if session.allowsAllCaptures { Button("reset screenshot permission") { session.revokeCaptures() } }
+                            if session.allowsAllPageReads {
+                                Button("reset page-read permission") { session.revokePageReads() }
+                            }
+                            if session.allowsAllCaptures {
+                                Button("reset screenshot permission") { session.revokeCaptures() }
+                            }
                         } label: {
                             GolzheimIcon(icon: .plus, size: 17, weight: 220).foregroundStyle(.secondary)
                                 .frame(width: 32, height: 32).contentShape(Rectangle())
                         }.menuStyle(.button).buttonStyle(ChatControlStyle()).menuIndicator(.hidden).fixedSize()
                             .disabled(state.capturing || session.searching)
-                            .help("attach tabs or up to 4 images · 10 MB per file, 20 MB total").accessibilityLabel("add context")
+                            .help("attach tabs or up to 4 images · 10 MB per file, 20 MB total").accessibilityLabel(
+                                "add context")
                         Spacer(minLength: 2)
                         modelSelector
                         ChatSendButton(busy: state.capturing || session.searching, canSend: state.canSubmit) {
-                            if state.capturing || session.searching { state.stop() }
-                            else { state.submit() }
+                            if state.capturing || session.searching { state.stop() } else { state.submit() }
                         }
                     }
                 }
             }
+            if state.summaryPending {
+                HStack {
+                    Text("page summary ready").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("cancel summary") { state.stop() }.buttonStyle(ChatControlStyle()).font(.system(size: 11))
+                }
+            }
             if state.needsCloudPermission {
-                Button("allow sharing this chat’s attachments") {
-                    state.cloudSharingAllowed = true
+                Button {
+                    state.allowCloudSharing()
                     focused = true
-                }.buttonStyle(ChatControlStyle()).font(.system(size: 11)).foregroundStyle(.secondary)
+                } label: {
+                    Text("allow sharing this chat’s attachments").padding(.horizontal, 8).padding(.vertical, 6)
+                }.buttonStyle(ChatControlStyle(selected: true)).font(.system(size: 11)).foregroundStyle(.secondary)
                 Button {
                     state.showPreview()
                     previewVisible = true
@@ -605,30 +765,42 @@ struct SideChatPanel: View {
         PageReadApprovalView(request: request) { session.decidePageReads($0, requestID: request.id) }
     }
     private var modelSelector: some View {
-        ChatModelMenu(account: account, provider: session.provider, changeProvider: changeProvider)
-            .frame(maxWidth: 170, alignment: .trailing).layoutPriority(-1).disabled(state.capturing || session.searching)
+        ChatModelMenu(
+            account: account, claude: claude, provider: session.provider, modelID: session.modelID,
+            changeProvider: changeProvider
+        )
+        .frame(maxWidth: 170, alignment: .trailing).layoutPriority(-1).disabled(state.capturing || session.searching)
     }
     private func changeProvider(_ value: AIProvider) {
         if session.provider != value {
-            state.clear()
+            guard state.clear() else { return }
             store.preferences.aiProvider = value
             store.persistSoon()
         }
+        session.use(provider: value)
     }
     private var preview: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("page context").font(.headline)
             Text(
-                session.provider == .chatgpt
-                    ? "page text and questions go to OpenAI when you send. chat is saved encrypted on this Mac; private chats stay in memory."
+                session.provider.usesCloud
+                    ? "page text and questions go to \(session.provider.serviceName) when you send. chat is saved encrypted on this Mac; private chats stay in memory."
                     : "page text is summarized on this Mac."
             )
             .font(.system(size: 12)).foregroundStyle(.secondary)
             if let context = state.preview {
                 PageContextPreview(context: context)
-                if session.provider == .chatgpt && !state.cloudSharingAllowed {
+                if state.summaryPending {
+                    HStack {
+                        Text("page summary ready").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("cancel summary") { state.stop() }.buttonStyle(ChatControlStyle()).font(
+                            .system(size: 11))
+                    }
+                }
+                if state.needsCloudPermission {
                     Button("allow page sharing for this chat") {
-                        state.cloudSharingAllowed = true
+                        state.allowCloudSharing()
                         previewVisible = false
                         focused = true
                     }
@@ -641,12 +813,14 @@ struct SideChatPanel: View {
                 ProgressView().controlSize(.small)
             }
             if state.hasEarlierAttachments {
-                Text("earlier pages and images remain attached to this conversation and are included in follow-up questions.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(
+                    "earlier pages and images remain attached to this conversation and are included in follow-up questions."
+                )
+                .font(.system(size: 12)).foregroundStyle(.secondary)
             }
             if state.needsCloudPermission && state.preview == nil {
                 Button("allow sharing this chat’s attachments") {
-                    state.cloudSharingAllowed = true
+                    state.allowCloudSharing()
                     previewVisible = false
                     focused = true
                 }
@@ -704,10 +878,13 @@ struct PageContextReference: View {
         Button {
             visible = true
         } label: {
-            Label { Text((context.selection == nil ? "page · " : "selection · ") + context.title) }
-                icon: { GolzheimIcon(icon: context.selection == nil ? .document : .quote, size: 11) }
-                .lineLimit(1)
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+            Label {
+                Text((context.selection == nil ? "page · " : "selection · ") + context.title)
+            } icon: {
+                GolzheimIcon(icon: context.selection == nil ? .document : .quote, size: 11)
+            }
+            .lineLimit(1)
+            .font(.system(size: 11)).foregroundStyle(.secondary)
         }.buttonStyle(.plain).help("view the captured page used for this answer")
             .popover(isPresented: $visible) { PageContextPreview(context: context).padding(16).frame(width: 340) }
     }

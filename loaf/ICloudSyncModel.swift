@@ -56,7 +56,8 @@ nonisolated enum ICloudSyncProjection {
 
     static let preferenceKeys: Set<String> = [
         "haptics", "showLinkPreview", "fahrenheit", "sidebarWidth", "alternateSearch", "capitalizeMenus",
-        "userAgentMode", "restoreSession", "warnBeforeQuitting", "warnBeforeClosingOtherProfiles", "sleepIdleTabs", "sidebarOnlyChrome",
+        "userAgentMode", "restoreSession", "warnBeforeQuitting", "warnBeforeClosingOtherProfiles", "sleepIdleTabs",
+        "sidebarOnlyChrome",
         "insetCollapsedPage", "pinnedLayout", "tintWonderbar", "tabSleepMinutes",
         "customNewTabURL", "searchEngine", "customSearchTemplate", "suggestionProvider", "linkTabGroups",
     ]
@@ -110,7 +111,10 @@ nonisolated enum ICloudSyncProjection {
         if let appearance = profile.personalization {
             for (key, val) in try object(appearance) where appearanceKeys.contains(key) {
                 if key == "background", let name = val as? String,
-                    name.contains("/") || name.contains(":") { continue }
+                    name.contains("/") || name.contains(":")
+                {
+                    continue
+                }
                 fields["appearance." + key] = try data(val)
             }
         }
@@ -129,7 +133,9 @@ nonisolated enum ICloudSyncProjection {
     static func preferences(_ preferences: BrowserPreferences) throws -> [String: Data] {
         try object(preferences).filter { preferenceKeys.contains($0.key) }.mapValues(data)
     }
-    static func applyPreferences(_ document: SyncDocument, to preferences: BrowserPreferences) throws -> BrowserPreferences {
+    static func applyPreferences(_ document: SyncDocument, to preferences: BrowserPreferences) throws
+        -> BrowserPreferences
+    {
         var raw = try object(preferences)
         for (key, field) in document.fields where preferenceKeys.contains(key) {
             raw[key] = try field.value.map(value)
@@ -138,7 +144,10 @@ nonisolated enum ICloudSyncProjection {
         result.sidebarWidth = min(360, max(192, result.sidebarWidth.isFinite ? result.sidebarWidth : 220))
         if let text = result.customNewTabURL, !text.isEmpty, address(text) == nil { result.customNewTabURL = nil }
         if let template = result.customSearchTemplate, !template.isEmpty,
-            address(template.replacingOccurrences(of: "%s", with: "query").replacingOccurrences(of: "{query}", with: "query")) == nil {
+            address(
+                template.replacingOccurrences(of: "%s", with: "query").replacingOccurrences(
+                    of: "{query}", with: "query")) == nil
+        {
             result.customSearchTemplate = nil
         }
         return result
@@ -152,7 +161,10 @@ nonisolated enum ICloudSyncProjection {
             if key.hasPrefix("appearance."), appearanceKeys.contains(String(key.dropFirst(11))) {
                 let name = String(key.dropFirst(11))
                 if name == "background", let blob = field.value, let val = try value(blob) as? String,
-                    val.contains("/") || val.contains(":") { continue }
+                    val.contains("/") || val.contains(":")
+                {
+                    continue
+                }
                 appearance[name] = try field.value.map(value) ?? defaultAppearance[name]
             }
         }
@@ -179,19 +191,24 @@ nonisolated enum ICloudSyncProjection {
             group.name = String(group.name.prefix(128))
             group.icon = String(group.icon.prefix(64))
             group.color = min(15, max(0, group.color))
-            let localOnly = (profile.pinnedGroups ?? []).first { $0.id == group.id }?.savedTabs?.filter { tab($0) == nil } ?? []
+            let localOnly =
+                (profile.pinnedGroups ?? []).first { $0.id == group.id }?.savedTabs?.filter { tab($0) == nil } ?? []
             group.savedTabs = (group.savedTabs ?? []).compactMap(tab) + localOnly
             return group
         }
-        result.pinShortcuts = try ordered(pins, document: document, key: "pinOrder") + (profile.pinShortcuts ?? []).filter { tab($0) == nil }
+        result.pinShortcuts =
+            try ordered(pins, document: document, key: "pinOrder")
+            + (profile.pinShortcuts ?? []).filter { tab($0) == nil }
         result.pinnedGroups = try ordered(groups, document: document, key: "groupOrder")
         return result
     }
-    static func ordered<T: Identifiable>(_ values: [T], document: SyncDocument, key: String) throws -> [T] where T.ID == UUID {
+    static func ordered<T: Identifiable>(_ values: [T], document: SyncDocument, key: String) throws -> [T]
+    where T.ID == UUID {
         let order = try document.fields[key]?.value.map { try JSONDecoder().decode([String].self, from: $0) } ?? []
         let rank = Dictionary(order.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: min)
         return values.sorted {
-            let a = rank[$0.id.uuidString] ?? Int.max, b = rank[$1.id.uuidString] ?? Int.max
+            let a = rank[$0.id.uuidString] ?? Int.max
+            let b = rank[$1.id.uuidString] ?? Int.max
             return a == b ? $0.id.uuidString < $1.id.uuidString : a < b
         }
     }
@@ -201,10 +218,13 @@ nonisolated enum ICloudSyncProjection {
         var seen = Set<UUID>()
         var tabs: [SyncedTab] = []
         for window in snapshot.windows ?? [] {
-            for (profileID, workspace) in window.workspaces.sorted(by: { $0.key.uuidString < $1.key.uuidString }) where regular.contains(profileID) {
+            for (profileID, workspace) in window.workspaces.sorted(by: { $0.key.uuidString < $1.key.uuidString })
+            where regular.contains(profileID) {
                 for saved in workspace.tabs where seen.insert(saved.id).inserted {
                     guard saved.page == .web, let url = address(saved.address) else { continue }
-                    tabs.append(SyncedTab(id: saved.id, profileID: profileID, title: String(saved.title.prefix(512)), address: url))
+                    tabs.append(
+                        SyncedTab(
+                            id: saved.id, profileID: profileID, title: String(saved.title.prefix(512)), address: url))
                 }
             }
         }

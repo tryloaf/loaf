@@ -89,9 +89,10 @@ extension BrowserWindowState {
         let visible = result.filter { browserSplit?.right != $0.id }
         sidebarEntryCache = SidebarEntryCache(
             key: key, entries: visible,
-            layout: TabInsertionLayout(rows: visible.map {
-                .init(id: $0.id, pinned: $0.tab == nil, height: $0.height, containerID: $0.tab?.groupID)
-            }))
+            layout: TabInsertionLayout(
+                rows: visible.map {
+                    .init(id: $0.id, pinned: $0.tab == nil, height: $0.height, containerID: $0.tab?.groupID)
+                }))
         return visible
     }
     var sidebarInsertionLayout: TabInsertionLayout {

@@ -124,10 +124,15 @@ final class UpdateInstallationState: @unchecked Sendable {
         Task { @MainActor in
             for _ in 0..<12 {
                 try? await Task.sleep(for: .milliseconds(100))
-                guard let window = NSApp.windows.first(where: {
-                    $0.isVisible && !($0 is LoafBrowserWindow)
-                    && $0.windowController.map { String(reflecting: type(of: $0)).contains("Sparkle") || Bundle(for: type(of: $0)).bundleIdentifier?.contains("Sparkle") == true } == true
-                }) else { continue }
+                guard
+                    let window = NSApp.windows.first(where: {
+                        $0.isVisible && !($0 is LoafBrowserWindow)
+                            && $0.windowController.map {
+                                String(reflecting: type(of: $0)).contains("Sparkle")
+                                    || Bundle(for: type(of: $0)).bundleIdentifier?.contains("Sparkle") == true
+                            } == true
+                    })
+                else { continue }
                 NSApp.activate()
                 window.makeKeyAndOrderFront(nil)
                 return

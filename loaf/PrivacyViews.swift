@@ -14,7 +14,8 @@ extension BrowserAddress {
 extension BrowserWindowState {
     func clear(_ request: ClearingRequest, profileID: UUID, now: Date = Date()) async {
         guard application.profiles.contains(where: { $0.id == profileID }),
-              !application.busyProfileIDs.contains(profileID) else { return }
+            !application.busyProfileIDs.contains(profileID)
+        else { return }
         application.busyProfileIDs.insert(profileID)
         defer { application.busyProfileIDs.remove(profileID) }
         let cutoff = request.timeframe.cutoff(now: now)
@@ -40,7 +41,8 @@ extension BrowserWindowState {
     func clearSite(_ url: URL, profileID: UUID? = nil) async {
         let profileID = profileID ?? selectedProfileID
         guard let host = url.host, application.profiles.contains(where: { $0.id == profileID }),
-              !application.busyProfileIDs.contains(profileID) else { return }
+            !application.busyProfileIDs.contains(profileID)
+        else { return }
         application.busyProfileIDs.insert(profileID)
         defer { application.busyProfileIDs.remove(profileID) }
         let dataStore = runtime(for: profileID).dataStore
@@ -80,39 +82,48 @@ struct ClearingView: View {
             Text("scope: \(clearing ? scopeName : store.profile.name). downloaded files and favorites are retained.")
                 .font(.caption).foregroundStyle(.secondary)
             if request.cookies {
-                Text("cookies are cleared for the entire profile. website storage and cache may be cleared for a whole site, even when you choose a shorter time range.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(
+                    "cookies are cleared for the entire profile. website storage and cache may be cleared for a whole site, even when you choose a shorter time range."
+                )
+                .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
                 if let onCancel {
                     Button("cancel", action: onCancel).keyboardShortcut(.cancelAction).disabled(clearing)
                     Spacer()
                 }
-                Button(clearing ? "clearing…" : "clear selected data…", role: .destructive) {
+                SettingsActionButton(
+                    "clear selected data…", busy: clearing,
+                    disabled: store.application.busyProfileIDs.contains(store.selectedProfileID)
+                        || !(request.history || request.cookies || request.cache || request.downloads),
+                    role: .destructive
+                ) {
                     scope = store.selectedProfileID
                     scopeName = store.profile.name
                     confirmedRequest = request
                     confirm = true
-                }.disabled(clearing || store.application.busyProfileIDs.contains(store.selectedProfileID)
-                    || !(request.history || request.cookies || request.cache || request.downloads))
-            }
-        }.interactiveDismissDisabled(clearing && onCancel != nil)
-        .confirmationDialog("clear data in \(scopeName)?", isPresented: $confirm, titleVisibility: .visible) {
-            Button("clear data", role: .destructive) {
-                guard let scope, store.application.profiles.contains(where: { $0.id == scope }),
-                      !store.application.busyProfileIDs.contains(scope) else { return }
-                let selected = confirmedRequest
-                clearing = true
-                Task {
-                    await store.clear(selected, profileID: scope)
-                    clearing = false
-                    onCancel?()
                 }
             }
-            Button("cancel", role: .cancel) {}
-        } message: {
-            Text("\(confirmedRequest.timeframe.rawValue). \(confirmedRequest.cookies ? "all cookies in this profile will be removed, which can sign you out. " : "")This cannot be undone. Downloaded files stay on disk.")
-        }
+        }.interactiveDismissDisabled(clearing && onCancel != nil)
+            .confirmationDialog("clear data in \(scopeName)?", isPresented: $confirm, titleVisibility: .visible) {
+                Button("clear data", role: .destructive) {
+                    guard let scope, store.application.profiles.contains(where: { $0.id == scope }),
+                        !store.application.busyProfileIDs.contains(scope)
+                    else { return }
+                    let selected = confirmedRequest
+                    clearing = true
+                    Task {
+                        await store.clear(selected, profileID: scope)
+                        clearing = false
+                        onCancel?()
+                    }
+                }
+                Button("cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "\(confirmedRequest.timeframe.rawValue). \(confirmedRequest.cookies ? "all cookies in this profile will be removed, which can sign you out. " : "")This cannot be undone. Downloaded files stay on disk."
+                )
+            }
     }
 }
 
@@ -140,7 +151,8 @@ struct CookieManagerView: View {
                 Button("select all") { selectedCookies = Set(filtered.map(cookieID)) }
                     .controlSize(.small).disabled(filtered.isEmpty)
                 if !selectedCookies.isEmpty {
-                    Button("delete \(selectedCookies.count)…", role: .destructive) { deleteSelectedCookies() }.controlSize(.small).disabled(deleting)
+                    Button("delete \(selectedCookies.count)…", role: .destructive) { deleteSelectedCookies() }
+                        .controlSize(.small).disabled(deleting)
                 }
                 Button("history") { store.showPage(.history) }.controlSize(.small)
             }.frame(maxWidth: 600).padding(.horizontal, 28).padding(.vertical, 16)
@@ -216,7 +228,9 @@ struct CookieManagerView: View {
                 }.frame(maxWidth: 600).padding(.horizontal, 28).padding(.bottom, 24).frame(maxWidth: .infinity)
             }.scrollIndicators(.hidden)
         }.background(LibraryDeleteKey(enabled: !deleting && !selectedCookies.isEmpty, delete: deleteSelectedCookies))
-            .confirmationDialog("delete \(deletionCookies.count) cookies?", isPresented: $confirmDeletion, titleVisibility: .visible) {
+            .confirmationDialog(
+                "delete \(deletionCookies.count) cookies?", isPresented: $confirmDeletion, titleVisibility: .visible
+            ) {
                 Button("delete cookies", role: .destructive) { performDeletion() }
                 Button("cancel", role: .cancel) { deletionCookies = [] }
             } message: {
@@ -238,7 +252,9 @@ struct CookieManagerView: View {
         requestDeletion(cookies.filter { selectedCookies.contains(cookieID($0)) })
     }
     private func requestDeletion(_ selected: [HTTPCookie]) {
-        guard !deleting, !selected.isEmpty, !store.application.busyProfileIDs.contains(store.selectedProfileID) else { return }
+        guard !deleting, !selected.isEmpty, !store.application.busyProfileIDs.contains(store.selectedProfileID) else {
+            return
+        }
         deletionCookies = selected
         deletionProfileID = store.selectedProfileID
         deletionProfileName = store.profile.name
@@ -246,14 +262,18 @@ struct CookieManagerView: View {
     }
     private func performDeletion() {
         guard !deleting, let id = deletionProfileID, store.application.profiles.contains(where: { $0.id == id }),
-              !store.application.busyProfileIDs.contains(id) else { return }
+            !store.application.busyProfileIDs.contains(id)
+        else { return }
         let selected = deletionCookies
         let jar = store.runtime(for: id).dataStore.httpCookieStore
         store.application.busyProfileIDs.insert(id)
         deleting = true
         selectedCookies = []
         Task {
-            defer { deleting = false; store.application.busyProfileIDs.remove(id) }
+            defer {
+                deleting = false
+                store.application.busyProfileIDs.remove(id)
+            }
             for cookie in selected { await jar.deleteCookie(cookie) }
             if store.selectedProfileID == id { await refresh() }
         }
@@ -439,11 +459,15 @@ struct SiteSettingsView: View {
                             "this can sign you out of \(PublicSuffixList.shared.registrableDomain(host)) and its subdomains in \(session.profile?.name ?? "this profile")."
                         )
                     }
-                    .confirmationDialog("reset website overrides?", isPresented: $confirmReset, titleVisibility: .visible) {
+                    .confirmationDialog(
+                        "reset website overrides?", isPresented: $confirmReset, titleVisibility: .visible
+                    ) {
                         Button("reset overrides", role: .destructive) { if session.valid { session.reset() } }
                         Button("cancel", role: .cancel) {}
                     } message: {
-                        Text("This restores default permissions and page preferences for this website in \(session.profile?.name ?? "this profile").")
+                        Text(
+                            "This restores default permissions and page preferences for this website in \(session.profile?.name ?? "this profile")."
+                        )
                     }
                     .task { await refreshCookies() }
                 Divider().padding(.horizontal, 12)

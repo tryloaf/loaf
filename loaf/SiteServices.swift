@@ -15,8 +15,11 @@ enum AssetRequest {
         config.timeoutIntervalForResource = 120
         return URLSession(configuration: config, delegate: transfers, delegateQueue: nil)
     }()
-    static func data(_ url: URL, limit: Int = 1_000_000, timeout: TimeInterval = 8, allowHTTP: Bool = false) async throws -> Data {
-        guard (url.scheme == "https" || (allowHTTP && url.scheme == "http" && BrowserAddress.isLocalHost(url.host))), url.host != nil,
+    static func data(_ url: URL, limit: Int = 1_000_000, timeout: TimeInterval = 8, allowHTTP: Bool = false)
+        async throws -> Data
+    {
+        guard (url.scheme == "https" || (allowHTTP && url.scheme == "http" && BrowserAddress.isLocalHost(url.host))),
+            url.host != nil,
             url.user == nil, url.password == nil, limit >= 0, limit <= 50_000_000
         else {
             throw URLError(.unsupportedURL)
@@ -56,9 +59,12 @@ enum AssetRequest {
         let discoverPage: Bool
     }
     private var pending: [String: Pending] = [:]
-    init(directory: URL, fetch: @escaping (URL) async throws -> Data = {
-        try await AssetRequest.data($0, allowHTTP: $0.scheme == "http")
-    }) {
+    init(
+        directory: URL,
+        fetch: @escaping (URL) async throws -> Data = {
+            try await AssetRequest.data($0, allowHTTP: $0.scheme == "http")
+        }
+    ) {
         self.directory = directory
         self.fetch = fetch
         assets = FaviconAssets(directory: directory)
@@ -95,7 +101,10 @@ enum AssetRequest {
         remember(image, key: "normal" + origin)
         return image
     }
-    func image(for url: URL, privateID: UUID? = nil, declared: [URL] = [], refresh: Bool = false, forceRefresh: Bool = false, quick: Bool = false, discoverPage: Bool = true) async -> NSImage? {
+    func image(
+        for url: URL, privateID: UUID? = nil, declared: [URL] = [], refresh: Bool = false, forceRefresh: Bool = false,
+        quick: Bool = false, discoverPage: Bool = true
+    ) async -> NSImage? {
         guard let origin = BrowserAddress.websiteOrigin(url) else { return nil }
         let refresh = refresh || forceRefresh
         let key = (privateID?.uuidString ?? "normal") + origin
@@ -110,7 +119,8 @@ enum AssetRequest {
         if let request = pending[key] {
 
             if forceRefresh || !declared.isEmpty && request.declared != declared
-                || !discoverPage && request.discoverPage && request.declared.isEmpty {
+                || !discoverPage && request.discoverPage && request.declared.isEmpty
+            {
                 pending.removeValue(forKey: key)?.task.cancel()
             } else {
                 let image = await request.task.value
@@ -149,9 +159,14 @@ enum AssetRequest {
             }
             var known: [URL] = []
             let domain = PublicSuffixList.shared.registrableDomain(url.host ?? "")
-            if domain == "reddit.com" { known = [URL(string: "https://www.redditstatic.com/shreddit/assets/favicon/192x192.png")!] }
+            if domain == "reddit.com" {
+                known = [URL(string: "https://www.redditstatic.com/shreddit/assets/favicon/192x192.png")!]
+            }
             if domain == "chatgpt.com" || domain == "openai.com" {
-                known = [URL(string: "https://chatgpt.com/favicon.ico")!, URL(string: "https://chat.openai.com/favicon.ico")!]
+                known = [
+                    URL(string: "https://chatgpt.com/favicon.ico")!,
+                    URL(string: "https://chat.openai.com/favicon.ico")!,
+                ]
             }
             var discovered = declared
             if discoverPage, discovered.isEmpty, (url.scheme == "https" || localHTTP),
@@ -163,7 +178,8 @@ enum AssetRequest {
             let candidates = (discovered + known).filter {
                 Self.acceptsIconURL($0, for: url) && seen.insert($0).inserted
             }
-            let rootIcons = ["/favicon.ico", "/apple-touch-icon.png", "/favicon.png", "/favicon.svg"].compactMap { path -> URL? in
+            let rootIcons = ["/favicon.ico", "/apple-touch-icon.png", "/favicon.png", "/favicon.svg"].compactMap {
+                path -> URL? in
                 var parts = fallback
                 parts.path = path
                 return parts.url

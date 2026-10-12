@@ -44,7 +44,8 @@ nonisolated struct ImportBrowser: Identifiable, Sendable {
             }
             if let library {
 
-                selectedRoots = roots + [library.appendingPathComponent("Safari"), library.appendingPathComponent("Cookies")]
+                selectedRoots =
+                    roots + [library.appendingPathComponent("Safari"), library.appendingPathComponent("Cookies")]
             } else if ["Safari", "SafariTechnologyPreview", "Cookies"].contains(folder.lastPathComponent),
                 !folder.pathComponents.contains("Profiles")
             {

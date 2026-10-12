@@ -7,6 +7,11 @@
 
 !/tests/
 /tests/*
+!/tests/PageReadingTests.swift
+!/tests/OmnibarFocusTests.swift
+!/tests/AIFeatureTests.swift
+!/tests/Release103Tests.swift
+!/tests/ShazamCompatibilityTests.swift
 !/tests/ICloudSyncTests.swift
 !/tests/ConsoleLogRegressionTests.swift
 !/tests/UserScriptCompatibilityTests.swift
@@ -21,6 +26,11 @@
 !/tests/Fixtures/chatgpt-favicon.svg
 !/scripts/
 /scripts/*
+!/scripts/test-page-reading.sh
+!/scripts/test-omnibar-focus.sh
+!/scripts/test-ai-features.sh
+!/scripts/test-release103.sh
+!/scripts/test-shazam-compatibility.sh
 !/scripts/test-icloud-sync.sh
 !/scripts/test-console-regressions.sh
 !/scripts/FetchExtensionFixtures.swift

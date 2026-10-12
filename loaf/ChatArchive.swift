@@ -20,7 +20,8 @@ nonisolated struct SavedChat: Codable, Identifiable, Sendable {
     private let keychainService: String
     private var syncPayloads: [UUID: (date: Date, data: Data)] = [:]
     init(directory: URL, keychainService: String? = nil) {
-        self.keychainService = keychainService ?? (Bundle.main.bundleIdentifier ?? BrowserBrand.bundleIdentifier) + ".chat-vault.v1"
+        self.keychainService =
+            keychainService ?? (Bundle.main.bundleIdentifier ?? BrowserBrand.bundleIdentifier) + ".chat-vault.v1"
         file = directory.appendingPathComponent("chats-v1.encrypted")
         localAccount = SHA256.hash(data: Data(directory.path.utf8)).map { String(format: "%02x", $0) }.joined()
         guard FileManager.default.fileExists(atPath: file.path) else { return }
@@ -28,7 +29,10 @@ nonisolated struct SavedChat: Codable, Identifiable, Sendable {
             let data = try Data(contentsOf: file)
             guard data.count <= 64_000_000 else { throw CocoaError(.fileReadTooLarge) }
             chats = try JSONDecoder().decode([SavedChat].self, from: open(data, synced: false))
-        } catch { restoreFailed = true; self.error = "saved chats couldn’t be unlocked. the encrypted file has been retained." }
+        } catch {
+            restoreFailed = true
+            self.error = "saved chats couldn’t be unlocked. the encrypted file has been retained."
+        }
     }
     func save(id: UUID, profileID: UUID, turns: [ChatTurn]) throws {
         guard !turns.isEmpty else { return }
@@ -55,7 +59,10 @@ nonisolated struct SavedChat: Codable, Identifiable, Sendable {
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
             chats = next.sorted { $0.updatedAt > $1.updatedAt }
             error = nil
-        } catch { self.error = "chat couldn’t be saved: " + error.localizedDescription; throw error }
+        } catch {
+            self.error = "chat couldn’t be saved: " + error.localizedDescription
+            throw error
+        }
     }
     func syncValues(profileID: UUID) throws -> [String: Data] {
         var result: [String: Data] = [:]
@@ -82,13 +89,18 @@ nonisolated struct SavedChat: Codable, Identifiable, Sendable {
         var next = chats
         for (identifier, field) in document.fields {
             guard let id = UUID(uuidString: identifier) else { throw ICloudSyncFailure.invalidData }
-            guard let data = field.value else { next.removeAll { $0.id == id && $0.profileID == profileID }; continue }
+            guard let data = field.value else {
+                next.removeAll { $0.id == id && $0.profileID == profileID }
+                continue
+            }
             guard data.count <= 600_000 else { throw ICloudSyncFailure.tooLarge }
             let decrypted = try open(data, synced: true)
             let plain = try (decrypted as NSData).decompressed(using: .zlib) as Data
             guard plain.count <= 8_000_000 else { throw ICloudSyncFailure.tooLarge }
             var chat = try JSONDecoder().decode(SavedChat.self, from: plain)
-            guard chat.id == id, chat.profileID == profileID, chat.turns.count <= 100 else { throw ICloudSyncFailure.invalidData }
+            guard chat.id == id, chat.profileID == profileID, chat.turns.count <= 100 else {
+                throw ICloudSyncFailure.invalidData
+            }
             if let local = next.first(where: { $0.id == id }), local.updatedAt >= chat.updatedAt { continue }
             if let local = next.first(where: { $0.id == id }) {
                 for index in chat.turns.indices {
@@ -104,19 +116,24 @@ nonisolated struct SavedChat: Codable, Identifiable, Sendable {
         if try JSONEncoder().encode(next) != JSONEncoder().encode(chats) { try persist(next) }
     }
     private func key(synced: Bool, create: Bool = true) throws -> SymmetricKey {
-        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: synced ? "icloud" : localAccount,
-            kSecAttrSynchronizable as String: synced]
+            kSecAttrSynchronizable as String: synced,
+        ]
         var read = query
         read[kSecReturnData as String] = true
         var result: CFTypeRef?
         let status = SecItemCopyMatching(read as CFDictionary, &result)
         if status == errSecSuccess, let data = result as? Data, data.count == 32 { return SymmetricKey(data: data) }
-        guard status == errSecItemNotFound && create else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
+        guard status == errSecItemNotFound && create else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
         let key = SymmetricKey(size: .bits256)
         query[kSecValueData as String] = key.withUnsafeBytes { Data($0) }
-        query[kSecAttrAccessible as String] = synced ? kSecAttrAccessibleWhenUnlocked : kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        query[kSecAttrAccessible as String] =
+            synced ? kSecAttrAccessibleWhenUnlocked : kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         let added = SecItemAdd(query as CFDictionary, nil)
         if added == errSecDuplicateItem { return try self.key(synced: synced) }
         guard added == errSecSuccess else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(added)) }

@@ -129,10 +129,12 @@ struct ProfileDragHandle: NSViewRepresentable {
                     outline.stroke()
                     if let customIcon {
                         let scale = min(22 / customIcon.size.width, 22 / customIcon.size.height)
-                        let iconSize = NSSize(width: customIcon.size.width * scale, height: customIcon.size.height * scale)
+                        let iconSize = NSSize(
+                            width: customIcon.size.width * scale, height: customIcon.size.height * scale)
                         customIcon.draw(
-                            in: NSRect(x: 21 - iconSize.width / 2, y: rect.midY - iconSize.height / 2,
-                                       width: iconSize.width, height: iconSize.height),
+                            in: NSRect(
+                                x: 21 - iconSize.width / 2, y: rect.midY - iconSize.height / 2,
+                                width: iconSize.width, height: iconSize.height),
                             from: .zero, operation: .sourceOver, fraction: 1,
                             respectFlipped: true, hints: nil)
                     } else if let glyph {

@@ -653,7 +653,7 @@ import WebKit
     func performAlternateSearch(_ query: String) {
         let redirect = preferences.alternateSearch ?? SearchRedirect()
         guard redirect.enabled else { return }
-        if redirect.provider == .chatgpt || redirect.provider == .appleIntelligence {
+        if [.chatgpt, .claude, .appleIntelligence].contains(redirect.provider) {
             guard preferences.aiFeaturesEnabled != false else {
                 navigate(query)
                 return
@@ -668,7 +668,9 @@ import WebKit
             selectedTab?.chatGPTSearch.open(
                 query: input,
                 provider: redirect.provider == .chatgpt
-                    ? .chatgpt : preferences.aiProvider == .privateCloud ? .privateCloud : .onDevice)
+                    ? .chatgpt
+                    : redirect.provider == .claude
+                        ? .claude : preferences.aiProvider == .privateCloud ? .privateCloud : .onDevice)
             return
         }
         guard let url = redirect.url(for: query) else {
@@ -731,7 +733,10 @@ import WebKit
         markVisibleTabsActive()
         if id != selectedProfileID { endSplit() }
         guard profiles.contains(where: { $0.id == id }), id != selectedProfileID else { return }
-        for tab in tabs { tab.existingChatGPTSearch?.clear(); tab.existingSideChat?.clear() }
+        for tab in tabs {
+            tab.existingChatGPTSearch?.clear()
+            tab.existingSideChat?.endSession()
+        }
         cancelPasswordFill()
         tabHover.dismiss()
         profileDirection =

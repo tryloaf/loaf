@@ -44,7 +44,8 @@ struct WebViewHost: NSViewRepresentable {
         }
         func applyChromeInset() {
             guard configuredInset != requestedInset, let webView = hostedWebView,
-                webView.superview === self, webView.fullscreenState == .notInFullscreen else { return }
+                webView.superview === self, webView.fullscreenState == .notInFullscreen
+            else { return }
             configuredInset = requestedInset
             fallbackInset = WebKitAdapter.setChromeInset(webView, height: requestedInset) ? 0 : requestedInset
             needsLayout = true
@@ -55,9 +56,11 @@ struct WebViewHost: NSViewRepresentable {
             let extraTop = max(0, (configuredInset ?? 0) - inheritedTop)
             if additionalSafeAreaInsets.top != extraTop { additionalSafeAreaInsets.top = extraTop }
             guard let webView = hostedWebView, webView.superview === self,
-                webView.fullscreenState == .notInFullscreen, !WebKitAdapter.inspectorIsDocked(webView) else { return }
+                webView.fullscreenState == .notInFullscreen, !WebKitAdapter.inspectorIsDocked(webView)
+            else { return }
             let scale = window?.backingScaleFactor ?? 1
-            let target = NSRect(x: 0, y: isFlipped ? fallbackInset : 0,
+            let target = NSRect(
+                x: 0, y: isFlipped ? fallbackInset : 0,
                 width: ceil(bounds.width * scale) / scale,
                 height: ceil(max(0, bounds.height - fallbackInset) * scale) / scale)
             guard target.width > 0, target.height > 0, webView.frame != target else { return }

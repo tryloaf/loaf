@@ -30,12 +30,22 @@ nonisolated enum SuggestionProvider: String, Codable, CaseIterable, Sendable {
 }
 
 nonisolated enum AIProvider: String, Codable, CaseIterable, Sendable {
-    case chatgpt, onDevice, privateCloud
+    case chatgpt, claude, onDevice, privateCloud
     var title: String {
         switch self {
         case .chatgpt: "ChatGPT"
+        case .claude: "Claude"
         case .onDevice: "Apple Intelligence · on device"
         case .privateCloud: "Apple Intelligence · Private Cloud Compute"
+        }
+    }
+    var usesCloud: Bool { self != .onDevice }
+    var serviceName: String {
+        switch self {
+        case .chatgpt: "OpenAI"
+        case .claude: "Anthropic"
+        case .privateCloud: "Apple Private Cloud Compute"
+        case .onDevice: "this Mac"
         }
     }
 }

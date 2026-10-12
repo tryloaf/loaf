@@ -321,6 +321,8 @@ struct PinnedTabTile: View {
                 height: PinGridLayout.tileHeight
             ).contentShape(Rectangle())
         }.buttonStyle(.plain)
+            .accessibilityLabel(tab.sidebarTitle)
+            .accessibilityValue(selected ? "selected" : "")
             .background(
                 (scheme == .dark ? Color.white : Color.black).opacity(selected ? 0.12 : hovered ? 0.08 : 0.045),
                 in: RoundedRectangle(cornerRadius: 8)
@@ -328,6 +330,7 @@ struct PinnedTabTile: View {
             .opacity(pressed || store.draggedTabID == tab.id ? 0.55 : 1)
             .overlay {
                 TabDragArea(tab: tab, store: store, title: tab.sidebarTitle, selected: selected, pressed: $pressed)
+                    .accessibilityHidden(true)
             }
             .background(TabHoverAnchor(tab: tab, store: store))
             .contextMenu { TabActions(tab: tab, store: store) }

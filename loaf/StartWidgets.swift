@@ -18,7 +18,8 @@ struct StartWidgetGrid<Content: View>: View {
 }
 
 nonisolated enum StartWidgetKind: String, CaseIterable, Identifiable, Sendable {
-    case search, pins, clock, weather, recent, notes, calendar, downloads, checklist, worldClock, timer, stopwatch, battery,
+    case search, pins, clock, weather, recent, notes, calendar, downloads, checklist, worldClock, timer, stopwatch,
+        battery,
         browsingTime
     var id: String { rawValue }
     var title: String {
@@ -183,7 +184,13 @@ struct StartWidgetLayout {
         let span = size == .square ? 1 : min(columns, size.columns) * (columnWidth >= 16 ? 2 : 1)
         return StartWidgetPosition(
             column: Int(min(CGFloat(gridColumns - span), max(0, (point.x.isFinite ? point.x : 0) / gridStride.width))),
-            row: Int(min(128, max(0, ((point.y.isFinite ? point.y : 0) + (point.y >= 72 ? firstRowReduction : 0)) / gridStride.height))))
+            row: Int(
+                min(
+                    128,
+                    max(
+                        0,
+                        ((point.y.isFinite ? point.y : 0) + (point.y >= 72 ? firstRowReduction : 0)) / gridStride.height
+                    ))))
     }
     var positions: [String: StartWidgetPosition] {
         Dictionary(
@@ -196,7 +203,8 @@ struct StartWidgetLayout {
                     position(
                         at: CGPoint(
                             x: placement.frame.minX + gridStride.width / 2,
-                            y: placement.frame.minY + min(placement.frame.height / 2, gridStride.height / 2)), size: size)
+                            y: placement.frame.minY + min(placement.frame.height / 2, gridStride.height / 2)),
+                        size: size)
                 )
             })
     }
@@ -210,7 +218,8 @@ struct StartWidgetLayout {
         let width = width.isFinite ? max(0, width) : 0
         let columns = width >= 560 ? 2 : 1
         let columnWidth = max(0, (width - CGFloat(columns - 1) * 16) / CGFloat(columns))
-        let compactSearchRow = widgets.contains("search") && sizes["search"] == .banner
+        let compactSearchRow =
+            widgets.contains("search") && sizes["search"] == .banner
             && (positions["search"]?.row == 0 || (positions.isEmpty && widgets.first == "search"))
         let searchRowReduction = max(176, StartWidgetSize.squareSide(columnWidth: columnWidth)) + 16 - 72
         if !positions.isEmpty {
@@ -264,8 +273,10 @@ struct StartWidgetLayout {
             let reduction = placed["search"]?.frame.minY == 0 ? searchRowReduction : 0
             firstRowReduction = reduction
             placements = ids.compactMap { placed[$0] }.map { placement in
-                Placement(id: placement.id, frame: placement.frame.offsetBy(
-                    dx: 0, dy: placement.frame.minY > 0 ? -reduction : 0))
+                Placement(
+                    id: placement.id,
+                    frame: placement.frame.offsetBy(
+                        dx: 0, dy: placement.frame.minY > 0 ? -reduction : 0))
             }
             self.height = placements.map(\.frame.maxY).max() ?? 0
             return

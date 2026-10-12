@@ -18,6 +18,7 @@ struct SettingsView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var city = ""
     @State private var importVisible = false
+    @State private var startPageCustomizationVisible = false
     @State private var editing: UUID?
     @State private var confirmTrackingDeletion = false
     @State private var extensionDeletion: InstalledExtension?
@@ -44,7 +45,9 @@ struct SettingsView: View {
         case "sync": .globe
         case "general": .settings
         case "appearance": .sun
+        case "sidebar": .sidebar
         case "search": .search
+        case "intelligence": .intelligence
         case "profiles": .profiles
         case "websites": .globe
         case "privacy": .shield
@@ -58,13 +61,15 @@ struct SettingsView: View {
         case "sync": "your profiles, pins and preferences across Macs"
         case "general": "startup and browsing preferences"
         case "appearance": "color, surfaces and window controls"
+        case "sidebar": "sidebar weather and forecasts"
         case "search": "what appears when you search or surf"
+        case "intelligence": "models, connections and page summaries"
         case "profiles": "separate spaces, shared across your windows"
         case "websites": "decisions you've made for individual sites"
         case "privacy": "blocking, cookies and browsing data"
         case "passwords": "credentials stored locally in Keychain"
         case "extensions": "installation and website access"
-        default: "browser identity and developer tools"
+        default: "power, browsing time and developer tools"
         }
     }
     private func optional<Value>(_ key: WritableKeyPath<BrowserPreferences, Value?>, fallback: Value) -> Binding<Value>
@@ -77,7 +82,7 @@ struct SettingsView: View {
             })
     }
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 8) {
                     GolzheimIcon(icon: .search, size: 14).foregroundStyle(.secondary)
@@ -100,10 +105,12 @@ struct SettingsView: View {
                 {
                     ForEach(Array(sections.enumerated()), id: \.element) { index, item in
                         Label {
-                            Text(item).font(.system(size: 13)).foregroundStyle(sidebarInk)
+                            Text(item).font(.system(size: 13)).foregroundStyle(
+                                item == section ? Color(nsColor: .alternateSelectedControlTextColor) : sidebarInk)
                         } icon: {
                             GolzheimIcon(icon: icon(item), size: 16, weight: 220).foregroundStyle(
-                                sidebarInk.opacity(0.7)
+                                (item == section ? Color(nsColor: .alternateSelectedControlTextColor) : sidebarInk)
+                                    .opacity(0.7)
                             ).frame(width: 20)
                         }
                         .padding(.vertical, 4).tag(item).help(index < 9 ? item + " (⌘\(index + 1))" : item)
@@ -150,15 +157,15 @@ struct SettingsView: View {
                     }.padding(10).contentShape(Rectangle())
                 }.menuStyle(.borderlessButton).menuIndicator(.hidden).padding(6)
                     .accessibilityLabel("switch profile").accessibilityValue(store.profile.name)
-            }.navigationSplitViewColumnWidth(min: 188, ideal: 208, max: 240)
+            }.frame(width: 208)
                 .background {
                     if reduceTransparency {
                         Color(nsColor: .windowBackgroundColor)
                     } else {
-                        SettingsSidebarMaterial().ignoresSafeArea()
+                        SettingsSidebarMaterial().ignoresSafeArea(.container, edges: [.top, .bottom])
                     }
                 }
-        } detail: {
+            Divider().ignoresSafeArea(.container, edges: [.top, .bottom])
             VStack(alignment: .leading, spacing: 0) {
                 if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     ScrollView {
@@ -205,7 +212,12 @@ struct SettingsView: View {
                             case "sync": ICloudSyncSettingsView(store: store)
                             case "general": general
                             case "appearance": appearanceSettings
+                            case "sidebar": sidebarSettings
                             case "search": search
+                            case "intelligence":
+                                AISettingsView(
+                                    store: store, account: store.application.chatGPTAccount,
+                                    claude: store.application.claudeAccount)
                             case "profiles": profiles
                             case "websites": websites
                             case "privacy": privacy
@@ -236,69 +248,90 @@ struct SettingsView: View {
                             }
                     }.id(section)
                 }
-            }.background(Color(nsColor: .windowBackgroundColor))
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .windowBackgroundColor).ignoresSafeArea(.container, edges: .top))
                 .background(
                     SettingsTitlebarState(
-                        title: headingPassed ? (query.isEmpty ? section : "search results") : "settings",
+                        title: headingPassed
+                            ? (query.isEmpty ? section : "search results") : "settings",
                         promoted: headingPassed))
-        }.navigationSplitViewStyle(.balanced)
-            .onChange(of: section) { _, _ in headingPassed = false }
-            .onChange(of: query) { _, _ in headingPassed = false }
-            .onChange(of: websiteSearchFocused) { _, focused in
-                if focused {
+        }
+        .onChange(of: section) { _, _ in headingPassed = false }
+        .onChange(of: query) { _, _ in headingPassed = false }
+        .onChange(of: websiteSearchFocused) { _, focused in
+            if focused {
+                sidebarFocused = false
+                searchFocused = false
+            }
+        }
+        .onChange(of: store.selectedProfileID) { _, _ in
+            websiteSearch = ""
+            expandedWebsites.removeAll()
+        }
+        .background(NativeWindowAppearance(scheme: systemAppearance.colorScheme(for: appearance)))
+        .preferredColorScheme(systemAppearance.colorScheme(for: appearance))
+        .onAppear {
+            city = store.preferences.weatherCity
+            searchFocused = true
+        }.onDisappear { store.persistSoon() }
+        .background(
+            SettingsKeyboardAnchor { shortcut in
+                switch shortcut {
+                case .search:
                     sidebarFocused = false
-                    searchFocused = false
-                }
-            }
-            .onChange(of: store.selectedProfileID) { _, _ in
-                websiteSearch = ""
-                expandedWebsites.removeAll()
-            }
-            .background(NativeWindowAppearance(scheme: systemAppearance.colorScheme(for: appearance)))
-            .preferredColorScheme(systemAppearance.colorScheme(for: appearance))
-            .onAppear {
-                city = store.preferences.weatherCity
-                searchFocused = true
-            }.onDisappear { store.persistSoon() }
-            .background(
-                SettingsKeyboardAnchor { shortcut in
-                    switch shortcut {
-                    case .search:
-                        sidebarFocused = false
-                        if section == "websites", query.isEmpty {
-                            searchFocused = false
-                            websiteSearchFocused = true
-                        } else {
-                            websiteSearchFocused = false
-                            searchFocused = true
-                        }
-                    case .section(let section): chooseSection(section)
+                    if section == "websites", query.isEmpty {
+                        searchFocused = false
+                        websiteSearchFocused = true
+                    } else {
+                        websiteSearchFocused = false
+                        searchFocused = true
                     }
+                case .section(let section): chooseSection(section)
                 }
+            }
+        )
+        .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
+            if let editing { ProfileEditor(store: store, profileID: editing) }
+        }
+        .sheet(isPresented: $importVisible) { ProfileImportView(store: store) }
+        .sheet(isPresented: $startPageCustomizationVisible) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("start page · " + store.profile.name).font(.system(size: 13, weight: .medium))
+                    Spacer()
+                    Button("done") { startPageCustomizationVisible = false }.keyboardShortcut(.defaultAction)
+                }.padding(16)
+                StartPage(store: store, editing: true).frame(width: 760, height: 560)
+            }
+        }
+        .confirmationDialog(
+            "delete browsing-time data?", isPresented: $confirmTrackingDeletion, titleVisibility: .visible
+        ) {
+            Button("delete browsing-time data", role: .destructive) {
+                store.application.resources.deleteTrackingData()
+            }
+            Button("cancel", role: .cancel) {}
+        } message: {
+            Text("This deletes recorded browsing time for every profile on this Mac. It cannot be undone.")
+        }
+        .confirmationDialog(
+            "remove \(extensionDeletion?.name ?? "extension")?",
+            isPresented: Binding(get: { extensionDeletion != nil }, set: { if !$0 { extensionDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("remove extension", role: .destructive) {
+                guard let record = extensionDeletion, let id = extensionDeletionProfileID,
+                    store.profiles.contains(where: { $0.id == id })
+                else { return }
+                store.runtime(for: id).extensions.remove(record)
+                extensionDeletion = nil
+            }
+            Button("cancel", role: .cancel) { extensionDeletion = nil }
+        } message: {
+            Text(
+                "This removes the extension and its saved data from \(extensionDeletionProfileName). You can disable it to keep its data."
             )
-            .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
-                if let editing { ProfileEditor(store: store, profileID: editing) }
-            }
-            .sheet(isPresented: $importVisible) { ProfileImportView(store: store) }
-            .confirmationDialog("delete browsing-time data?", isPresented: $confirmTrackingDeletion, titleVisibility: .visible) {
-                Button("delete browsing-time data", role: .destructive) { store.application.resources.deleteTrackingData() }
-                Button("cancel", role: .cancel) {}
-            } message: {
-                Text("This deletes recorded browsing time for every profile on this Mac. It cannot be undone.")
-            }
-            .confirmationDialog("remove \(extensionDeletion?.name ?? "extension")?",
-                isPresented: Binding(get: { extensionDeletion != nil }, set: { if !$0 { extensionDeletion = nil } }),
-                titleVisibility: .visible) {
-                Button("remove extension", role: .destructive) {
-                    guard let record = extensionDeletion, let id = extensionDeletionProfileID,
-                          store.profiles.contains(where: { $0.id == id }) else { return }
-                    store.runtime(for: id).extensions.remove(record)
-                    extensionDeletion = nil
-                }
-                Button("cancel", role: .cancel) { extensionDeletion = nil }
-            } message: {
-                Text("This removes the extension and its saved data from \(extensionDeletionProfileName). You can disable it to keep its data.")
-            }
+        }
     }
     private var savedWebsiteOrigins: [String] {
         Array((store.profile.siteSettings ?? [:]).keys).sorted()
@@ -308,8 +341,14 @@ struct SettingsView: View {
     }
     private var sectionHeading: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(query.isEmpty ? section : "search results").font(.system(size: 21, weight: .semibold))
-                .background(SettingsHeadingObserver { headingPassed = $0 })
+            HStack(alignment: .firstTextBaseline) {
+                Text(query.isEmpty ? section : "search results")
+                    .font(.system(size: 21, weight: .semibold))
+                Spacer()
+                if query.isEmpty && ["general", "search", "intelligence", "advanced", "sync"].contains(section) {
+                    Text("all profiles").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            }.background(SettingsHeadingObserver { headingPassed = $0 })
             Text(query.isEmpty ? subtitle : "find a setting by name or what it does").font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 10).padding(.bottom, 8)
@@ -358,6 +397,13 @@ struct SettingsView: View {
                     "sleeping reloads a page when you return. forms, media, frames, private tabs and active downloads stay awake."
                 ).font(.caption).foregroundStyle(.secondary)
             }
+            Section("start page · this profile") {
+                Button("customize start page…") {
+                    startPageCustomizationVisible = true
+                }.id("start-page")
+                Text("use edit on the start page to add, arrange and resize widgets, or choose a background.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("updates") {
                 Toggle("check for updates automatically", isOn: $updates.automaticallyChecksForUpdates).id(
                     "automatic-update-checks")
@@ -366,24 +412,6 @@ struct SettingsView: View {
                 Text("checks every six hours. available updates appear at the bottom of the window.")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("check for updates now") { updates.checkForUpdates() }.disabled(!updates.canCheckForUpdates)
-            }
-            Section("power & time") {
-                Toggle("power saver", isOn: optional(\.powerSaver, fallback: false)).id("power-saver").onChange(
-                    of: store.preferences.powerSaver
-                ) { _, _ in store.application.resources.refreshBattery() }
-                Picker("enable on battery below", selection: optional(\.powerSaverThreshold, fallback: 0)) {
-                    Text("never").tag(0)
-                    ForEach([10, 20, 30, 50], id: \.self) { Text("\($0)%").tag($0) }
-                }.onChange(of: store.preferences.powerSaverThreshold) { _, _ in
-                    store.application.resources.refreshBattery()
-                }
-                Text("reduces background activity and sleeps eligible idle tabs after five minutes.").font(.caption)
-                    .foregroundStyle(.secondary)
-                Toggle("save local browsing time", isOn: optional(\.tracksScreenTime, fallback: false)).id(
-                    "browsing-time")
-                Text("records focused-page and playing-media time by site, on this Mac. private browsing is excluded.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Button("delete browsing-time data…", role: .destructive) { confirmTrackingDeletion = true }
             }
             Section("downloads") {
                 Picker("remove cached transfers after", selection: optional(\.downloadCacheDays, fallback: 7)) {
@@ -417,7 +445,10 @@ struct SettingsView: View {
             }
             Section("everyday browsing") {
                 Button("show welcome to loaf…") { store.application.onboardingVisible = true }
-                Toggle("warn before closing tabs in other profiles", isOn: optional(\.warnBeforeClosingOtherProfiles, fallback: true)).id("other-profile-close-warning")
+                Toggle(
+                    "warn before closing tabs in other profiles",
+                    isOn: optional(\.warnBeforeClosingOtherProfiles, fallback: true)
+                ).id("other-profile-close-warning")
                 Toggle("warn before quitting", isOn: optional(\.warnBeforeQuitting, fallback: false)).id("quit-warning")
                 Toggle("show link preview on hover", isOn: optional(\.showLinkPreview, fallback: true))
                     .id("link-preview")
@@ -433,7 +464,11 @@ struct SettingsView: View {
                     }
                 }.id("default-browser")
             }
-            Section("weather") {
+        }
+    }
+    private var sidebarSettings: some View {
+        Group {
+            Section("sidebar · this profile") {
                 Toggle(
                     "show weather in sidebar",
                     isOn: Binding(
@@ -443,7 +478,8 @@ struct SettingsView: View {
                                 $0.personalization = $0.personalization ?? Personalization()
                                 $0.personalization?.sidebarWeather = value
                             }
-                        }))
+                        })
+                ).id("sidebar-weather")
                 Toggle(
                     "compact weather widget",
                     isOn: Binding(
@@ -454,6 +490,8 @@ struct SettingsView: View {
                                 $0.personalization?.compactSidebarWeather = value
                             }
                         }))
+            }
+            Section("weather · all profiles") {
                 Toggle(
                     "use current location",
                     isOn: Binding(
@@ -533,7 +571,7 @@ struct SettingsView: View {
                 )
                 .id("profile-color")
             }
-            Section("window") {
+            Section("window · all profiles") {
                 Picker("theme", selection: $appearance) {
                     Text("system").tag("system")
                     Text("light").tag("light")
@@ -559,7 +597,7 @@ struct SettingsView: View {
                             option: .pageMargins, selection: $appearanceDemo, enabled: store.usesSidebarOnlyChrome)
                     ).id("page-margins")
             }
-            Section("page transitions") {
+            Section("page transitions · all profiles") {
                 Toggle("tint wonderbar with profile color", isOn: optional(\.tintWonderbar, fallback: false)).modifier(
                     AppearancePreviewHover(option: .wonderbarTint, selection: $appearanceDemo)
                 ).id("tint-wonderbar")
@@ -624,7 +662,8 @@ struct SettingsView: View {
                 ForEach(
                     SearchRedirect.availableProviders.filter {
                         ($0 != .appleIntelligence || AppleIntelligence.visibleProviders.contains(.onDevice))
-                            && (store.preferences.aiFeaturesEnabled != false || ![.chatgpt, .appleIntelligence, .perplexity, .googleAIOverview].contains($0))
+                            && (store.preferences.aiFeaturesEnabled != false
+                                || ![.chatgpt, .claude, .appleIntelligence, .perplexity, .googleAIOverview].contains($0))
                     }, id: \.self
                 ) {
                     Text(
@@ -653,49 +692,14 @@ struct SettingsView: View {
                 }
             }
             if store.preferences.alternateSearch?.provider == .chatgpt {
-                Text("this shortcut uses ChatGPT, regardless of the answer provider below.").font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("this shortcut uses ChatGPT, regardless of the answer provider in intelligence settings.").font(
+                    .caption
+                )
+                .foregroundStyle(.secondary)
             }
             Text(
                 "the shortcut searches your wonderbar text with this provider. return keeps its usual behavior. queries are sent only when you submit."
             ).font(.caption).foregroundStyle(.secondary)
-        }
-        Section("answers in loaf") {
-            Toggle(
-                "AI features",
-                isOn: Binding(
-                    get: { store.preferences.aiFeaturesEnabled != false },
-                    set: { store.application.setAIFeaturesEnabled($0) })
-            ).id("ai-features")
-            Picker("answer provider", selection: optional(\.aiProvider, fallback: .chatgpt)) {
-                ForEach(AppleIntelligence.visibleProviders, id: \.self) { Text($0.title).tag($0) }
-            }
-            .settingDisabled(store.preferences.aiFeaturesEnabled == false)
-            if let reason = AppleIntelligence.unavailableReason(for: store.preferences.aiProvider ?? .chatgpt) {
-                Text(reason).font(.caption).foregroundStyle(.secondary)
-            }
-            Text(
-                "this provider answers questions inside loaf. the alternate search shortcut uses its own provider above. Apple Intelligence retrieves web sources and summarizes them on this Mac. ChatGPT searches through OpenAI. Queries are sent only when submitted."
-            ).font(.caption).foregroundStyle(.secondary)
-        }
-        if store.preferences.aiFeaturesEnabled != false {
-            Section("saved chats") {
-                Toggle("sync chat transcripts with iCloud", isOn: optional(\.syncSideChats, fallback: false))
-                Text("Chats are encrypted on this Mac with a Keychain key. Sync requires iCloud sync and iCloud Keychain. Image attachments stay on this Mac. Private chats are never saved.")
-                    .font(.caption).foregroundStyle(.secondary)
-                if store.preferences.syncSideChats == true && !store.application.cloudSync.enabled {
-                    Text("enable iCloud sync to sync chats").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-        }
-        if store.preferences.aiFeaturesEnabled != false
-            && (store.preferences.aiProvider == nil || store.preferences.aiProvider == .chatgpt
-                || store.preferences.alternateSearch?.provider == .chatgpt)
-        {
-            Section("ChatGPT connection") {
-                ChatGPTConnectionView(account: store.application.chatGPTAccount)
-                    .onAppear { store.application.chatGPTAccount.refreshCatalog() }
-            }
         }
     }
     private var profiles: some View {
@@ -772,7 +776,7 @@ struct SettingsView: View {
                 Text("macOS permissions remain authoritative for camera and microphone access.").font(.caption)
                     .foregroundStyle(.secondary)
             }.id("websites")
-            Section("website interaction") {
+            Section("website interaction · all profiles") {
                 Toggle(
                     "ask before downloading from a new site", isOn: optional(\.asksBeforeDownloading, fallback: true)
                 )
@@ -829,12 +833,15 @@ struct SettingsView: View {
                 Text(
                     "\(store.blocker.domainCount.formatted()) AdGuard domains. network blocking doesn’t cover cosmetic placeholders or every video ad."
                 ).font(.caption).foregroundStyle(.secondary)
-                Button(store.blocker.updating ? "updating…" : "update filters") {
+                SettingsActionButton("update filters", busy: store.blocker.updating) {
                     Task {
                         await store.blocker.update()
                         store.applyBlocker()
                     }
-                }.settingDisabled(store.blocker.updating).id("filters")
+                }.id("filters")
+                if let error = store.blocker.error {
+                    Text(error).font(.caption).foregroundStyle(.secondary)
+                }
                 ForEach(store.profile.allowedSites, id: \.self) { host in
                     HStack {
                         Text(host)
@@ -846,7 +853,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            Section("cookies") {
+            Section("cookies · this profile") {
                 Toggle(
                     "allow cookies in this profile",
                     isOn: Binding(
@@ -863,7 +870,7 @@ struct SettingsView: View {
                     store.application.coordinator?.activateBrowser()
                 }.id("cookies")
             }
-            Section("clear data") { ClearingView(store: store).id("clear") }
+            Section("clear data · this profile") { ClearingView(store: store).id("clear") }
 
         }
     }
@@ -915,14 +922,20 @@ struct SettingsView: View {
                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
 
             }
-            Button("load unpacked folder…") { Task { await store.runtime.extensions.install(owner: store) } }
-                .settingDisabled(store.profile.privateMode || store.runtime.extensions.installing).id(
-                    "install-extension")
+            SettingsActionButton(
+                "load unpacked folder…", busy: store.runtime.extensions.installing,
+                disabled: store.profile.privateMode
+            ) {
+                Task { await store.runtime.extensions.install(owner: store) }
+            }.id("install-extension")
             HStack {
                 TextField("Chrome Web Store URL or extension ID", text: $extensionAddress)
-                Button("install…") {
+                SettingsActionButton(
+                    "install…", busy: store.runtime.extensions.installing,
+                    disabled: store.profile.privateMode
+                ) {
                     Task { await store.runtime.extensions.installStore(extensionAddress, owner: store) }
-                }.settingDisabled(store.profile.privateMode || store.runtime.extensions.installing)
+                }
             }
             Text("extensions can request access to sites and browsing data. review access before installing.").font(
                 .caption
@@ -931,6 +944,24 @@ struct SettingsView: View {
     }
     private var advanced: some View {
         Group {
+            Section("power & time") {
+                Toggle("power saver", isOn: optional(\.powerSaver, fallback: false)).id("power-saver").onChange(
+                    of: store.preferences.powerSaver
+                ) { _, _ in store.application.resources.refreshBattery() }
+                Picker("enable on battery below", selection: optional(\.powerSaverThreshold, fallback: 0)) {
+                    Text("never").tag(0)
+                    ForEach([10, 20, 30, 50], id: \.self) { Text("\($0)%").tag($0) }
+                }.onChange(of: store.preferences.powerSaverThreshold) { _, _ in
+                    store.application.resources.refreshBattery()
+                }
+                Text("reduces background activity and sleeps eligible idle tabs after five minutes.").font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("save local browsing time", isOn: optional(\.tracksScreenTime, fallback: false)).id(
+                    "browsing-time")
+                Text("records focused-page and playing-media time by site, on this Mac. private browsing is excluded.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("delete browsing-time data…", role: .destructive) { confirmTrackingDeletion = true }
+            }
             Section("menus") {
                 Toggle("capitalize menu labels", isOn: optional(\.capitalizeMenus, fallback: true))
                     .id("capitalize-menus")
@@ -1238,11 +1269,14 @@ private struct SavedWebsiteSettingsRow: View {
                         confirmReset = true
                     }
                     Spacer()
-                    Button(clearing ? "clearing…" : "clear website data…", role: .destructive) {
+                    SettingsActionButton(
+                        "clear website data…", busy: clearing,
+                        disabled: store.application.busyProfileIDs.contains(store.selectedProfileID), role: .destructive
+                    ) {
                         actionProfileID = store.selectedProfileID
                         actionProfileName = store.profile.name
                         confirmClear = true
-                    }.disabled(clearing || store.application.busyProfileIDs.contains(store.selectedProfileID))
+                    }
                 }
             }
             .padding(.top, 10)
@@ -1265,7 +1299,8 @@ private struct SavedWebsiteSettingsRow: View {
         .confirmationDialog("clear website data?", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("clear data", role: .destructive) {
                 guard let url = URL(string: origin), let profileID = actionProfileID,
-                      store.profiles.contains(where: { $0.id == profileID }) else { return }
+                    store.profiles.contains(where: { $0.id == profileID })
+                else { return }
                 clearing = true
                 Task {
                     await store.clearSite(url, profileID: profileID)

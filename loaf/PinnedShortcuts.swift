@@ -190,7 +190,8 @@ extension BrowserWindowState {
     func pinCurrentPage(_ tab: BrowserTab) {
         guard tab.pinned, !tab.isDisposed, tab.page == .web, let address = tab.saved.address,
             let url = URL(string: address), ["http", "https"].contains(url.scheme?.lowercased()),
-            url.user == nil, url.password == nil else { return }
+            url.user == nil, url.password == nil
+        else { return }
         tab.pinnedAddress = address
         tabChanged(tab)
         application.persistSoon()

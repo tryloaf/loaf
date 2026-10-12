@@ -104,7 +104,8 @@ extension BrowserWindowState {
     func profileSwipeColor(_ color: (Profile) -> Color) -> Color {
         let current = NSColor(color(profile))
         guard let target = profileSwipeTarget else { return Color(nsColor: current) }
-        return Color(nsColor: current.blended(withFraction: profileSwipeProgress, of: NSColor(color(target))) ?? current)
+        return Color(
+            nsColor: current.blended(withFraction: profileSwipeProgress, of: NSColor(color(target))) ?? current)
     }
     var profileSwipeTransparency: Double {
         let current = ProfileTransparency.bounded(profile.personalization?.windowTransparency ?? 0)
@@ -114,8 +115,10 @@ extension BrowserWindowState {
     }
     func profileSwipeSurface(dark: Bool) -> Color {
         profileSwipeColor { profile in
-            profile.privateMode ? PrivateChrome.base : ProfileColor.surfaceColor(
-                profileTint(profile), strength: profile.personalization?.tintStrength ?? 0.06, dark: dark)
+            profile.privateMode
+                ? PrivateChrome.base
+                : ProfileColor.surfaceColor(
+                    profileTint(profile), strength: profile.personalization?.tintStrength ?? 0.06, dark: dark)
         }
     }
 }

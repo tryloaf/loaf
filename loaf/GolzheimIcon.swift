@@ -8,6 +8,7 @@ enum LoafIcon: String, CaseIterable {
     case up = "↑"
     case stop = "⏹"
     case chat = "💬"
+    case intelligence = "🪄"
     case document = "📜"
     case quote = "❞"
     case camera = "📷"
@@ -82,6 +83,7 @@ enum LoafIcon: String, CaseIterable {
         case .up: "arrow.up"
         case .stop: "stop.fill"
         case .chat: "bubble.right"
+        case .intelligence: "wand.and.sparkles"
         case .document: "doc.text"
         case .quote: "text.quote"
         case .camera: "camera"
@@ -169,19 +171,22 @@ extension BrowserPage {
 
 @MainActor enum Golzheim {
     static let name = "GolzheimSansVAR-Regular"
-    static let bundledFontURL = Bundle.main.url(forResource: "GolzheimSansVAR", withExtension: "ttf")
+    static let bundledFontURL =
+        Bundle.main.url(forResource: "GolzheimSansVAR", withExtension: "ttf")
         ?? Bundle.main.url(forResource: "GolzheimSansVAR", withExtension: "ttf", subdirectory: "Fonts")
     private static let bundledFont: CTFont? = bundledFontURL.flatMap { loadFont(at: $0) }
     static let font: NSFont? = bundledFont.map { $0 as NSFont }
     static func loadFont(at url: URL) -> CTFont? {
 
         guard let provider = CGDataProvider(url: url as CFURL), let graphicsFont = CGFont(provider),
-              (graphicsFont.postScriptName as String?)?.hasPrefix("GolzheimSansVAR-") == true else { return nil }
+            (graphicsFont.postScriptName as String?)?.hasPrefix("GolzheimSansVAR-") == true
+        else { return nil }
         CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
-        let descriptor = CTFontDescriptorCreateWithAttributes([
-            kCTFontURLAttribute: url,
-            kCTFontVariationAttribute: [NSNumber(value: 0x77676874): 400],
-        ] as CFDictionary)
+        let descriptor = CTFontDescriptorCreateWithAttributes(
+            [
+                kCTFontURLAttribute: url,
+                kCTFontVariationAttribute: [NSNumber(value: 0x77676874): 400],
+            ] as CFDictionary)
         return CTFontCreateWithGraphicsFont(graphicsFont, 20, nil, descriptor)
     }
     static var available: Bool { font != nil }
@@ -266,7 +271,9 @@ extension BrowserPage {
             cache[key] = image
             return image
         }
-        let arrows = [LoafIcon.back, .forward, .up, .external, .expand, .collapse, .reload].contains { $0.rawValue == glyph }
+        let arrows = [LoafIcon.back, .forward, .up, .external, .expand, .collapse, .reload].contains {
+            $0.rawValue == glyph
+        }
         guard let face = iconFont(size: size, weight: weight, arrows: arrows) else { return nil }
         let chars = Array(glyph.utf16)
         var glyphs = [CGGlyph](repeating: 0, count: chars.count)
@@ -343,13 +350,18 @@ extension BrowserPage {
         let info = glyph == LoafIcon.info.rawValue
         guard let face = iconFont(size: size * (info ? 0.85 : 0.7), weight: weight, arrows: !info) else { return nil }
         let text = info ? "i" : LoafIcon.external.rawValue
-        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text,
-            attributes: [NSAttributedString.Key(kCTFontAttributeName as String): face]))
+        let line = CTLineCreateWithAttributedString(
+            NSAttributedString(
+                string: text,
+                attributes: [NSAttributedString.Key(kCTFontAttributeName as String): face]))
         guard let runs = CTLineGetGlyphRuns(line) as? [CTRun], let run = runs.first,
-              CTRunGetGlyphCount(run) == 1 else { return nil }
+            CTRunGetGlyphCount(run) == 1
+        else { return nil }
         var shaped = CGGlyph()
         CTRunGetGlyphs(run, CFRange(location: 0, length: 1), &shaped)
-        guard let path = CTFontCreatePathForGlyph(face, shaped, nil), !path.boundingBoxOfPath.isEmpty else { return nil }
+        guard let path = CTFontCreatePathForGlyph(face, shaped, nil), !path.boundingBoxOfPath.isEmpty else {
+            return nil
+        }
         let bounds = path.boundingBoxOfPath
         let result = NSImage(size: NSSize(width: size + 4, height: size + 4), flipped: false) { rect in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
@@ -394,7 +406,8 @@ struct GolzheimIcon: View {
         Group {
             if let image = Golzheim.image(
                 icon.rawValue, size: size, weight: weight, filled: filled,
-                fitInk: true)
+                fitInk: [.plus, .tray, .disclosureDown, .disclosureUp, .back, .forward, .up, .reload].contains(icon)
+                    || (icon == .external && size <= 12))
             {
                 Image(nsImage: image).renderingMode(.template).resizable().scaledToFit()
             } else {
@@ -435,11 +448,12 @@ struct IconButton: View {
     @Environment(\.isEnabled) private var enabled
     var icon: LoafIcon
     var label: String
+    var size: CGFloat = 16
     var action: () -> Void
     @State private var hovered = false
     var body: some View {
         Button(action: action) {
-            GolzheimIcon(icon: icon, size: 16, weight: 220)
+            GolzheimIcon(icon: icon, size: size, weight: 220)
                 .frame(width: 26, height: 26)
                 .background(
                     hovered && enabled ? Color.primary.opacity(0.055) : .clear, in: RoundedRectangle(cornerRadius: 6)

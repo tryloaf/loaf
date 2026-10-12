@@ -11,10 +11,11 @@ struct OnboardingView: View {
     @State private var previewDark = false
     @State private var icon = "🌱"
     @State private var importVisible = false
+    @State private var appearanceVisible = false
     @State private var appearanceDemo: AppearancePreviewOption?
     init(store: BrowserStore, initialStep: Int = 0) {
         self.store = store
-        _step = State(initialValue: min(4, max(0, initialStep)))
+        _step = State(initialValue: min(2, max(0, initialStep)))
     }
     private func personalized<Value>(_ key: WritableKeyPath<Personalization, Value>) -> Binding<Value> {
         Binding(
@@ -170,36 +171,38 @@ struct OnboardingView: View {
                 Toggle("restore tabs on launch", isOn: preference(\.restoreSession, fallback: true))
             }
             Divider()
-            option("AI features") {
-                Toggle(
-                    "AI features",
-                    isOn: Binding(
-                        get: { store.preferences.aiFeaturesEnabled != false },
-                        set: { store.application.setAIFeaturesEnabled($0) }))
+            DisclosureGroup("intelligence options") {
+                option("intelligence features") {
+                    Toggle(
+                        "intelligence features",
+                        isOn: Binding(
+                            get: { store.preferences.aiFeaturesEnabled != false },
+                            set: { store.application.setAIFeaturesEnabled($0) }))
+                }
+                option("answer provider") {
+                    Picker(
+                        "answer provider",
+                        selection: Binding<AIProvider?>(
+                            get: { store.preferences.aiProvider },
+                            set: {
+                                store.preferences.aiProvider = $0
+                                store.persistSoon()
+                            })
+                    ) {
+                        Text("none").tag(Optional<AIProvider>.none)
+                        ForEach(AppleIntelligence.visibleProviders, id: \.self) { Text($0.title).tag(Optional($0)) }
+                    }.frame(width: 200)
+                }
+                .disabled(store.preferences.aiFeaturesEnabled == false)
+                Text(
+                    store.preferences.aiFeaturesEnabled == false
+                        ? "intelligence features are off. your regular search engine still works."
+                        : store.preferences.aiProvider == nil
+                            ? "no answer provider selected. alternate search will stay off."
+                            : AppleIntelligence.unavailableReason(for: store.preferences.aiProvider ?? .chatgpt)
+                                ?? "intelligence is optional and only runs when you ask. connect ChatGPT or Claude later in intelligence settings."
+                ).font(.system(size: 11)).foregroundStyle(ink.opacity(0.6)).fixedSize(horizontal: false, vertical: true)
             }
-            option("AI provider") {
-                Picker(
-                    "AI provider",
-                    selection: Binding<AIProvider?>(
-                        get: { store.preferences.aiProvider },
-                        set: {
-                            store.preferences.aiProvider = $0
-                            store.persistSoon()
-                        })
-                ) {
-                    Text("none").tag(Optional<AIProvider>.none)
-                    ForEach(AppleIntelligence.visibleProviders, id: \.self) { Text($0.title).tag(Optional($0)) }
-                }.frame(width: 200)
-            }
-            .disabled(store.preferences.aiFeaturesEnabled == false)
-            Text(
-                store.preferences.aiFeaturesEnabled == false
-                    ? "AI features are off. your regular search engine still works."
-                    : store.preferences.aiProvider == nil
-                        ? "no AI provider selected. alternate search will stay off."
-                        : AppleIntelligence.unavailableReason(for: store.preferences.aiProvider ?? .chatgpt)
-                            ?? "AI is optional and only runs when you ask. connect ChatGPT later in search settings."
-            ).font(.system(size: 11)).foregroundStyle(ink.opacity(0.6)).fixedSize(horizontal: false, vertical: true)
         }.font(.system(size: 13)).toggleStyle(.switch).controlSize(.small).padding(22).background(
             ink.opacity(0.045), in: RoundedRectangle(cornerRadius: 16))
     }
@@ -217,46 +220,33 @@ struct OnboardingView: View {
                         "loaf")
                     Spacer()
                     HStack(spacing: 6) {
-                        ForEach(0..<5) { index in
+                        ForEach(0..<3) { index in
                             Capsule().fill(ink.opacity(index == step ? 0.7 : 0.15)).frame(
                                 width: index == step ? 24 : 6, height: 6)
                         }
-                    }.accessibilityElement(children: .ignore).accessibilityLabel("step \(step + 1) of 5")
+                    }.accessibilityElement(children: .ignore).accessibilityLabel("step \(step + 1) of 3")
                 }.padding(.horizontal, 38).padding(.top, 60).padding(.bottom, 16)
                 FocusRingSafeScrollView {
-                    VStack(alignment: .leading, spacing: step == 2 ? 20 : 24) {
-                        if step == 0 {
-                            Image("loaf-lockup").resizable().scaledToFit().frame(width: 240, height: 88)
-                                .accessibilityHidden(true).padding(.bottom, 8)
-                        }
+                    VStack(alignment: .leading, spacing: 24) {
                         VStack(alignment: .leading, spacing: 14) {
                             Text(
                                 [
-                                    "welcome to loaf", "create your profile", "choose your appearance",
-                                    "search and privacy", "ready to browse",
+                                    "create your profile", "bring your browsing", "search and privacy",
                                 ][step]
                             )
-                            .font(headerFont(step == 2 || step == 3 ? 26 : 32)).tracking(-0.5).fixedSize(
+                            .font(headerFont(step == 2 ? 26 : 32)).tracking(-0.5).fixedSize(
                                 horizontal: false, vertical: true)
                             Text(
                                 [
-                                    "set up your profile, appearance, and browsing preferences.",
                                     "profiles keep bookmarks, history, and website data separate.",
-                                    "preview your color in light and dark mode.",
+                                    "bring over your bookmarks and tabs, or start fresh.",
                                     "choose how you search and what loaf remembers. you can change these later.",
-                                    "use these shortcuts to get around.",
                                 ][step]
                             )
                             .font(.system(size: 14)).foregroundStyle(ink.opacity(0.65)).lineSpacing(3).fixedSize(
                                 horizontal: false, vertical: true)
                         }
                         if step == 0 {
-                            HStack(alignment: .top, spacing: 10) {
-                                GolzheimIcon(icon: .lock, size: 15)
-                                Text("passwords in Keychain. browsing data on your Mac.").font(.system(size: 12))
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }.foregroundStyle(ink.opacity(0.6)).padding(.top, 6)
-                        } else if step == 1 {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text("profile name").font(.system(size: 12, weight: .medium)).foregroundStyle(
                                     ink.opacity(0.65))
@@ -269,28 +259,27 @@ struct OnboardingView: View {
                                 Divider()
                                 Text("profile icon").font(.system(size: 12, weight: .medium)).foregroundStyle(
                                     ink.opacity(0.65))
-                                GolzheimPicker(selection: $icon, gridHeight: 128)
+                                GolzheimPicker(selection: $icon, gridHeight: 96)
                             }.padding(22).background(ink.opacity(0.045), in: RoundedRectangle(cornerRadius: 16))
                                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(ink.opacity(0.08)))
-                        } else if step == 2 {
-                            themeSetup(stacked: geometry.size.width < 820)
-                        } else if step == 3 {
-                            browsingSetup
-                        } else {
+                            HStack(spacing: 10) {
+                                Button("customize appearance…") { appearanceVisible = true }.controlSize(.large)
+                                Text("optional").font(.system(size: 12)).foregroundStyle(ink.opacity(0.6))
+                            }
+                        } else if step == 1 {
+                            Button("import from another browser…") { importVisible = true }
+                                .controlSize(.large)
+                            Text("choose installed browsers, profiles and Arc spaces. importing is optional.")
+                                .font(.system(size: 12)).foregroundStyle(ink.opacity(0.6))
                             VStack(spacing: 18) {
                                 shortcut("⌘L", "open the wonderbar")
                                 shortcut("⇧↵", "open a result in a new tab")
                                 shortcut("⌘S", "show or hide the sidebar")
                             }.padding(22).background(ink.opacity(0.045), in: RoundedRectangle(cornerRadius: 16))
-                                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(ink.opacity(0.08)))
-                            Button("import from another browser…") { importVisible = true }
-                                .controlSize(.large)
-                            Text("choose installed browsers, profiles and Arc spaces. importing is optional.")
-                                .font(.system(size: 12)).foregroundStyle(ink.opacity(0.6))
-                            Text("settings are available from the loaf menu.").font(.system(size: 12)).foregroundStyle(
-                                ink.opacity(0.6))
+                        } else {
+                            browsingSetup
                         }
-                    }.frame(maxWidth: step == 2 ? 840 : 460, alignment: .leading).frame(
+                    }.frame(maxWidth: 460, alignment: .leading).frame(
                         maxWidth: .infinity, minHeight: max(0, geometry.size.height - 224), alignment: .center
                     )
                     .padding(.horizontal, 40).padding(.vertical, 12).id(step).transition(
@@ -299,11 +288,11 @@ struct OnboardingView: View {
                 HStack {
                     if step > 0 { Button("back") { move(-1) }.buttonStyle(.plain).foregroundStyle(ink.opacity(0.6)) }
                     Spacer()
-                    Button(step == 4 ? "start browsing" : "continue") { advance() }
+                    Button(step == 2 ? "start browsing" : "continue") { advance() }
                         .buttonStyle(OnboardingContinueStyle(ink: ink, paper: paper)).keyboardShortcut(.defaultAction)
                         .disabled(
-                            (step == 1 && profileNameIssue != nil)
-                                || (step == 3 && store.preferences.searchEngine == .custom
+                            (step == 0 && profileNameIssue != nil)
+                                || (step == 2 && store.preferences.searchEngine == .custom
                                     && store.searchAddress("loaf") == nil)
                         )
                 }.frame(maxWidth: 460).padding(.horizontal, 40).frame(height: 90).frame(maxWidth: .infinity)
@@ -325,9 +314,19 @@ struct OnboardingView: View {
             name = store.profile.name
             icon = store.profile.emoji
         }.sheet(isPresented: $importVisible) { ProfileImportView(store: store) }
+        .sheet(isPresented: $appearanceVisible) {
+            VStack(spacing: 16) {
+                HStack {
+                    Text("appearance").font(.system(size: 18, weight: .medium))
+                    Spacer()
+                    Button("done") { appearanceVisible = false }.keyboardShortcut(.defaultAction)
+                }
+                ScrollView { themeSetup(stacked: false) }
+            }.padding(24).frame(width: 780, height: 500).foregroundStyle(ink).background(paper)
+        }
     }
     private func advance() {
-        if step == 1 {
+        if step == 0 {
             guard profileNameIssue == nil else { return }
             let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
             store.updateCurrent {
@@ -335,7 +334,7 @@ struct OnboardingView: View {
                 $0.emoji = icon
             }
         }
-        if step < 4 {
+        if step < 2 {
             move(1)
         } else {
             store.preferences.configureOnboardingAlternateSearch()

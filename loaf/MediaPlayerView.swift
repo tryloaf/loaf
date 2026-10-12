@@ -110,30 +110,32 @@ struct MediaMiniPlayer: View {
                     }
                 }
                 .transition(
-                    reduceMotion ? .identity : .asymmetric(
-                        insertion: .move(edge: .bottom), removal: .identity
-                    )
+                    reduceMotion
+                        ? .identity
+                        : .asymmetric(
+                            insertion: .move(edge: .bottom), removal: .identity
+                        )
                 )
             }
         }
-            .padding(.horizontal, 8).padding(.vertical, expanded ? 8 : 5)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.06)))
-            .shadow(color: .black.opacity(0.04), radius: 3, y: 1)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: volumeOpen)
-            .onHover { inside in
-                hovered = inside
-                if !inside { compactHoverSuppressed = false }
+        .padding(.horizontal, 8).padding(.vertical, expanded ? 8 : 5)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.06)))
+        .shadow(color: .black.opacity(0.04), radius: 3, y: 1)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: volumeOpen)
+        .onHover { inside in
+            hovered = inside
+            if !inside { compactHoverSuppressed = false }
+        }
+        .contextMenu {
+            Button(expanded ? "compact player" : "expanded player") {
+                toggleExpanded()
             }
-            .contextMenu {
-                Button(expanded ? "compact player" : "expanded player") {
-                    toggleExpanded()
-                }
-                Button(source.muted ? "unmute" : "mute") { tab.control(source, action: "mute") }
-                if source.supportsAirPlay { Button("airplay…") { tab.control(source, action: "airplay") } }
-                Button("hide miniplayer") { tab.dismissedMedia.insert(source.id) }
-            }
+            Button(source.muted ? "unmute" : "mute") { tab.control(source, action: "mute") }
+            if source.supportsAirPlay { Button("airplay…") { tab.control(source, action: "airplay") } }
+            Button("hide miniplayer") { tab.dismissedMedia.insert(source.id) }
+        }
     }
     private func toggleExpanded() {
         expansionGeneration += 1

@@ -10,8 +10,10 @@ struct ChatComposerSurface<Content: View>: View {
     var body: some View {
         content
             .padding(12)
-            .background(scheme == .dark ? Color(white: 0.145) : .white,
-                        in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .background(
+                scheme == .dark ? Color(white: 0.145) : .white,
+                in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+            )
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .strokeBorder(Color.primary.opacity(focused ? 0.22 : 0.09))
@@ -31,8 +33,10 @@ struct ChatControlStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .background(Color.primary.opacity(selected ? (hovered ? 0.10 : 0.065) : enabled && hovered ? 0.055 : 0),
-                        in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .background(
+                Color.primary.opacity(selected ? (hovered ? 0.10 : 0.065) : enabled && hovered ? 0.055 : 0),
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
             .opacity(!enabled ? 0.4 : configuration.isPressed ? 0.65 : 1)
             .onHover { hovered = $0 }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
@@ -63,8 +67,10 @@ private struct ChatRemoveButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(hovered ? Color.white : Color.red)
-            .background(Color.red.opacity(hovered ? 0.9 : 0.10), in: Circle())
-            .contentShape(Circle())
+            .background(
+                Color.red.opacity(hovered ? 0.9 : 0.10), in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
             .opacity(!enabled ? 0.4 : configuration.isPressed ? 0.7 : 1)
             .onHover { hovered = $0 }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
@@ -95,7 +101,7 @@ struct ChatAttachmentRow: View {
             ChatRemoveButton(label: removeLabel, help: removeHelp, action: remove)
                 .disabled(!canRemove)
         }
-        .padding(8)
+        .padding(5)
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -109,16 +115,16 @@ struct ChatAttachmentRow: View {
                 if let thumbnail {
                     Image(nsImage: thumbnail).resizable().scaledToFill()
                 } else {
-                    GolzheimIcon(icon: icon, size: 15, weight: 220).foregroundStyle(.secondary)
+                    GolzheimIcon(icon: icon, size: 13, weight: 220).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Color.primary.opacity(0.045))
                 }
             }
-            .frame(width: 28, height: 28)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .frame(width: 24, height: 24)
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary)
+                Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(.primary)
                     .lineLimit(1).truncationMode(.middle)
                 Text(detail).font(.system(size: 10)).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
@@ -163,10 +169,12 @@ struct ChatSendButton: View {
                     GolzheimIcon(icon: .up, size: 18, weight: 240)
                 }
             }
-                .foregroundStyle(busy || canSend
-                    ? (scheme == .dark ? Color.black : .white) : Color.secondary.opacity(0.65))
-                .frame(width: 32, height: 32)
-                .background(busy || canSend ? Color.primary : Color.primary.opacity(0.06), in: Circle())
+            .foregroundStyle(
+                busy || canSend
+                    ? (scheme == .dark ? Color.black : .white) : Color.secondary.opacity(0.65)
+            )
+            .frame(width: 32, height: 32)
+            .background(busy || canSend ? Color.primary : Color.primary.opacity(0.06), in: Circle())
         }
         .buttonStyle(ChatControlStyle(cornerRadius: 16))
         .disabled(!busy && !canSend)
@@ -177,7 +185,9 @@ struct ChatSendButton: View {
 
 struct ChatModelMenu: View {
     @ObservedObject var account: ChatGPTAccount
+    @ObservedObject var claude: ClaudeAccount
     let provider: AIProvider
+    var modelID: String?
     let changeProvider: (AIProvider) -> Void
 
     var body: some View {
@@ -188,23 +198,56 @@ struct ChatModelMenu: View {
                         changeProvider(.chatgpt)
                         account.selectModel(model.id)
                     } label: {
-                        if provider == .chatgpt && account.selectedModelID == model.id {
-                            Label { Text(model.name) } icon: { GolzheimIcon(icon: .check, size: 11) }
-                        } else { Text(model.name) }
+                        if provider == .chatgpt && (modelID ?? account.selectedModelID) == model.id {
+                            Label {
+                                Text(model.name)
+                            } icon: {
+                                GolzheimIcon(icon: .check, size: 11)
+                            }
+                        } else {
+                            Text(model.name)
+                        }
                     }
                 }
                 Button("refresh models") { account.refreshCatalog() }
             } else {
                 Button("ChatGPT") { changeProvider(.chatgpt) }
             }
+            Divider()
+            if claude.connected {
+                ForEach(claude.models) { model in
+                    Button {
+                        changeProvider(.claude)
+                        claude.selectModel(model.id)
+                    } label: {
+                        if provider == .claude && (modelID ?? claude.selectedModelID) == model.id {
+                            Label {
+                                Text(model.name)
+                            } icon: {
+                                GolzheimIcon(icon: .check, size: 11)
+                            }
+                        } else {
+                            Text(model.name)
+                        }
+                    }
+                }
+                Button("refresh Claude models") { claude.refreshCatalog() }
+            } else {
+                Button("Claude") { changeProvider(.claude) }
+            }
             if provider == .chatgpt, let model = account.selectedModel, !model.reasoningEfforts.isEmpty {
                 Divider()
                 Menu("thinking effort") {
                     Button("automatic") { account.reasoningEffort = nil }
                     ForEach(model.reasoningEfforts, id: \.self) { effort in
-                        Button { account.reasoningEffort = effort } label: {
-                            if account.reasoningEffort == effort { Label(effort, systemImage: "checkmark") }
-                            else { Text(effort) }
+                        Button {
+                            account.reasoningEffort = effort
+                        } label: {
+                            if account.reasoningEffort == effort {
+                                Label(effort, systemImage: "checkmark")
+                            } else {
+                                Text(effort)
+                            }
                         }
                     }
                 }
@@ -215,8 +258,14 @@ struct ChatModelMenu: View {
             }
         } label: {
             HStack(spacing: 5) {
-                Text(provider == .chatgpt ? account.modelName : provider.title)
-                    .lineLimit(1).truncationMode(.middle)
+                Text(
+                    provider == .chatgpt
+                        ? modelID.flatMap { id in account.models.first { $0.id == id }?.name } ?? account.modelName
+                        : provider == .claude
+                            ? modelID.flatMap { id in claude.models.first { $0.id == id }?.name } ?? claude.modelName
+                            : provider.title
+                )
+                .lineLimit(1).truncationMode(.middle)
                 GolzheimIcon(icon: .disclosureDown, size: 10, weight: 220)
             }
             .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -265,7 +314,10 @@ struct ChatDraftEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let view = scroll.documentView as? DraftTextView else { return }
         context.coordinator.parent = self
-        if view.string != text { view.string = text; view.invalidateIntrinsicContentSize() }
+        if view.string != text {
+            view.string = text
+            view.invalidateIntrinsicContentSize()
+        }
         view.placeholder = placeholder
         view.isEditable = enabled
         view.submit = submit
@@ -277,7 +329,8 @@ struct ChatDraftEditor: NSViewRepresentable {
         if focused && enabled && view.window?.firstResponder !== view {
             DispatchQueue.main.async { [weak view, weak coordinator = context.coordinator] in
                 guard let view, let coordinator, coordinator.parent.focused,
-                      coordinator.parent.enabled, view.window != nil else { return }
+                    coordinator.parent.enabled, view.window != nil
+                else { return }
                 view.window?.makeFirstResponder(view)
             }
         }
@@ -292,7 +345,8 @@ struct ChatDraftEditor: NSViewRepresentable {
         override func layout() {
             super.layout()
             guard let view = documentView as? DraftTextView, let container = view.textContainer,
-                  let manager = view.layoutManager, contentView.bounds.width > 0 else { return }
+                let manager = view.layoutManager, contentView.bounds.width > 0
+            else { return }
             let width = contentView.bounds.width
             container.containerSize = .init(width: max(1, width - 4), height: .greatestFiniteMagnitude)
             manager.ensureLayout(for: container)
@@ -316,11 +370,14 @@ struct ChatDraftEditor: NSViewRepresentable {
         }
         func measure(_ text: String, width: CGFloat) -> CGFloat {
             if measurementStorage.string != text {
-                measurementStorage.setAttributedString(NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 14)]))
+                measurementStorage.setAttributedString(
+                    NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 14)]))
             }
             measurementContainer.containerSize = .init(width: max(1, width - 4), height: .greatestFiniteMagnitude)
             measurementManager.ensureLayout(for: measurementContainer)
-            let bottom = max(measurementManager.usedRect(for: measurementContainer).maxY, measurementManager.extraLineFragmentRect.maxY)
+            let bottom = max(
+                measurementManager.usedRect(for: measurementContainer).maxY,
+                measurementManager.extraLineFragmentRect.maxY)
             return max(48, ceil(bottom) + 10)
         }
         func textDidChange(_ notification: Notification) {
@@ -349,17 +406,25 @@ struct ChatDraftEditor: NSViewRepresentable {
         override func keyDown(with event: NSEvent) {
             if (event.keyCode == 36 || event.keyCode == 76), !hasMarkedText() {
                 let modifiers = event.modifierFlags.intersection([.shift, .option, .control, .command])
-                if modifiers.isEmpty { submit?(); return }
-                if modifiers == .shift { insertNewlineIgnoringFieldEditor(nil); return }
+                if modifiers.isEmpty {
+                    submit?()
+                    return
+                }
+                if modifiers == .shift {
+                    insertNewlineIgnoringFieldEditor(nil)
+                    return
+                }
             }
             super.keyDown(with: event)
         }
         override func draw(_ dirtyRect: NSRect) {
             super.draw(dirtyRect)
             if string.isEmpty {
-                (placeholder as NSString).draw(at: .init(x: 2, y: 5), withAttributes: [
-                    .font: font ?? NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.placeholderTextColor
-                ])
+                (placeholder as NSString).draw(
+                    at: .init(x: 2, y: 5),
+                    withAttributes: [
+                        .font: font ?? NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.placeholderTextColor,
+                    ])
             }
         }
     }
@@ -371,19 +436,21 @@ struct ChatTranscriptEdge: View {
         ZStack {
             Rectangle().fill(.ultraThinMaterial)
                 .mask {
-                    LinearGradient(stops: [
-                        .init(color: .clear, location: 0),
-                        .init(color: .black.opacity(0.12), location: 0.25),
-                        .init(color: .black.opacity(0.55), location: 0.65),
-                        .init(color: .black, location: 1)
-                    ], startPoint: .top, endPoint: .bottom)
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0),
+                            .init(color: .black.opacity(0.12), location: 0.25),
+                            .init(color: .black.opacity(0.55), location: 0.65),
+                            .init(color: .black, location: 1),
+                        ], startPoint: .top, endPoint: .bottom)
                 }
-            LinearGradient(stops: [
-                .init(color: surface.opacity(0), location: 0),
-                .init(color: surface.opacity(0.1), location: 0.35),
-                .init(color: surface.opacity(0.7), location: 0.8),
-                .init(color: surface, location: 1)
-            ], startPoint: .top, endPoint: .bottom)
+            LinearGradient(
+                stops: [
+                    .init(color: surface.opacity(0), location: 0),
+                    .init(color: surface.opacity(0.1), location: 0.35),
+                    .init(color: surface.opacity(0.7), location: 0.8),
+                    .init(color: surface, location: 1),
+                ], startPoint: .top, endPoint: .bottom)
         }.allowsHitTesting(false).accessibilityHidden(true)
     }
 }
@@ -408,12 +475,15 @@ struct ChatApprovalActions: View {
         }
     }
     private func action(_ title: String, _ decision: PageReadDecision, prominent: Bool = false) -> some View {
-        Button { decide(decision) } label: {
+        Button {
+            decide(decision)
+        } label: {
             Text(title).font(.system(size: 11, weight: .medium))
                 .padding(.horizontal, 10).frame(height: 28)
                 .foregroundStyle(prominent ? (scheme == .dark ? Color.black : .white) : Color.primary)
-                .background(prominent ? Color.primary : Color.primary.opacity(0.045),
-                            in: RoundedRectangle(cornerRadius: 8))
+                .background(
+                    prominent ? Color.primary : Color.primary.opacity(0.045),
+                    in: RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(ChatControlStyle())
     }
 }

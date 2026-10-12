@@ -18,9 +18,21 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
 
     nonisolated static func isLoafQuestion(_ query: String) -> Bool {
         let text = query.lowercased()
-        return text.contains("owen van vooren")
-            || (text.range(of: #"\bloaf\b"#, options: .regularExpression) != nil
-                && !["bread", "recipe", "bake", "calories"].contains(where: text.contains))
+        if text.contains("tryloaf.app") || text.contains("github.com/tryloaf/loaf") || text.contains("owen van vooren")
+        {
+            return true
+        }
+        guard text.range(of: #"\bloaf\b"#, options: .regularExpression) != nil else { return false }
+        if text.range(
+            of: #"\b(bread|recipe|bake|baking|calories|sourdough|slices?|flour|yeast|bakery|banana|meat)\b"#,
+            options: .regularExpression) != nil
+        {
+            return false
+        }
+        return text.range(of: #"\b(browser|macos|mac|app|webkit|swiftui)\b"#, options: .regularExpression) != nil
+            || text.trimmingCharacters(in: .whitespacesAndNewlines).range(
+                of: #"^(?:loaf[?.!]*|(?:what is|tell me about|who (?:made|created|developed|designed)) loaf[?.!]*)$"#,
+                options: .regularExpression) != nil
     }
 
     nonisolated static func searchQuery(_ query: String, preceding: [String]) -> String {
@@ -29,16 +41,17 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
             text.range(
                 of: #"\b(it|its|that|they|their|them|he|his|she|her)\b"#,
                 options: [.regularExpression, .caseInsensitive]) != nil
-        let subject = followUp ? preceding.suffix(2).joined(separator: " ") : ""
+        let subject = followUp ? preceding.last ?? "" : ""
         let combined = subject.isEmpty ? text : String(subject.suffix(300)) + " " + text
-        if isLoafQuestion(combined) {
+        if isLoafQuestion(text) || (!subject.isEmpty && isLoafQuestion(subject)) {
             return "loaf macOS browser Owen Van Vooren " + text
                 + " (site:tryloaf.app OR site:owen.uno OR site:github.com/tryloaf/loaf)"
         }
         return combined
     }
 
-    static func search(_ query: String, publicSnippetsOnly: Bool = false, reading: (([WebSearchResult]) -> Void)? = nil) async throws -> [WebSearchResult]
+    static func search(_ query: String, publicSnippetsOnly: Bool = false, reading: (([WebSearchResult]) -> Void)? = nil)
+        async throws -> [WebSearchResult]
     {
         let official = !publicSnippetsOnly && isLoafQuestion(query)
         let seeds: [WebSearchResult] =
@@ -58,7 +71,8 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
                     query.range(
                         of: #"\b(api|sdk|swiftui|webkit|javascript|python|typescript|programming|framework|library)\b"#,
                         options: [.regularExpression, .caseInsensitive]) != nil
-                async let focused = try? searchResults(query + (technical ? " official documentation" : " official"), publicOnly: publicSnippetsOnly)
+                async let focused = try? searchResults(
+                    query + (technical ? " official documentation" : " official"), publicOnly: publicSnippetsOnly)
                 let (main, additional) = await (primary ?? [], focused ?? [])
                 results =
                     Array(main.prefix(3)) + Array(additional.prefix(3)) + Array(main.dropFirst(3))
@@ -87,7 +101,9 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
         results = Array(results.prefix(6))
         if publicSnippetsOnly {
             results = results.filter { PublicSearchNavigation.isPublicURL($0.url) && !$0.excerpt.isEmpty }
-            guard !results.isEmpty else { throw ChatGPTFailure.message("web search found no usable public snippets. try a more specific query.") }
+            guard !results.isEmpty else {
+                throw ChatGPTFailure.message("web search found no usable public snippets. try a more specific query.")
+            }
             return results
         }
         reading?(results)
@@ -208,16 +224,25 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
         let navigation = offlineOnly ? OfflinePageNavigation() : nil
         if offlineOnly {
             let rules = try await WKContentRuleListStore.default().compileContentRuleList(
-                forIdentifier: "loaf-offline-page-read", encodedContentRuleList:
+                forIdentifier: "loaf-offline-page-read",
+                encodedContentRuleList:
                     #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}}]"#)
-            if let rules { webView.configuration.userContentController.add(rules) }
-            else { throw URLError(.cannotLoadFromNetwork) }
+            if let rules {
+                webView.configuration.userContentController.add(rules)
+            } else {
+                throw URLError(.cannotLoadFromNetwork)
+            }
             webView.navigationDelegate = navigation
         }
-        defer { _ = navigation; webView.stopLoading(); webView.navigationDelegate = nil }
+        defer {
+            _ = navigation
+            webView.stopLoading()
+            webView.navigationDelegate = nil
+        }
 
         webView.loadHTMLString(
-            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'none'\">" + html,
+            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'none'; style-src 'unsafe-inline'\">"
+                + html,
             baseURL: offlineOnly ? nil : queryURL)
         for _ in 0..<50 {
             try await Task.sleep(for: .milliseconds(20))
@@ -260,17 +285,18 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
         return results;
         """#
 
-    nonisolated static let pageScript = #"""
-        const title = document.title, description = document.querySelector('meta[name="description"]')?.content || '';
+    nonisolated static let pageScript = """
+        const mainContentOnly = true, characterLimit = 50000;
+        const read = () => {
+        \(TabChatContextService.extractionScript)
+        };
+        const text = read().text;
+        const title = document.title;
+        const description = document.querySelector('meta[name="description"]')?.content || '';
         const date = document.querySelector('meta[property="article:published_time"], time[datetime]');
         const published = date?.content || date?.getAttribute('datetime') || '';
-        for (const node of document.querySelectorAll('script, style, nav, header, footer, aside, form, dialog, [hidden], [aria-hidden="true"]')) node.remove();
-        const root = document.querySelector('article') || document.querySelector('main, [role="main"]') || document.body;
-        const blocks = Array.from(root.querySelectorAll('h1,h2,h3,h4,p,li,pre,td')).map(node =>
-          node.innerText.replace(/\s+/g,' ').trim()).filter(text => text.length >= 20);
-        return [title, description, published && 'Published: ' + published,
-          ...(blocks.length ? blocks : [root.innerText])].filter(Boolean).join('\n').slice(0, 50000);
-        """#
+        return [title, description, published && 'Published: ' + published, text].filter(Boolean).join('\\n').slice(0, 50000);
+        """
 
     nonisolated static func relevantExcerpt(_ text: String, query: String, limit: Int) -> String {
         let ignored: Set<String> = [

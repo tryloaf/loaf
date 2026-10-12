@@ -204,9 +204,14 @@ import WebKit
                 (record.diagnostics ?? [])
                 + (try ExtensionCompatibility.prepare(
                     root.appendingPathComponent("runtime"), extensionID: record.storeID))
+            if record.storeID == ExtensionShazam.identifier {
+                record.diagnostics?.removeAll(where: ExtensionShazam.resolvedDiagnostic)
+            }
             try await load(record)
             record.enabled = true
-            record.status = "installed · compatibility unverified"
+            record.status =
+                record.storeID == ExtensionShazam.identifier
+                ? "installed · song recognition unavailable" : "installed · compatibility unverified"
         } catch {
             record.diagnostics = (record.diagnostics ?? []) + [error.localizedDescription]
             record.status = "installed · incompatible · disabled"
@@ -237,6 +242,28 @@ import WebKit
         let revision = loadRevisions[record.id]
         let root = folder.appendingPathComponent(record.id.uuidString)
         let runtime = root.appendingPathComponent("runtime")
+        if record.storeID == ExtensionShazam.identifier,
+            FileManager.default.fileExists(atPath: root.appendingPathComponent("original").path)
+        {
+            if !FileManager.default.fileExists(atPath: runtime.appendingPathComponent(ExtensionShazam.marker).path) {
+                _ = try ExtensionShazam.prepare(runtime, original: root.appendingPathComponent("original"))
+            }
+            application?.updateProfile(profileID) { profile in
+                if let index = profile.extensions.firstIndex(where: { $0.id == record.id }) {
+                    var diagnostics = profile.extensions[index].diagnostics ?? []
+                    diagnostics.removeAll(where: ExtensionShazam.resolvedDiagnostic)
+                    if !diagnostics.contains(ExtensionShazam.diagnostic) {
+                        diagnostics.append(ExtensionShazam.diagnostic)
+                    }
+                    profile.extensions[index].diagnostics = diagnostics
+                    if !diagnostics.contains(where: {
+                        $0.hasPrefix("WebKit error: ") || $0.hasPrefix("Background error: ")
+                    }) {
+                        profile.extensions[index].status = "installed · song recognition unavailable"
+                    }
+                }
+            }
+        }
         if record.storeID == ExtensionCompatibility.tampermonkeyID,
             FileManager.default.fileExists(atPath: root.appendingPathComponent("original").path),
             !FileManager.default.fileExists(
@@ -429,7 +456,9 @@ import WebKit
                         ? ((p.extensions[index].diagnostics ?? []).contains {
                             $0.hasPrefix("Background error: ") || $0.hasPrefix("WebKit error: ")
                         }
-                            ? "installed · runtime errors · see diagnostics" : "installed · compatibility unverified")
+                            ? "installed · runtime errors · see diagnostics"
+                            : record.storeID == ExtensionShazam.identifier
+                                ? "installed · song recognition unavailable" : "installed · compatibility unverified")
                         : "installed · disabled"
                 }
             }

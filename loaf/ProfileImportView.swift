@@ -193,13 +193,15 @@ struct ProfileImportView: View {
                                 }
                             }
                             Toggle("create a new profile", isOn: $newProfile).disabled(
-                                importAll || store.profiles.count >= 8)
-                                .onChange(of: newProfile) { _, value in if !value && !importAll { cookies = false } }
+                                importAll || store.profiles.count >= 8
+                            )
+                            .onChange(of: newProfile) { _, value in if !value && !importAll { cookies = false } }
                             if newProfile && !importAll {
                                 TextField("profile name", text: $name).textFieldStyle(.roundedBorder)
                             } else if !importAll {
-                                Text("importing into \(store.profileFor(destinationID).name)").font(.system(size: 12)).foregroundStyle(
-                                    .secondary)
+                                Text("importing into \(store.profileFor(destinationID).name)").font(.system(size: 12))
+                                    .foregroundStyle(
+                                        .secondary)
                             }
                             Divider()
                             importRow(
@@ -216,7 +218,8 @@ struct ProfileImportView: View {
                                 "cookies",
                                 detail:
                                     "\(cookieCount.formatted()) readable \(cookieCount == 1 ? "cookie" : "cookies")",
-                                icon: .cookie, selection: $cookies, enabled: cookieCount > 0 && (importAll || newProfile))
+                                icon: .cookie, selection: $cookies,
+                                enabled: cookieCount > 0 && (importAll || newProfile))
                             if cookieCount > 0 && !importAll && !newProfile {
                                 Text("create a new profile to import cookies and keep existing sign-ins untouched.")
                                     .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -258,7 +261,9 @@ struct ProfileImportView: View {
                             }
                         }.disabled(busy)
                     } else if step == 2 {
-                        Label("ready in " + completedNames.joined(separator: ", "), systemImage: "checkmark.circle.fill").font(
+                        Label(
+                            "ready in " + completedNames.joined(separator: ", "), systemImage: "checkmark.circle.fill"
+                        ).font(
                             .system(size: 16)
                         ).foregroundStyle(profileTint(store.profile)).padding(.vertical, 8)
                     }
@@ -275,29 +280,30 @@ struct ProfileImportView: View {
                 Text(error).font(.system(size: 12)).foregroundStyle(.red).accessibilityLabel("import error: " + error)
             }
             HStack {
-                    if busy {
-                        ProgressView().controlSize(.small)
-                        Text(step == 0 ? "reading your data…" : "bringing it over…").font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    } else if step == 1 || (step == 0 && selectedBrowser != nil) {
-                        Button("back") { resetSource() }.buttonStyle(.plain)
-                    }
-                    Spacer()
-                    if step < 2 {
-                        Button("cancel") { cancelImport() }.keyboardShortcut(.cancelAction)
-                            .disabled(committing || sourcePanel != nil)
-                    }
-                    if step == 1 {
-                        Button("import selected data…") { confirmImport = true }.buttonStyle(.borderedProminent).controlSize(
+                if busy {
+                    ProgressView().controlSize(.small)
+                    Text(step == 0 ? "reading your data…" : "bringing it over…").font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                } else if step == 1 || (step == 0 && selectedBrowser != nil) {
+                    Button("back") { resetSource() }.buttonStyle(.plain)
+                }
+                Spacer()
+                if step < 2 {
+                    Button("cancel") { cancelImport() }.keyboardShortcut(.cancelAction)
+                        .disabled(committing || sourcePanel != nil)
+                }
+                if step == 1 {
+                    Button("import selected data…") { confirmImport = true }.buttonStyle(.borderedProminent)
+                        .controlSize(
                             .large
                         )
                         .disabled(busy || !canImport).keyboardShortcut(.defaultAction)
-                    } else if step == 2 {
-                        Button("done") { dismiss() }.buttonStyle(.borderedProminent).controlSize(.large)
-                            .keyboardShortcut(
-                                .defaultAction)
-                    }
+                } else if step == 2 {
+                    Button("done") { dismiss() }.buttonStyle(.borderedProminent).controlSize(.large)
+                        .keyboardShortcut(
+                            .defaultAction)
                 }
+            }
         }.padding(24).frame(width: 520).background(Color(nsColor: .windowBackgroundColor))
             .background(ImportWindowReader(reference: importerWindow))
             .interactiveDismissDisabled(committing || sourcePanel != nil).onAppear {
@@ -456,7 +462,10 @@ struct ProfileImportView: View {
             let result = await Task.detached(priority: .userInitiated) {
                 BrowserImportDiscovery.requestDataAccess(browser)
             }.value
-            guard active, operationID == operation else { checkingAccess = false; return }
+            guard active, operationID == operation else {
+                checkingAccess = false
+                return
+            }
             dataAccess = result
             checkingAccess = false
         }
@@ -512,16 +521,21 @@ struct ProfileImportView: View {
     }
     private var canImport: Bool {
         guard preview != nil, store.profiles.contains(where: { $0.id == destinationID && !$0.privateMode }),
-              !store.application.busyProfileIDs.contains(destinationID),
-              !(importAll || newProfile) || importSources.count <= 8 - store.profiles.count else { return false }
+            !store.application.busyProfileIDs.contains(destinationID),
+            !(importAll || newProfile) || importSources.count <= 8 - store.profiles.count
+        else { return false }
         return (!cookies || importAll || newProfile)
             && (importAll || !newProfile || !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             && (tabs && tabCount > 0 || history && historyCount > 0 || bookmarks && bookmarkCount > 0
                 || cookies && cookieCount > 0)
     }
     private var importSummary: String {
-        let target = importAll ? "\(importSources.count) new profiles" : newProfile ? "a new profile named \(name)" : store.profileFor(destinationID).name
-        var text = "Import into \(target). Existing bookmarks, history and sign-in cookies are kept. Source files stay untouched."
+        let target =
+            importAll
+            ? "\(importSources.count) new profiles"
+            : newProfile ? "a new profile named \(name)" : store.profileFor(destinationID).name
+        var text =
+            "Import into \(target). Existing bookmarks, history and sign-in cookies are kept. Source files stay untouched."
         if cookies { text += " Imported cookies may sign you in to websites." }
         if tabs { text += " This opens \(tabCount) tabs and contacts those websites." }
         return text
@@ -570,7 +584,9 @@ struct ProfileImportView: View {
                 releaseFolderAccess()
             }
             if let authorizedFolder {
-                if !authorizedFolderURLs.contains(authorizedFolder), authorizedFolder.startAccessingSecurityScopedResource() {
+                if !authorizedFolderURLs.contains(authorizedFolder),
+                    authorizedFolder.startAccessingSecurityScopedResource()
+                {
                     authorizedFolderURLs.append(authorizedFolder)
                 }
                 selectedFolderURL = authorizedFolder
@@ -699,9 +715,13 @@ struct ProfileImportView: View {
         committing = true
         error = nil
         Task {
-            defer { busy = false; committing = false }
+            defer {
+                busy = false
+                committing = false
+            }
             do {
-                let ids = try await store.importProfiles(sources, names: names, newProfile: createProfiles,
+                let ids = try await store.importProfiles(
+                    sources, names: names, newProfile: createProfiles,
                     history: history, bookmarks: bookmarks, cookies: cookies, tabs: tabs, destinationID: destinationID)
                 completedNames = ids.map { store.profileFor($0).name }
                 transition(to: 2)

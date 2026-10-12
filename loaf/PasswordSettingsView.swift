@@ -23,7 +23,7 @@ struct PasswordSettingsView: View {
                     Text(status).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }.id("saved-passwords")
-            Section("autofill") {
+            Section("autofill · all profiles") {
                 Toggle("offer to save login passwords", isOn: $store.preferences.savePasswords).id("save-passwords")
                     .onChange(of: store.preferences.savePasswords) { _, _ in store.applyPasswordPreference() }
                 Toggle(
@@ -384,19 +384,23 @@ private struct PasswordImportView: View {
                     Button(
                         "import \(replace ? review.entries.count : review.entries.count - vault.matchingImportCount) accounts"
                     ) {
-                        if replace { confirmReplacement = true }
-                        else { vault.commitImport(replaceExisting: false) }
+                        if replace { confirmReplacement = true } else { vault.commitImport(replaceExisting: false) }
                     }.buttonStyle(.borderedProminent).keyboardShortcut(
                         .defaultAction
-                    ).disabled((replace ? review.entries.count : review.entries.count - vault.matchingImportCount) == 0 || !vault.unlocked || vault.busy)
+                    ).disabled(
+                        (replace ? review.entries.count : review.entries.count - vault.matchingImportCount) == 0
+                            || !vault.unlocked || vault.busy)
                 }
             }
         }.padding(26).frame(width: 490)
-        .confirmationDialog("replace saved passwords?", isPresented: $confirmReplacement, titleVisibility: .visible) {
+            .confirmationDialog("replace saved passwords?", isPresented: $confirmReplacement, titleVisibility: .visible)
+        {
             Button("replace and import", role: .destructive) { vault.commitImport(replaceExisting: true) }
             Button("cancel", role: .cancel) {}
         } message: {
-            Text("This replaces \(vault.matchingImportCount) existing accounts’ passwords, titles and notes. It cannot be undone. Uncheck replace to keep those accounts.")
+            Text(
+                "This replaces \(vault.matchingImportCount) existing accounts’ passwords, titles and notes. It cannot be undone. Uncheck replace to keep those accounts."
+            )
         }
     }
 }

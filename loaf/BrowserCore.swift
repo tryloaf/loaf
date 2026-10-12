@@ -356,10 +356,12 @@ nonisolated struct BrowserPreferences: Codable, Sendable {
     var customSearchTemplate: String?
     var suggestionProvider: SuggestionProvider?
     var aiProvider: AIProvider?
+    var summaryProvider: AIProvider?
+    var summaryModelID: String?
     mutating func configureOnboardingAlternateSearch() {
         var redirect = alternateSearch ?? SearchRedirect()
         redirect.enabled = aiFeaturesEnabled != false && aiProvider != nil
-        redirect.provider = aiProvider == .chatgpt ? .chatgpt : .appleIntelligence
+        redirect.provider = aiProvider == .claude ? .claude : aiProvider == .chatgpt ? .chatgpt : .appleIntelligence
         alternateSearch = redirect
     }
     var aiFeaturesEnabled: Bool?
@@ -471,13 +473,16 @@ nonisolated struct Personalization: Codable, Equatable, Sendable {
     var pinStyle = "tiles"
     var widgets = ["search", "clock", "weather", "pins", "downloads", "battery", "recent", "worldClock"]
     var hiddenWidgets: [String] = []
-    var widgetSizes: [String: StartWidgetSize]? = ["search": .banner, "clock": .square, "weather": .square, "pins": .small, "downloads": .square, "battery": .square, "recent": .square, "worldClock": .square]
+    var widgetSizes: [String: StartWidgetSize]? = [
+        "search": .banner, "clock": .square, "weather": .square, "pins": .small, "downloads": .square,
+        "battery": .square, "recent": .square, "worldClock": .square,
+    ]
     var widgetOptions: [String: StartWidgetOptions]?
     var widgetPositions: [String: StartWidgetPosition]? = [
         "search": .init(column: 0, row: 0),
         "clock": .init(column: 0, row: 2), "weather": .init(column: 1, row: 2), "pins": .init(column: 2, row: 2),
         "downloads": .init(column: 0, row: 3), "battery": .init(column: 1, row: 3),
-        "recent": .init(column: 2, row: 3), "worldClock": .init(column: 3, row: 3)
+        "recent": .init(column: 2, row: 3), "worldClock": .init(column: 3, row: 3),
     ]
     var notes = ""
     var checklistItems: [StartChecklistItem]?

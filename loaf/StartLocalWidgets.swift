@@ -175,7 +175,8 @@ struct StartWorldClockWidget: View {
                 ForEach(StartWorldClock.zones(options.timeZones), id: \.identifier) { zone in
                     HStack(spacing: 4) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(StartWorldClock.city(zone)).font(.system(size: 12)).lineLimit(1).minimumScaleFactor(0.75)
+                            Text(StartWorldClock.city(zone)).font(.system(size: 12)).lineLimit(1).minimumScaleFactor(
+                                0.75)
                             Text(StartWorldClock.day(context.date, zone: zone)).font(.system(size: 10)).foregroundStyle(
                                 .secondary)
                         }

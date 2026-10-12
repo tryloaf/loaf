@@ -52,6 +52,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             super.init(frame: .zero)
             wantsLayer = true
             surface.wantsLayer = true
+            surface.identifier = .init("loaf.page.viewport")
             surface.layer?.masksToBounds = true
             surface.layer?.cornerCurve = .continuous
             contentSurface.wantsLayer = true

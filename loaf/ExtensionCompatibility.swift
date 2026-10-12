@@ -98,6 +98,10 @@ import WebKit
         if extensionID == tampermonkeyID {
             diagnostics.append(try prepareTampermonkey(folder, original: folder))
         }
+        if extensionID == ExtensionShazam.identifier {
+            diagnostics.append(try ExtensionShazam.prepare(folder, original: folder))
+            manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any] ?? [:]
+        }
         let shim = folder.appendingPathComponent("_loaf_bridge.js")
         try Data(script.utf8).write(to: shim, options: .atomic)
         var permissions = manifest["permissions"] as? [String] ?? []

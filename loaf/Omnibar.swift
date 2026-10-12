@@ -26,6 +26,7 @@ struct Suggestion: Identifiable {
     let icon: LoafIcon
     let destination: String
     var tabID: UUID?
+    var pinnedShortcutID: UUID?
     var kind: SuggestionKind = .search
     var siteURL: URL? { kind == .search || kind == .page ? nil : BrowserAddress.resolve(destination) }
     var defaultSearchQuery: String? { BrowserAddress.defaultSearchQuery(siteURL) }
@@ -428,7 +429,24 @@ nonisolated enum HistorySuggestionWork {
         var nextTabs: [UUID: PreparedOpenTab] = [:]
         nextTabs.reserveCapacity(openTabs.count)
         var tabsByAddress: [String: BrowserTab] = [:]
+        let pins = store.profile.pinShortcuts ?? []
+        var pinsByAddress: [String: SavedTab] = [:]
+        for pin in pins {
+            if let address = pin.pinnedAddress ?? pin.address {
+                let key = canonical(address, kind: .tab)
+                if pinsByAddress[key] == nil { pinsByAddress[key] = pin }
+            }
+        }
         func tabAction(_ suggestion: Suggestion) -> Suggestion {
+            if suggestion.kind != .search && suggestion.kind != .page,
+                let pin = pinsByAddress[canonical(suggestion.destination, kind: suggestion.kind)],
+                let address = pin.pinnedAddress ?? pin.address
+            {
+                return Suggestion(
+                    id: "pin-\(pin.id)", title: pin.pinnedTitle ?? pin.title,
+                    detail: "go to pinned tab", icon: .pinned, destination: address,
+                    pinnedShortcutID: pin.id, kind: .tab)
+            }
             guard suggestion.id != "input", suggestion.kind != .search && suggestion.kind != .page,
                 let tab = tabsByAddress[canonical(suggestion.destination, kind: suggestion.kind)]
             else { return suggestion }
@@ -473,6 +491,17 @@ nonisolated enum HistorySuggestionWork {
             }
         }
 
+        for pin in pins {
+            if let address = pin.pinnedAddress ?? pin.address,
+                let score = score(pin.pinnedTitle ?? pin.title, address)
+            {
+                consider(
+                    Suggestion(
+                        id: "pin-\(pin.id)", title: pin.pinnedTitle ?? pin.title,
+                        detail: "go to pinned tab", icon: .pinned, destination: address,
+                        pinnedShortcutID: pin.id, kind: .tab), score: score + (needle.isEmpty ? 30 : 45))
+            }
+        }
         for tab in openTabs where tab.url != nil {
             let url = tab.url!
             let address = url.absoluteString
@@ -589,12 +618,13 @@ nonisolated enum HistorySuggestionWork {
                 ? store.searchAddress(text)?.absoluteString ?? text : text
             let addressIntent = text.contains(".") && !text.contains(where: { $0.isWhitespace })
             if internalPage == nil {
-                let typed = Suggestion(
-                    id: "input", title: direct ? BrowserAddress.display(resolved) : text,
-                    detail: direct ? "go to site" : (store.preferences.searchEngine ?? .google).title + " search",
-                    icon: direct ? .globe : .search,
-                    destination: direct ? resolved?.absoluteString ?? text : searchDestination,
-                    kind: direct ? .site : .search)
+                let typed = tabAction(
+                    Suggestion(
+                        id: "input", title: direct ? BrowserAddress.display(resolved) : text,
+                        detail: direct ? "go to site" : (store.preferences.searchEngine ?? .google).title + " search",
+                        icon: direct ? .globe : .search,
+                        destination: direct ? resolved?.absoluteString ?? text : searchDestination,
+                        kind: direct ? .site : .search))
                 inputAction = typed
                 consider(typed, score: direct || addressIntent ? 200 : 70)
             }
@@ -891,7 +921,7 @@ nonisolated enum HistorySuggestionWork {
         let old = selectedID
         suggestions = values
         publishedQuery = previousQuery
-        selectedID = values.contains { $0.id == old } ? old : values.first?.id
+        selectedID = explicitSelection && values.contains { $0.id == old } ? old : values.first?.id
     }
     func inline(for prefix: String) -> String? {
         guard prefix == publishedQuery, !prefix.isEmpty, suggestions.indices.contains(selected) else { return nil }
@@ -1180,7 +1210,7 @@ struct OmnibarView: View {
                 Text("new tab")
                 if (store.preferences.alternateSearch ?? SearchRedirect()).enabled
                     && (store.preferences.aiFeaturesEnabled != false
-                        || ![SearchRedirect.Provider.chatgpt, .appleIntelligence].contains(
+                        || ![SearchRedirect.Provider.chatgpt, .claude, .appleIntelligence].contains(
                             (store.preferences.alternateSearch ?? SearchRedirect()).provider))
                 {
                     Text((store.preferences.alternateSearch ?? SearchRedirect()).shortcut.rawValue)
@@ -1193,68 +1223,68 @@ struct OmnibarView: View {
             .modifier(OmnibarPanelHeight(height: 56 + 30 + (displayed.isEmpty ? 0 : 1 + rowsHeight)))
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: rowsHeight)
             .background {
-            ProfileWindowSurface(
-                color: store.profile.privateMode ? PrivateChrome.surface : Color(nsColor: .controlBackgroundColor),
-                transparency: store.profile.personalization?.windowTransparency ?? 0, withinWindow: true
-            ).clipShape(RoundedRectangle(cornerRadius: 16))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 16).fill(
-                profileTint(store.profile).opacity(
-                    store.preferences.tintWonderbar == true && !store.profile.privateMode ? 0.08 : 0)
-            ).allowsHitTesting(false)
-        }
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.08)))
-        .shadow(color: .black.opacity(0.14), radius: 20, y: 8)
-        .onAppear {
-            pointerMovedSinceTyping = false
-            heldModifiers = NSEvent.modifierFlags.intersection(Self.actionModifiers)
-            if modifierMonitor == nil {
-                modifierMonitor = NSEvent.addLocalMonitorForEvents(
-                    matching: [.flagsChanged, .keyDown, .keyUp, .mouseMoved, .leftMouseDown, .rightMouseDown]
-                ) { event in
-                    if event.window === store.nativeWindow {
-                        switch event.type {
-                        case .keyDown:
-                            pointerMovedSinceTyping = false
-                            hoveredID = nil
-                        case .mouseMoved:
-                            pointerMovedSinceTyping = true
-                        default: break
-                        }
-                    }
-                    let modifiers = event.modifierFlags.intersection(Self.actionModifiers)
-                    if modifiers != heldModifiers { heldModifiers = modifiers }
-                    return event
-                }
+                ProfileWindowSurface(
+                    color: store.profile.privateMode ? PrivateChrome.surface : Color(nsColor: .controlBackgroundColor),
+                    transparency: store.profile.personalization?.windowTransparency ?? 0, withinWindow: true
+                ).clipShape(RoundedRectangle(cornerRadius: 16))
             }
-            engine.resetSelection()
-        }.onDisappear {
-            if let modifierMonitor { NSEvent.removeMonitor(modifierMonitor) }
-            modifierMonitor = nil
-            heldModifiers = []
-            engine.cancel()
-        }
-        .task(id: focusID) {
+            .overlay {
+                RoundedRectangle(cornerRadius: 16).fill(
+                    profileTint(store.profile).opacity(
+                        store.preferences.tintWonderbar == true && !store.profile.privateMode ? 0.08 : 0)
+                ).allowsHitTesting(false)
+            }
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.08)))
+            .shadow(color: .black.opacity(0.14), radius: 20, y: 8)
+            .onAppear {
+                pointerMovedSinceTyping = false
+                heldModifiers = NSEvent.modifierFlags.intersection(Self.actionModifiers)
+                if modifierMonitor == nil {
+                    modifierMonitor = NSEvent.addLocalMonitorForEvents(
+                        matching: [.flagsChanged, .keyDown, .keyUp, .mouseMoved, .leftMouseDown, .rightMouseDown]
+                    ) { event in
+                        if event.window === store.nativeWindow {
+                            switch event.type {
+                            case .keyDown:
+                                pointerMovedSinceTyping = false
+                                hoveredID = nil
+                            case .mouseMoved:
+                                pointerMovedSinceTyping = true
+                            default: break
+                            }
+                        }
+                        let modifiers = event.modifierFlags.intersection(Self.actionModifiers)
+                        if modifiers != heldModifiers { heldModifiers = modifiers }
+                        return event
+                    }
+                }
+                engine.resetSelection()
+            }.onDisappear {
+                if let modifierMonitor { NSEvent.removeMonitor(modifierMonitor) }
+                modifierMonitor = nil
+                heldModifiers = []
+                engine.cancel()
+            }
+            .task(id: focusID) {
 
-            await Task.yield()
-            guard !Task.isCancelled, ownsSession(focusID, profile: profileID) else { return }
-            engine.update(store.omnibarQuery, store: store)
-        }
-        .onChange(of: store.omnibarQuery) { _, query in
-            pointerMovedSinceTyping = false
-            hoveredID = nil
-            engine.update(query, store: store)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            heldModifiers = NSEvent.modifierFlags.intersection(Self.actionModifiers)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
-            if notification.object as? NSWindow === store.nativeWindow {
+                await Task.yield()
+                guard !Task.isCancelled, ownsSession(focusID, profile: profileID) else { return }
+                engine.update(store.omnibarQuery, store: store)
+            }
+            .onChange(of: store.omnibarQuery) { _, query in
+                pointerMovedSinceTyping = false
+                hoveredID = nil
+                engine.update(query, store: store)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 heldModifiers = NSEvent.modifierFlags.intersection(Self.actionModifiers)
             }
-        }
-        .onChange(of: openTabIdentities) { _, _ in engine.update(store.omnibarQuery, store: store) }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+                if notification.object as? NSWindow === store.nativeWindow {
+                    heldModifiers = NSEvent.modifierFlags.intersection(Self.actionModifiers)
+                }
+            }
+            .onChange(of: openTabIdentities) { _, _ in engine.update(store.omnibarQuery, store: store) }
     }
     private var openTabIdentities: [String] {
         store.application.windows.flatMap { window in
@@ -1292,6 +1322,7 @@ struct OmnibarView: View {
         case .alternateSearch:
             return "search with \((store.preferences.alternateSearch ?? SearchRedirect()).title)"
         case .newTab:
+            if suggestion.pinnedShortcutID != nil { return "open in new tab" }
             return suggestion.kind == .search ? "search in new tab" : "go to site in new tab"
         case .backgroundTab:
             return suggestion.kind == .search ? "search in background tab" : "open in background tab"
@@ -1333,8 +1364,7 @@ struct OmnibarView: View {
             NSPasteboard.general.setString(url.absoluteString, forType: .string)
             store.feedback.show(.copied, icon: .check, text: "address copied")
         case .newTab, .backgroundTab:
-            _ = store.newTab(url: url, showOmnibar: false, activate: action == .newTab)
-            store.omnibarVisible = false
+            store.openSuggestionInNewTab(url, background: action == .backgroundTab)
         case .alternateSearch:
             break
         }
@@ -1348,7 +1378,16 @@ struct OmnibarView: View {
         let suggestion = engine.action(for: chosen, query: store.omnibarQuery, profile: profileID)
         guard chosen == nil || suggestion != nil else { return }
         if let suggestion { engine.remember(suggestion, query: store.omnibarQuery, store: store) }
-        if let id = suggestion?.tabID {
+        if let pinID = suggestion?.pinnedShortcutID {
+            guard let pin = store.pinnedTabs.first(where: { $0.pinnedShortcutID == pinID }),
+                let url = suggestion?.siteURL
+            else { return }
+            let open = store.openPinned(pin)
+            store.select(open)
+            if open.url != url { open.load(url) }
+            store.omnibarVisible = false
+            store.focusPage()
+        } else if let id = suggestion?.tabID {
             guard let tab = store.application.runtimes[profileID]?.tabs[id], let owner = tab.store,
                 !tab.isDisposed, store.application.windows.contains(where: { $0 === owner })
             else { return }
@@ -1370,5 +1409,17 @@ struct OmnibarView: View {
             }
             store.navigate(destination)
         }
+    }
+}
+
+extension BrowserWindowState {
+    func openSuggestionInNewTab(_ url: URL, background: Bool = false) {
+        if !background, let tab = selectedTab, tab.isEmptyNewTab {
+            omnibarCreatesTab = false
+            tab.load(url)
+        } else {
+            _ = newTab(url: url, showOmnibar: false, activate: !background)
+        }
+        omnibarVisible = false
     }
 }
