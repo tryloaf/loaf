@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "reviewedAt": "2026-10-12T04:42:43.941Z",
+  "reviewedAt": "2026-10-12T05:53:00.949Z",
   "scope": "Defaults, remote providers, report retention, first-use agreement, and current privacy policy reviewed against these inputs.",
   "inputs": {
     "loaf-site/legal/eula.md": "1adb4e69923db044587853a627b1a95096268f222f3120d7c10ef0c13fd60159",
@@ -9,13 +9,13 @@
     "loaf-site/site-config.js": "3a3251bc5bd2ebfa46cd44e16c7a7a7de771633ae87271e399a5ef6deda13126",
     "loaf-site/worker.mjs": "88d1d4c7ec96bc498a6385c5ea2b8fcd48e4d04dbc8ee087847374df15b7f461",
     "loaf.xcodeproj/project.pbxproj": "02424803bceeb269fdbce0f93e8049ac874459161910c46086baa2e47815af81",
-    "loaf/AboutLoafView.swift": "d2dae6e4a75968406a940a66acc5b5378f412f28618777ee8d2ef385bc8aa666",
+    "loaf/AboutLoafView.swift": "dd4a08c751ad6d17818834f32b2885be95405c7804b8f854a06e95baa56778d8",
     "loaf/AppleIntelligence.swift": "c2889a0842ae0d9c802b05e4eb5de839246c2a979487583e629b11286ba7f75a",
     "loaf/AppleScriptSupport.swift": "a704b96777f8e4ba54a1ccd736bd71bc48000348ee2dbcefe15ac545da9c956c",
     "loaf/AssetTransfer.swift": "c06eb698b1d7f0c6e083fcbb4bc022de2b31ab8a93f751f44b5c92037355e42e",
     "loaf/BookmarkFolders.swift": "db227aaf5d2918bbf050c15c963c686385b9fcbe28033fefee6782ad885f3c45",
     "loaf/BrowserApplication.swift": "10ec42a1c344485a6a7c11c1ebfb4bf759f383e1c40dab1d68c178ec9bdd8de9",
-    "loaf/BrowserCore.swift": "9067eaeb453120501e32c679c74290681dcc0ed8bc87dcf212201191cb5b246e",
+    "loaf/BrowserCore.swift": "a982c1d5c5ba64caf74598657e045ec32ed4e437abe73ca6337d8b1f9fe04814",
     "loaf/BrowserFeedback.swift": "a94ac2d382a6968e8f5ae0e65523b05f698bb888ee7cf7bdb5756d0d616abba4",
     "loaf/BrowserImportDiscovery.swift": "898e5391ab6020a5904e791acb524a2f4029479c054cc6404056bd7619146283",
     "loaf/BrowserStore.swift": "09467cdf98793dc02ae258ae375ddc248a1918fe2473e951532ea21ae2fa0b5a",

@@ -7,7 +7,7 @@ nonisolated enum BrowserBrand {
     static let website = URL(string: "https://tryloaf.app")!
     static let reportBug = URL(string: "https://tryloaf.app/report")!
     static let authorWebsite = URL(string: "https://owen.uno")!
-    static let github = URL(string: "https://github.com/owenvanvooren")!
+    static let github = URL(string: "https://github.com/tryloaf/loaf")!
     static let bundleIdentifier = "app.tryloaf.loaf"
     static let supportDirectory = "loaf"
     static let passwordServicePrefix = "app.tryloaf.loaf.passwords."
