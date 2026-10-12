@@ -101,22 +101,32 @@ struct SettingsView: View {
                     .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8)).padding(
                         .horizontal, 10
                     ).padding(.vertical, 6)
-                List(selection: Binding<String?>(get: { section }, set: { if let value = $0 { chooseSection(value) } }))
-                {
-                    ForEach(Array(sections.enumerated()), id: \.element) { index, item in
-                        Label {
-                            Text(item).font(.system(size: 13)).foregroundStyle(
-                                item == section ? Color(nsColor: .alternateSelectedControlTextColor) : sidebarInk)
-                        } icon: {
-                            GolzheimIcon(icon: icon(item), size: 16, weight: 220).foregroundStyle(
-                                (item == section ? Color(nsColor: .alternateSelectedControlTextColor) : sidebarInk)
-                                    .opacity(0.7)
-                            ).frame(width: 20)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(Array(sections.enumerated()), id: \.element) { index, item in
+                            Button {
+                                chooseSection(item)
+                            } label: {
+                                HStack(spacing: 8) {
+                                    GolzheimIcon(icon: icon(item), size: 16, weight: 220)
+                                        .opacity(0.7).frame(width: 20)
+                                    Text(item).font(.system(size: 13, weight: item == section ? .semibold : .regular))
+                                }
+                                .foregroundStyle(item == section ? .white : sidebarInk)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 10).padding(.vertical, 8)
+                                .background(
+                                    item == section ? Color.accentColor : .clear,
+                                    in: RoundedRectangle(cornerRadius: 8)
+                                )
+                                .contentShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain).focusable(false)
+                            .accessibilityAddTraits(item == section ? .isSelected : [])
+                            .help(index < 9 ? item + " (⌘\(index + 1))" : item)
                         }
-                        .padding(.vertical, 4).tag(item).help(index < 9 ? item + " (⌘\(index + 1))" : item)
-                    }
-                }.id(appearance + String(describing: systemAppearance.systemScheme)).listStyle(.sidebar)
-                    .scrollContentBackground(.hidden).contentMargins(.top, 0, for: .scrollContent)
+                    }.padding(.horizontal, 10)
+                }.scrollIndicators(.hidden)
                     .accessibilityElement(children: .contain).accessibilityLabel("settings sections")
                     .focusable(interactions: .edit).focusEffectDisabled().focused($sidebarFocused)
                     .onKeyPress(.upArrow) {
@@ -456,10 +466,7 @@ struct SettingsView: View {
                 Button("make loaf the default browser…") {
                     Task {
                         do {
-                            try await NSWorkspace.shared.setDefaultApplication(
-                                at: Bundle.main.bundleURL, toOpenURLsWithScheme: "https")
-                            try await NSWorkspace.shared.setDefaultApplication(
-                                at: Bundle.main.bundleURL, toOpenURLsWithScheme: "http")
+                            try await DefaultBrowser.makeDefault()
                         } catch { store.error = error.localizedDescription }
                     }
                 }.id("default-browser")

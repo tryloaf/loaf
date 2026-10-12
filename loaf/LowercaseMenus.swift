@@ -145,7 +145,7 @@ extension NSMenuItem {
 
 @MainActor final class LoafMainMenus: NSObject, NSMenuDelegate, NSMenuItemValidation {
     private enum Command: String {
-        case about, updates, settings, newWindow, newTab, newPrivateWindow, closeTab, save, printPage
+        case about, updates, settings, defaultBrowser, newWindow, newTab, newPrivateWindow, closeTab, save, printPage
         case find, location, sidebar, sideChat, summarize, reload, reloadFromOrigin, reader, zoomIn, zoomOut, actualSize
         case back, forward, history, reopenTab, reopenWindow, bookmark, favorites
         case nextTab, previousTab, pin, duplicate, downloads, previousProfile, nextProfile, editProfile, addProfile
@@ -216,6 +216,7 @@ extension NSMenuItem {
         add("Check for Updates…", .updates, to: app)
         app.addItem(.separator())
         add("Settings…", .settings, key: ",", to: app)
+        add("Make Default Browser…", .defaultBrowser, to: app)
         app.addItem(.separator())
         let services = appendMenu("Services", to: app)
         NSApp.servicesMenu = services
@@ -671,7 +672,7 @@ extension NSMenuItem {
         case .previousProfile: return store != nil && store?.profiles.first?.id != store?.selectedProfileID
         case .nextProfile: return store != nil && store?.profiles.last?.id != store?.selectedProfileID
         case .addProfile: return coordinator.application.profiles.count < 8
-        case .newWindow, .newTab, .newPrivateWindow, .location, .report, .help, .closeTab: return true
+        case .newWindow, .newTab, .newPrivateWindow, .location, .report, .help, .closeTab, .defaultBrowser: return true
         default: return store != nil
         }
     }
@@ -702,6 +703,10 @@ extension NSMenuItem {
         case .about: coordinator.showAbout()
         case .updates: SoftwareUpdateManager.shared.checkForUpdates()
         case .settings: if let store { coordinator.showSettings(for: store) }
+        case .defaultBrowser:
+            Task {
+                do { try await DefaultBrowser.makeDefault() } catch { NSApp.presentError(error) }
+            }
         case .newWindow: coordinator.newWindow()
         case .newTab: _ = coordinator.activateBrowser()?.newTab()
         case .newPrivateWindow: coordinator.newPrivateWindow()

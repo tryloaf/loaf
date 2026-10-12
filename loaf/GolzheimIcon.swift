@@ -377,11 +377,12 @@ extension BrowserPage {
                 let scale = size * 0.45 / max(bounds.width, bounds.height)
                 let offset = size * 0.23
                 let inward = glyph == LoafIcon.collapse.rawValue
-                for upperRight in [false, true] {
+                for upperLeft in [false, true] {
                     context.saveGState()
-                    let direction: CGFloat = upperRight ? 1 : -1
-                    context.translateBy(x: rect.midX + direction * offset, y: rect.midY + direction * offset)
-                    if upperRight == inward { context.rotate(by: .pi) }
+                    let direction: CGFloat = upperLeft ? 1 : -1
+                    context.translateBy(x: rect.midX - direction * offset, y: rect.midY + direction * offset)
+                    context.rotate(by: .pi / 2)
+                    if upperLeft == inward { context.rotate(by: .pi) }
                     context.scaleBy(x: scale, y: scale)
                     context.translateBy(x: -bounds.midX, y: -bounds.midY)
                     context.addPath(path)
