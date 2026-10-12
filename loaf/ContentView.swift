@@ -151,7 +151,8 @@ struct ContentView: View {
                 PageViewport(
                     leading: store.pageLeadingInset, edge: store.pageEdgeInset,
                     cornerRadius: store.pageCornerRadius, sidebarPresented: store.sidebarPresented,
-                    reduceMotion: reduceMotion, trailing: store.sideChatReservedWidth(in: geometry.size.width)
+                    reduceMotion: reduceMotion, trailing: store.sideChatReservedWidth(in: geometry.size.width),
+                    resizeTransition: store.preferences.resizeTransition != false
                 ) {
                     ZStack(alignment: .top) {
                         Color(

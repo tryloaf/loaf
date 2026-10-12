@@ -605,6 +605,10 @@ struct SettingsView: View {
                     ).id("page-margins")
             }
             Section("page transitions · all profiles") {
+                Toggle("soften sidebar resizing", isOn: optional(\.resizeTransition, fallback: true))
+                    .id("resize-transition")
+                Text("briefly blur the page when resizing or showing the sidebar. window resizing stays sharp.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("tint wonderbar with profile color", isOn: optional(\.tintWonderbar, fallback: false)).modifier(
                     AppearancePreviewHover(option: .wonderbarTint, selection: $appearanceDemo)
                 ).id("tint-wonderbar")

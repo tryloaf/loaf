@@ -63,6 +63,9 @@ enum SettingsSearch {
             id: "tint-wonderbar", section: "appearance", title: "tint wonderbar",
             keywords: "omnibar theme container background colour color"),
         .init(
+            id: "resize-transition", section: "appearance", title: "soften sidebar resizing",
+            keywords: "blur fade page transitions sidebar width animation resize"),
+        .init(
             id: "applescript", section: "advanced", title: "JavaScript from AppleScript",
             keywords: "automation scripting"),
         .init(

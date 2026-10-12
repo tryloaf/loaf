@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import QuartzCore
 import SwiftUI
 
@@ -9,6 +10,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
     let sidebarPresented: Bool
     let reduceMotion: Bool
     var trailing: CGFloat = 0
+    var resizeTransition = true
     @ViewBuilder let content: () -> Content
     @Environment(\.self) private var environment
 
@@ -19,7 +21,8 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         view.host.rootView = Root(content: content(), environment: environment)
         view.configure(
             leading: leading, edge: edge, radius: cornerRadius,
-            sidebarPresented: sidebarPresented, reduceMotion: reduceMotion, trailing: trailing)
+            sidebarPresented: sidebarPresented, reduceMotion: reduceMotion, trailing: trailing,
+            resizeTransition: resizeTransition)
     }
     static func dismantleNSView(_ view: Container, coordinator: ()) {
         view.surface.layer?.removeAllAnimations()
@@ -43,6 +46,11 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         private var initialized = false
         private var sidebarPresented = true
         private var animateNextLayout = false
+        private var sidebarResizePending = false
+        private var lastLayoutSize: NSSize?
+        private var resizeTransition = true
+        private var reduceMotion = false
+        private var blurEnd: DispatchWorkItem?
         override var isFlipped: Bool { true }
 
         init(content: Root) {
@@ -65,21 +73,30 @@ struct PageViewport<Content: View>: NSViewRepresentable {
 
         func configure(
             leading: CGFloat, edge: CGFloat, radius: CGFloat,
-            sidebarPresented: Bool, reduceMotion: Bool, trailing: CGFloat = 0
+            sidebarPresented: Bool, reduceMotion: Bool, trailing: CGFloat = 0, resizeTransition: Bool = true
         ) {
             let changed = initialized && self.sidebarPresented != sidebarPresented
+            sidebarResizePending = sidebarResizePending || initialized && (changed || self.leading != leading)
             self.leading = leading
             self.edge = edge
             self.trailing = trailing
             self.radius = radius
             self.sidebarPresented = sidebarPresented
+            self.resizeTransition = resizeTransition
+            self.reduceMotion = reduceMotion
             initialized = true
             if changed { animateNextLayout = !reduceMotion && window != nil }
             if reduceMotion { stopMotion() }
+            if !resizeTransition { clearResizeBlur() }
             needsLayout = true
         }
         override func layout() {
             super.layout()
+            let windowResized = lastLayoutSize != bounds.size || window?.inLiveResize == true
+            let soften = sidebarResizePending && !windowResized && resizeTransition && !reduceMotion
+            sidebarResizePending = false
+            lastLayoutSize = bounds.size
+            if windowResized { clearResizeBlur() }
             let target = NSRect(
                 x: leading, y: edge,
                 width: max(0, bounds.width - leading - edge - trailing), height: max(0, bounds.height - 2 * edge))
@@ -97,6 +114,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             host.frame = contentSurface.bounds
             host.layoutSubtreeIfNeeded()
             CATransaction.commit()
+            if soften, window != nil { beginResizeBlur(duration: animate ? SidebarMotion.duration : 0.18) }
             guard animate, let layer = surface.layer else { return }
             let position = CABasicAnimation(keyPath: "position")
             position.fromValue = CGPoint(
@@ -133,6 +151,34 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         func stopMotion() {
             surface.layer?.removeAllAnimations()
             contentSurface.layer?.removeAllAnimations()
+            clearResizeBlur()
+        }
+        private func beginResizeBlur(duration: TimeInterval) {
+            guard let layer = contentSurface.layer, let filter = CIFilter(name: "CIGaussianBlur") else { return }
+            filter.name = "sidebarResize"
+            filter.setValue(0, forKey: kCIInputRadiusKey)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer.filters = [filter]
+            CATransaction.commit()
+            let blur = CABasicAnimation(keyPath: "filters.sidebarResize.inputRadius")
+            blur.fromValue = 3
+            blur.toValue = 0
+            blur.duration = duration
+            blur.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            layer.add(blur, forKey: "sidebarResizeBlur")
+            let end = DispatchWorkItem { [weak self] in self?.clearResizeBlur() }
+            blurEnd = end
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: end)
+        }
+        private func clearResizeBlur() {
+            blurEnd?.cancel()
+            blurEnd = nil
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            contentSurface.layer?.removeAnimation(forKey: "sidebarResizeBlur")
+            contentSurface.layer?.filters = nil
+            CATransaction.commit()
         }
         override func setFrameSize(_ newSize: NSSize) {
             super.setFrameSize(newSize)
