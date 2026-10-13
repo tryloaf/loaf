@@ -481,9 +481,11 @@ import WebKit
         guard !others.isEmpty else { return true }
         let count = others.values.reduce(0) { $0 + $1.tabs.count }
         let alert = NSAlert()
-        alert.messageText = "close tabs in other profiles?"
+        let tabs = count == 1 ? "tab" : "tabs"
+        let profiles = others.count == 1 ? "another profile" : "\(others.count) other profiles"
+        alert.messageText = "close \(tabs) in \(others.count == 1 ? "another profile" : "other profiles")?"
         alert.informativeText =
-            "This window also contains \(count) tabs in \(others.count) other profiles. Closing it closes those tabs too."
+            "This window also contains \(count) \(tabs) in \(profiles). Closing it closes \(count == 1 ? "that tab" : "those tabs") too."
         alert.addButton(withTitle: "close window").keyEquivalent = ""
         let cancel = alert.addButton(withTitle: "cancel")
         cancel.keyEquivalent = "\u{1b}"

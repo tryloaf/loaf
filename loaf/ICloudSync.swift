@@ -377,13 +377,28 @@ nonisolated struct ICloudSyncJournal: Codable {
         status = Self.message(error)
         Task { await old?.cancelOperations() }
     }
-    private static func message(_ error: Error) -> String {
+    static func message(_ error: Error) -> String {
         if let ck = error as? CKError {
             switch ck.code {
             case .networkUnavailable, .networkFailure: return "offline — changes will sync when your connection returns"
             case .quotaExceeded: return "iCloud storage is full. Free up space, then sync again."
             case .notAuthenticated: return "sign in to iCloud in System Settings to resume sync"
             case .permissionFailure, .badContainer, .missingEntitlement: return "iCloud isn’t configured for this build"
+            case .invalidArguments:
+                let description = ck.localizedDescription.lowercased()
+                if description.contains("production schema") {
+                    return "iCloud’s production sync schema is missing or incompatible; local data is retained"
+                }
+                return "iCloud rejected this build’s sync request; local data is retained"
+            case .partialFailure:
+                if let errors = ck.partialErrorsByItemID,
+                    let rejection = errors.values.compactMap({ $0 as? CKError }).first(where: {
+                        [.invalidArguments, .permissionFailure, .badContainer, .missingEntitlement].contains($0.code)
+                    })
+                {
+                    return message(rejection)
+                }
+                return "some iCloud changes couldn’t be synced; local data is retained"
             case .serviceUnavailable, .requestRateLimited, .zoneBusy:
                 return "iCloud is temporarily unavailable — changes are queued"
             default: return "iCloud sync needs attention (\(ck.code.rawValue)); local data is retained"

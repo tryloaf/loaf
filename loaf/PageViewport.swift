@@ -18,11 +18,11 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         Container(content: Root(content: content(), environment: environment))
     }
     func updateNSView(_ view: Container, context: Context) {
-        view.host.rootView = Root(content: content(), environment: environment)
         view.configure(
             leading: leading, edge: edge, radius: cornerRadius,
             sidebarPresented: sidebarPresented, reduceMotion: reduceMotion, trailing: trailing,
             resizeTransition: resizeTransition)
+        view.host.rootView = Root(content: content(), environment: environment)
     }
     static func dismantleNSView(_ view: Container, coordinator: ()) {
         view.surface.layer?.removeAllAnimations()
@@ -39,6 +39,11 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         let host: NSHostingView<Root>
         let surface = NSView()
         let contentSurface = NSView()
+        let resizeSnapshot = SnapshotView()
+        var resizeSnapshotVisible: Bool { !resizeSnapshot.isHidden }
+        final class SnapshotView: NSImageView {
+            override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        }
         private var leading: CGFloat = 0
         private var edge: CGFloat = 0
         private var trailing: CGFloat = 0
@@ -51,6 +56,20 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         private var resizeTransition = true
         private var reduceMotion = false
         private var blurEnd: DispatchWorkItem?
+        private var pendingResizeSnapshot: NSImage?
+        private var link: CADisplayLink?
+        private var motionStart = NSRect.zero
+        private var motionTarget = NSRect.zero
+        private var motionStartRadius: CGFloat = 0
+        private var motionStarted: CFTimeInterval = 0
+        private(set) var moving = false
+        private final class TickTarget: NSObject {
+            weak var view: Container?
+            init(_ view: Container) { self.view = view }
+            @objc func update(_ sender: CADisplayLink) {
+                if let view { view.tick() } else { sender.invalidate() }
+            }
+        }
         override var isFlipped: Bool { true }
 
         init(content: Root) {
@@ -67,6 +86,11 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             contentSurface.layer?.masksToBounds = true
             contentSurface.addSubview(host)
             surface.addSubview(contentSurface)
+            resizeSnapshot.wantsLayer = true
+            resizeSnapshot.imageScaling = .scaleAxesIndependently
+            resizeSnapshot.isHidden = true
+            resizeSnapshot.setAccessibilityHidden(true)
+            surface.addSubview(resizeSnapshot)
             addSubview(surface)
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -76,7 +100,13 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             sidebarPresented: Bool, reduceMotion: Bool, trailing: CGFloat = 0, resizeTransition: Bool = true
         ) {
             let changed = initialized && self.sidebarPresented != sidebarPresented
-            sidebarResizePending = sidebarResizePending || initialized && (changed || self.leading != leading)
+            let sidebarChanged = initialized && (changed || self.leading != leading)
+            if sidebarChanged, resizeTransition, !reduceMotion, lastLayoutSize == bounds.size,
+                window?.inLiveResize != true, pendingResizeSnapshot == nil
+            {
+                pendingResizeSnapshot = captureResizeSnapshot()
+            }
+            sidebarResizePending = sidebarResizePending || sidebarChanged
             self.leading = leading
             self.edge = edge
             self.trailing = trailing
@@ -87,86 +117,133 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             initialized = true
             if changed { animateNextLayout = !reduceMotion && window != nil }
             if reduceMotion { stopMotion() }
-            if !resizeTransition { clearResizeBlur() }
+            if !resizeTransition {
+                pendingResizeSnapshot = nil
+                clearResizeBlur()
+            }
             needsLayout = true
         }
         override func layout() {
             super.layout()
             let windowResized = lastLayoutSize != bounds.size || window?.inLiveResize == true
             let soften = sidebarResizePending && !windowResized && resizeTransition && !reduceMotion
+            let preparedSnapshot = pendingResizeSnapshot
+            pendingResizeSnapshot = nil
             sidebarResizePending = false
             lastLayoutSize = bounds.size
             if windowResized { clearResizeBlur() }
             let target = NSRect(
                 x: leading, y: edge,
                 width: max(0, bounds.width - leading - edge - trailing), height: max(0, bounds.height - 2 * edge))
-            let previous = surface.layer?.presentation()?.frame ?? surface.frame
-            let previousRadius = surface.layer?.presentation()?.cornerRadius ?? surface.layer?.cornerRadius ?? radius
-            let animate = animateNextLayout && previous.width > 0 && previous.height > 0 && target != surface.frame
+            let previous = surface.frame
+            let previousRadius = surface.layer?.cornerRadius ?? radius
+            let animate =
+                (animateNextLayout || moving) && !windowResized && !reduceMotion
+                && previous.width > 0 && previous.height > 0 && target != previous
             animateNextLayout = false
+            if moving && target == motionTarget && !windowResized { return }
             guard target != surface.frame || surface.layer?.cornerRadius != radius else { return }
+            let snapshot = soften ? preparedSnapshot ?? captureResizeSnapshot() : nil
             stopMotion()
+            motionTarget = target
+            if let snapshot {
+                resizeSnapshot.image = snapshot
+                resizeSnapshot.frame = surface.bounds
+                resizeSnapshot.isHidden = false
+            }
+            if soften, window != nil {
+                beginResizeBlur(duration: animate ? SidebarMotion.duration + 0.12 : 0.18)
+            }
+            guard animate, window != nil else {
+                applyGeometry(target, radius: radius)
+                return
+            }
+            motionStart = previous
+            motionTarget = target
+            motionStartRadius = previousRadius
+            motionStarted = CACurrentMediaTime()
+            moving = true
+            applyGeometry(previous, radius: previousRadius)
+            let link = displayLink(target: TickTarget(self), selector: #selector(TickTarget.update(_:)))
+            self.link = link
+            link.add(to: .main, forMode: .common)
+        }
+        private func applyGeometry(_ frame: NSRect, radius: CGFloat) {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            surface.frame = target
+            surface.frame = frame
             surface.layer?.cornerRadius = radius
-            contentSurface.frame = surface.bounds
+            contentSurface.frame =
+                moving && resizeSnapshotVisible
+                ? NSRect(origin: .zero, size: motionTarget.size) : surface.bounds
             host.frame = contentSurface.bounds
             host.layoutSubtreeIfNeeded()
+            resizeSnapshot.frame = surface.bounds
             CATransaction.commit()
-            if soften, window != nil { beginResizeBlur(duration: animate ? SidebarMotion.duration : 0.18) }
-            guard animate, let layer = surface.layer else { return }
-            let position = CABasicAnimation(keyPath: "position")
-            position.fromValue = CGPoint(
-                x: previous.minX + layer.anchorPoint.x * previous.width,
-                y: previous.minY + layer.anchorPoint.y * previous.height)
-            position.toValue = layer.position
-            let bounds = CABasicAnimation(keyPath: "bounds")
-            bounds.fromValue = CGRect(origin: layer.bounds.origin, size: previous.size)
-            bounds.toValue = layer.bounds
-            let contentScale = CABasicAnimation(keyPath: "transform")
-            contentScale.fromValue = CATransform3DMakeScale(
-                previous.width / max(1, target.width), previous.height / max(1, target.height), 1)
-            contentScale.toValue = CATransform3DIdentity
-            let contentPosition = CABasicAnimation(keyPath: "position")
-            if let contentLayer = contentSurface.layer {
-                contentPosition.fromValue = CGPoint(
-                    x: contentLayer.anchorPoint.x * previous.width,
-                    y: contentLayer.anchorPoint.y * previous.height)
-                contentPosition.toValue = contentLayer.position
+        }
+        private func tick() {
+            let progress = min(1, max(0, (CACurrentMediaTime() - motionStarted) / SidebarMotion.duration))
+            let eased = progress * progress * (3 - 2 * progress)
+            func mix(_ start: CGFloat, _ end: CGFloat) -> CGFloat { start + (end - start) * eased }
+            applyGeometry(
+                NSRect(
+                    x: mix(motionStart.minX, motionTarget.minX), y: mix(motionStart.minY, motionTarget.minY),
+                    width: mix(motionStart.width, motionTarget.width),
+                    height: mix(motionStart.height, motionTarget.height)),
+                radius: mix(motionStartRadius, radius))
+            if progress >= 1 {
+                link?.invalidate()
+                link = nil
+                moving = false
             }
-            let corners = CABasicAnimation(keyPath: "cornerRadius")
-            corners.fromValue = previousRadius
-            corners.toValue = radius
-            for animation in [position, bounds, corners, contentPosition, contentScale] {
-                animation.duration = SidebarMotion.duration
-                animation.timingFunction = SidebarMotion.pageTiming
-            }
-            layer.add(position, forKey: "sidebarPosition")
-            layer.add(bounds, forKey: "sidebarBounds")
-            layer.add(corners, forKey: "sidebarCorners")
-            contentSurface.layer?.add(contentPosition, forKey: "sidebarContentPosition")
-            contentSurface.layer?.add(contentScale, forKey: "sidebarContentScale")
         }
         func stopMotion() {
+            link?.invalidate()
+            link = nil
+            moving = false
+            pendingResizeSnapshot = nil
             surface.layer?.removeAllAnimations()
             contentSurface.layer?.removeAllAnimations()
             clearResizeBlur()
         }
+        deinit { link?.invalidate() }
+        private func captureResizeSnapshot() -> NSImage? {
+            if resizeSnapshotVisible { return resizeSnapshot.image }
+            guard window != nil, contentSurface.bounds.width > 0, contentSurface.bounds.height > 0,
+                let bitmap = contentSurface.bitmapImageRepForCachingDisplay(in: contentSurface.bounds)
+            else { return nil }
+            contentSurface.cacheDisplay(in: contentSurface.bounds, to: bitmap)
+            let image = NSImage(size: contentSurface.bounds.size)
+            image.addRepresentation(bitmap)
+            return image
+        }
         private func beginResizeBlur(duration: TimeInterval) {
-            guard let layer = contentSurface.layer, let filter = CIFilter(name: "CIGaussianBlur") else { return }
+            let filteredView: NSView = resizeSnapshotVisible ? resizeSnapshot : contentSurface
+            guard let filter = CIFilter(name: "CIGaussianBlur") else { return }
+            filteredView.layerUsesCoreImageFilters = true
+            guard let layer = filteredView.layer else { return }
             filter.name = "sidebarResize"
             filter.setValue(0, forKey: kCIInputRadiusKey)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            layer.filters = [filter]
+            filteredView.contentFilters = [filter]
+            if resizeSnapshotVisible { layer.opacity = 0 }
             CATransaction.commit()
-            let blur = CABasicAnimation(keyPath: "filters.sidebarResize.inputRadius")
-            blur.fromValue = 3
-            blur.toValue = 0
+            let blur = CAKeyframeAnimation(keyPath: "filters.sidebarResize.inputRadius")
+            blur.values = [3, 3, 0]
+            blur.keyTimes = [0, 0.65, 1]
             blur.duration = duration
             blur.timingFunction = CAMediaTimingFunction(name: .easeOut)
             layer.add(blur, forKey: "sidebarResizeBlur")
+            if resizeSnapshotVisible {
+                let fade = CABasicAnimation(keyPath: "opacity")
+                fade.fromValue = 1
+                fade.toValue = 0
+                fade.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + duration - 0.12
+                fade.duration = 0.12
+                fade.fillMode = .backwards
+                layer.add(fade, forKey: "sidebarSnapshotFade")
+            }
             let end = DispatchWorkItem { [weak self] in self?.clearResizeBlur() }
             blurEnd = end
             DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: end)
@@ -177,7 +254,14 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             contentSurface.layer?.removeAnimation(forKey: "sidebarResizeBlur")
-            contentSurface.layer?.filters = nil
+            contentSurface.contentFilters = []
+            contentSurface.layerUsesCoreImageFilters = false
+            resizeSnapshot.layer?.removeAllAnimations()
+            resizeSnapshot.contentFilters = []
+            resizeSnapshot.layerUsesCoreImageFilters = false
+            resizeSnapshot.layer?.opacity = 1
+            resizeSnapshot.isHidden = true
+            resizeSnapshot.image = nil
             CATransaction.commit()
         }
         override func setFrameSize(_ newSize: NSSize) {

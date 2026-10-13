@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "reviewedAt": "2026-10-12T23:19:06.017Z",
+  "reviewedAt": "2026-10-13T00:16:31.399Z",
   "scope": "Defaults, remote providers, report retention, first-use agreement, and current privacy policy reviewed against these inputs.",
   "inputs": {
     "loaf-site/legal/eula.md": "1adb4e69923db044587853a627b1a95096268f222f3120d7c10ef0c13fd60159",
@@ -8,7 +8,7 @@
     "loaf-site/legal/privacy.md": "e73aa5a0c246e79e0bd8dae7fc2d0e43b7f2ee29458f1f80742352374f1dfdb0",
     "loaf-site/site-config.js": "3a3251bc5bd2ebfa46cd44e16c7a7a7de771633ae87271e399a5ef6deda13126",
     "loaf-site/worker.mjs": "88d1d4c7ec96bc498a6385c5ea2b8fcd48e4d04dbc8ee087847374df15b7f461",
-    "loaf.xcodeproj/project.pbxproj": "0988c980b4585fd42f35b36cc24539a85259498ab699b9095adef63579ecb35f",
+    "loaf.xcodeproj/project.pbxproj": "d3977f78e028f69dcb173b11f7cf020df2f13e1d9d3e341b2e196df743243ee1",
     "loaf/AISettingsView.swift": "83e90df4eb05a0838fbeeb07eac93c3e22778b1de0124a0a77f41e06361b0ea9",
     "loaf/AboutLoafView.swift": "dd4a08c751ad6d17818834f32b2885be95405c7804b8f854a06e95baa56778d8",
     "loaf/AppleIntelligence.swift": "4bcb1c120f24385f512b322674c7bc4249a85d7bebf45d9328945ff0e3b76f1f",
@@ -60,7 +60,7 @@
     "loaf/HistoryRowHitTarget.swift": "9c02f6df8ee87142c37efaac571ab886fc8a2c82cc50594f68a8dc9a29803ba3",
     "loaf/HistorySelection.swift": "43b4abd0b028520d24d157bae038ff0b60632f65426163b8f4ed90f7f48ae9d7",
     "loaf/IANASeed.swift": "55f3b6143c6d646f9c8744506d97ac287509991aea863d3c7c025f895fd8331b",
-    "loaf/ICloudSync.swift": "fa33626c7ee1451ad7ff1d6833fc66d343bb24e7a244ec37b908b1c55de6eea7",
+    "loaf/ICloudSync.swift": "cbba81a93dab1acb8c5f4c9641b7b41cee3f291968a961d8471bc79273e4b745",
     "loaf/ICloudSyncModel.swift": "9d06648a54af744f5b42c2d3c5fc8106b318112323d5b2c1cb2467e42812a4b8",
     "loaf/ICloudSyncSettingsView.swift": "868a4b4c561d8420c9c618d0aa4d7ecdd3c39a7d927613ffa336548fc571bc83",
     "loaf/IconVocabulary.swift": "4425d9ad2b40a648c1c8afd3eaf19622e693fc9c77e0fb59722f5892a1b8dcf1",
@@ -75,7 +75,7 @@
     "loaf/LoafAppearance.swift": "abc6b10971c13510314ae259563dacad4043c92a52f899f58ed79d64046e34f2",
     "loaf/LocalPageSearch.swift": "236bcfade8346458ebdd0e69d62ebafd427f7f1ce8ec593edf734c8a35d79fc6",
     "loaf/LocationPermissions.swift": "d3dc771214d07edc771a08786aece2da8dc87f8b20524f70da6490fab8e58014",
-    "loaf/LowercaseMenus.swift": "ca22ea0e073a51bafaaa50e125325f03fe39f029ef699a9ec1c79349bade364a",
+    "loaf/LowercaseMenus.swift": "d248c2b08464bd58c839cc35debb986fe3634664ad466d8fa3a0a309180285c4",
     "loaf/MarketingLaunch.swift": "42cc68ab8fd83ea9841f11612ad0e14e7178ebcebae8a0af0b38f341a1d13eae",
     "loaf/MediaPlayerView.swift": "c7802248346603c10277067a315311092f6e98ac27b7d024a91e5f88c6fd8bf7",
     "loaf/MediaPresentation.swift": "a7ad2eb092214ab30883473a1025d6e19e9b547c4ac468a7a71ed5e636e49440",
@@ -86,7 +86,7 @@
     "loaf/OnboardingView.swift": "fa2ff4d7d1dcecc804d2b8a78736a0f6ea29cbe689a64ced6f5beeb6f3b13305",
     "loaf/PageScripts.swift": "9f0eb123d9870b8886bf6b7cf08c5af6f29016fa45230e9e82b55c72438864dc",
     "loaf/PageSummary.swift": "018f6d17e46c9cb7af9555e5195ffdee0b21f353b1bd50d493692deb649e2e11",
-    "loaf/PageViewport.swift": "3c2f040fb45bc39a8ca10254e871014f93e592b9895f7f4a2c39a5789a6c24a6",
+    "loaf/PageViewport.swift": "7b773dd3eb7bf090b9f4907cf04737c164aae763241ebdb25ed0977b2e490fe0",
     "loaf/PasskeyAccess.swift": "de24bab15472ada832e19820aea260979377fb8c768d81e27d5d98b7f2e56f4a",
     "loaf/PasswordImport.swift": "539da23a005979639a56cf3d00b32a5f7c0587ca9a1bfac7b89b0af5c9ff817c",
     "loaf/PasswordManager.swift": "65d44df1097fb523bfe0458700702a2aed5b57c38bbad1ecf505ab3398488a11",
@@ -154,7 +154,7 @@
     "loaf/WebViewHost.swift": "5e4d4225e440fa3a38829b6677f052b3cca46de5b70804d5ea2133926d195605",
     "loaf/WidgetTaskSwipe.swift": "3e247c5d5b65e13c22ecb0d971a5541e85513ca45041cb42dc4d3bd864b5fe8c",
     "loaf/WindowChrome.swift": "2a878510bb5463f756f73e55e8a5968f0a18e5024f9f17eeb4bd783547f9c31f",
-    "loaf/WindowCoordinator.swift": "0b7b04455bef7737f3fce30dadf32162cb62e20f1e19ce8645b0279492ed250c",
+    "loaf/WindowCoordinator.swift": "4411efce194f97952610999244100143a31ca5c32cd3540b9cf4f9e9f9e15842",
     "loaf/loaf.entitlements": "2ed4429e7b09a5571bb1ad1b56ac49fe752131c85e86d124e16cb3830eb43cc5"
   }
 }

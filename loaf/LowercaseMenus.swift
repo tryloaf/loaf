@@ -496,34 +496,41 @@ extension NSMenuItem {
         guard let store, let url else { return }
         let privateID = store.profile.privateMode ? store.selectedProfileID : nil
         item.image =
-            store.application.favicons.cachedImage(for: url, privateID: privateID).map(menuIcon)
+            store.application.favicons.cachedImage(for: url, privateID: privateID).map(Self.menuIcon)
             ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
         if fetchIcon { loadPageIcon(item) }
     }
-    private func menuIcon(_ image: NSImage) -> NSImage {
-        let copy = (image.copy() as? NSImage) ?? image
-        copy.size = NSSize(width: 16, height: 16)
-        return copy
+    static func menuIcon(_ image: NSImage) -> NSImage {
+        NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
+            NSBezierPath(roundedRect: rect, xRadius: 3.2, yRadius: 3.2).addClip()
+            let factor = min(rect.width / max(1, image.size.width), rect.height / max(1, image.size.height))
+            let size = NSSize(width: image.size.width * factor, height: image.size.height * factor)
+            image.draw(
+                in: NSRect(
+                    x: rect.midX - size.width / 2, y: rect.midY - size.height / 2,
+                    width: size.width, height: size.height))
+            return true
+        }
     }
     private func loadPageIcon(_ item: NSMenuItem) {
         guard let store, let address = item.representedObject as? String, let url = URL(string: address) else { return }
         let profileID = store.selectedProfileID
         let privateID = store.profile.privateMode ? profileID : nil
         if let cached = store.application.favicons.cachedImage(for: url, privateID: privateID) {
-            item.image = menuIcon(cached)
+            item.image = Self.menuIcon(cached)
             return
         }
-        Task { @MainActor [weak item, weak store, weak self] in
+        Task { @MainActor [weak item, weak store] in
             guard let store else { return }
             let service = store.application.favicons
             let saved = await service.storedImage(for: url, privateID: privateID)
             if let item, store.selectedProfileID == profileID, let saved {
-                item.image = self?.menuIcon(saved)
+                item.image = Self.menuIcon(saved)
                 return
             }
             let image = await service.image(for: url, privateID: privateID, quick: true)
             guard let item, store.selectedProfileID == profileID, let image else { return }
-            item.image = self?.menuIcon(image)
+            item.image = Self.menuIcon(image)
         }
     }
     private func rebuildHistory() {

@@ -17,6 +17,12 @@ Provisioning is reported complete. These are the configuration requirements for 
 3. Deploy the development schema to Production in CloudKit Console. Release uses the Production environment and production push entitlement; Debug uses Development. Keep environments separate during testing.
 4. Verify the signed entitlements and embedded profile for distribution. Multi-Mac testing in Production and Development remains future validation work while the feature is experimental.
 
+### Request and schema errors
+
+CloudKit error 12 means an invalid request. It does not mean the local sync journal is corrupt. A production-schema rejection requires checking `LoafSyncDocumentV1` and its encrypted Bytes `payloadV1` field in the configured container's Production environment. Deploying the Development schema is separate from configuring signing and provisioning. Do not reset local sync data to repair a missing server schema.
+
+The app distinguishes explicit production-schema rejections from other invalid requests and preserves useful configuration errors inside partial failures. Status messages do not expose raw CloudKit error details. These messages and the offline tests cannot verify whether the production schema has been deployed.
+
 No credentials, developer account changes, schema deployment, or live iCloud transfers are performed by the offline automated tests.
 
 ## Storage and recovery
