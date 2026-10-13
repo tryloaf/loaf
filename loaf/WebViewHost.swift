@@ -2,6 +2,26 @@ import AppKit
 import SwiftUI
 import WebKit
 
+enum WebCursorOwnership {
+    static func webView(for event: NSEvent, in window: NSWindow?) -> WKWebView? {
+        guard let content = window?.contentView else { return nil }
+        let point = content.convert(event.locationInWindow, from: nil)
+        var view = content.hitTest(point)
+        while let candidate = view {
+            if let webView = candidate as? WKWebView { return webView }
+            view = candidate.superview
+        }
+        return nil
+    }
+}
+
+final class WebCursorHostingView<Content: View>: NSHostingView<Content> {
+    override func cursorUpdate(with event: NSEvent) {
+        guard WebCursorOwnership.webView(for: event, in: window) == nil else { return }
+        super.cursorUpdate(with: event)
+    }
+}
+
 struct WebViewHost: NSViewRepresentable {
     let tab: BrowserTab
     var topInset: CGFloat = 0

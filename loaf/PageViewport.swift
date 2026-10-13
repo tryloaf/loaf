@@ -36,7 +36,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         var body: some View { content.environment(\.self, environment) }
     }
     final class Container: NSView {
-        let host: NSHostingView<Root>
+        let host: WebCursorHostingView<Root>
         let surface = NSView()
         let contentSurface = NSView()
         let resizeSnapshot = SnapshotView()
@@ -73,7 +73,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         override var isFlipped: Bool { true }
 
         init(content: Root) {
-            host = NSHostingView(rootView: content)
+            host = WebCursorHostingView(rootView: content)
             host.sizingOptions = []
             host.safeAreaRegions = []
             super.init(frame: .zero)

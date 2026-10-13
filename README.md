@@ -8,6 +8,6 @@ profiles, split view, a customizable startpage, and a miniplayer. optional, expe
 
 requires macOS 15.4 or later. open `loaf.xcodeproj` in Xcode 27 to build it.
 
-Golzheim is bundled in `loaf/Fonts/GolzheimSansVAR.ttf` and loaded from the app. users don’t need to install the font. build and release checks reject an app with a missing or mismatched font.
+Golzheim is bundled in the distributed app, so users don’t need to install it. the font files are excluded from this source repository. to build locally, supply your own licensed copy at `loaf/Fonts/GolzheimSansVAR.ttf`; loaf’s source license does not grant a font license. build and release checks reject an app with a missing or mismatched font.
 
 the code is here for review. the [license](LICENSE) allows private builds for testing, but doesn’t allow redistribution.

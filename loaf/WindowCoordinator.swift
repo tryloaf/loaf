@@ -331,7 +331,7 @@ import WebKit
         window.identifier = NSUserInterfaceItemIdentifier(state.id.uuidString)
         window.delegate = self
         state.nativeWindow = window
-        window.contentView = NSHostingView(rootView: ContentView(store: state))
+        window.contentView = WebCursorHostingView(rootView: ContentView(store: state))
         window.center()
         if let frame = state.savedFrame { window.setFrame(NSRectFromString(frame), display: false) }
         if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(window.frame) }) { window.center() }
@@ -486,10 +486,12 @@ import WebKit
         alert.messageText = "close \(tabs) in \(others.count == 1 ? "another profile" : "other profiles")?"
         alert.informativeText =
             "This window also contains \(count) \(tabs) in \(profiles). Closing it closes \(count == 1 ? "that tab" : "those tabs") too."
-        alert.addButton(withTitle: "close window").keyEquivalent = ""
+        alert.icon = LoafAppIcon.image
+        let close = alert.addButton(withTitle: "close window")
+        close.keyEquivalent = "\r"
         let cancel = alert.addButton(withTitle: "cancel")
         cancel.keyEquivalent = "\u{1b}"
-        alert.window.defaultButtonCell = cancel.cell as? NSButtonCell
+        alert.window.defaultButtonCell = close.cell as? NSButtonCell
         alert.showsSuppressionButton = true
         alert.suppressionButton?.title = "don’t ask again"
         let result = alert.runModal()
@@ -614,6 +616,10 @@ import WebKit
 
 @MainActor final class LoafBrowserWindow: NSWindow {
     weak var store: BrowserStore?
+    override func cursorUpdate(with event: NSEvent) {
+        guard WebCursorOwnership.webView(for: event, in: self) == nil else { return }
+        super.cursorUpdate(with: event)
+    }
     private struct OnboardingGeometry {
         let minimum: NSSize
         let maximum: NSSize

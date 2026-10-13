@@ -1,10 +1,14 @@
 Copyright © 2026 Owen Van Vooren. All rights reserved.
 
-Proprietary License · effective October 8, 2026 · version 1.1
+Proprietary License · effective October 13, 2026 · version 1.2
+
+Owen Van Vooren, an independent developer in Minnesota, United States (“Owen” or “licensor”), owns the first-party materials covered by this license. “You” means the individual or organization exercising its permissions. Contact: [hi@tryloaf.app](mailto:hi@tryloaf.app).
 
 ## Source inspection and proprietary license
 
 loaf’s first-party source code, application binaries, designs, artwork, documentation, and other first-party materials are proprietary. They are not open source, public domain, or offered under an open-source license. Publishing source for transparency does not make it open source. Access to a repository or the ability to inspect a file does not grant permission to reuse it.
+
+“First-party materials” means materials owned by Owen; it excludes third-party components, website content, and your own data. These restrictions concern those first-party materials and do not assert ownership of general ideas, methods, facts, or independently created work, or withdraw rights granted by law.
 
 Authorized end users may install and use distributed, unmodified loaf binaries under the [End User License Agreement](https://tryloaf.app/terms). That binary-use license does not grant rights to the first-party source code beyond the separate review permissions below. loaf is currently free to use; free distribution does not waive ownership or these restrictions.
 
@@ -14,9 +18,9 @@ No patent, trademark, ownership, or additional source-code license is granted by
 
 ## Source review and personal testing
 
-When Owen deliberately publishes first-party source for transparency, you may view it, make unmodified local copies, and compile and run it privately on Macs you control solely for personal review, security research, reproducibility checks, and testing. Changes strictly necessary to build the published version in your local environment are permitted for that review; this does not permit feature changes, derivative products, general reuse, or distribution. Review builds are not offered as supported releases. Their use is subject to the EULA’s applicable warranty disclaimers and liability provisions, without removing non-waivable rights.
+When Owen deliberately publishes first-party source for transparency, you may view it, make unmodified local copies, and compile and run it privately on Macs you control solely for personal review, security research, reproducibility checks, and testing. Changes strictly necessary to build the published version in your local environment are permitted for that review; this does not permit feature changes, derivative products, general reuse, or distribution. Retain copyright, attribution, and license notices in permitted copies and local build adjustments. Review builds are not offered as supported releases. Running a review build uses the app’s EULA acceptance process, including its applicable warranty disclaimers and liability provisions, without removing non-waivable rights. This license’s express permission to make necessary local build adjustments controls over the EULA’s restriction to unmodified distributed copies for that limited review use.
 
-You may fork the published repository on GitHub to the extent GitHub’s governing terms allow. That platform permission does not grant a broader right to reuse the code, publish modifications, distribute binaries, create an independently hosted mirror, or operate a derivative product. A GitHub fork must retain notices; no wider license is implied. The restrictions below do not prohibit GitHub forks expressly allowed in this paragraph.
+Making a repository public on GitHub grants GitHub and its users rights under GitHub’s governing terms, including viewing and forking through the service. This license does not override those platform rights, including rights already granted through publication. Outside those rights, it grants no permission to publish modifications, distribute binaries, create an independently hosted mirror, or operate a derivative product. Retain notices in copies to the extent consistent with the governing platform terms; no broader reuse license is implied.
 
 Outside those GitHub platform rights, you may not publish or redistribute first-party source or review builds, or use the source for other purposes, without written permission, except as applicable law allows. Do not imply that a review build or fork is an official loaf release. A local review build does not grant an app-signing identity, proprietary font redistribution rights, production service credentials, or access to someone else’s accounts.
 
@@ -26,7 +30,7 @@ You may quote limited source excerpts reasonably necessary to discuss, review, e
 
 ## Contributions
 
-Unsolicited outside code contributions are not currently accepted. Do not submit a pull request or patch expecting it to be merged. Submitting code does not transfer its ownership or authorize Owen to relicense it; code will not be incorporated without a separate written contribution agreement. Non-code suggestions are welcome and are governed by the EULA’s feedback clause. This policy does not prevent reporting bugs or security issues, including the limited excerpts permitted above.
+Unsolicited outside code contributions are not currently accepted. Do not submit a pull request or patch expecting it to be merged. This license does not itself transfer ownership of submitted code or authorize Owen to relicense it. Repository-platform terms may separately grant rights when you post a contribution; this policy does not override those grants. Owen will not incorporate outside code without a separate written contribution agreement establishing the contributor’s authority and the rights granted. Non-code suggestions are welcome and are governed by the EULA’s feedback clause. This policy does not prevent reporting bugs or security issues, including the limited excerpts permitted above.
 
 This is a proprietary, source-available license, not an open-source license. All review, testing, excerpt, and platform permissions above are limited to their stated purposes. Third-party licenses and mandatory legal rights remain independently effective.
 
@@ -34,10 +38,18 @@ This is a proprietary, source-available license, not an open-source license. All
 
 Third-party components retain their respective copyrights, notices, and licenses. This proprietary license does not replace or restrict those licenses. In particular, Sparkle, ZIPFoundation, AdGuard filter data, fonts, Apple frameworks, and extension packages are not claimed as Owen’s original work. Applicable notices and license texts accompany the distributed components. AdGuard filter data is licensed separately under the GNU General Public License version 3; it must not be represented as proprietary first-party code.
 
-Where a third-party license requires notices, corresponding source, or other permissions, those requirements and rights apply to that component. They are not withdrawn by this notice. A component’s inclusion does not, by itself, grant a license to unrelated first-party materials. Contact hi@tryloaf.app about a missing notice or a component-specific source request.
+Where a third-party license requires notices, corresponding source, or other permissions, those requirements and rights apply to that component and any covered modifications. They are not withdrawn by this notice. Third-party permissions do not depend on accepting the proprietary EULA, obtaining Owen’s permission, or observing first-party redistribution restrictions. Including components together does not determine whether they constitute separate works or a covered combined work; any obligations that the applicable license imposes on the actual distribution remain effective. Contact hi@tryloaf.app about a missing notice or a component-specific source request; this contact route does not replace any required source delivery or written offer.
 
 ## No warranty
 
 **TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, FIRST-PARTY MATERIALS ARE PROVIDED “AS IS,” WITHOUT WARRANTIES, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, OR NON-INFRINGEMENT. LIABILITY FOR END-USER USE IS SUBJECT TO THE EULA, INCLUDING ITS EXCEPTIONS FOR NON-WAIVABLE RIGHTS AND LIABILITIES.**
 
 This notice does not give someone who lacks a license permission to use the materials. For permissions beyond the EULA, contact [hi@tryloaf.app](mailto:hi@tryloaf.app).
+
+## Scope, changes, and enforcement
+
+The review, testing, and excerpt permissions are conditioned on their stated purposes and restrictions. Conduct outside those permissions is not licensed, except where a platform license, separate written agreement, third-party license, or applicable law permits it. The EULA’s notice-and-cure procedure does not expand these grants or authorize infringement. Ending an app-use license does not revoke independent platform, third-party, or mandatory legal rights.
+
+The version accompanying the first-party materials identifies the permissions offered for that copy. Merely posting a replacement does not retroactively change an existing grant or revoke independently granted rights. Changed EULA/license documents in future app versions follow the app’s acceptance process. This license controls source inspection, local review builds, excerpts, and platform permissions; the EULA controls authorized distributed app use. A separately signed agreement controls the subject matter it expressly changes, third-party licenses control their materials, and mandatory law prevails.
+
+Minnesota law governs to the extent permitted by applicable law, excluding conflict-of-law rules. Disputes may be brought in competent Minnesota state or federal courts, subject to mandatory rights to bring claims in your home jurisdiction. No mandatory arbitration, jury waiver, or class-action waiver is imposed. If a provision is unenforceable, the remainder applies to the extent lawful; a failure to enforce is not a waiver. Ownership, applicable restrictions, and disclaimers survive the end of a permission to the extent lawful.

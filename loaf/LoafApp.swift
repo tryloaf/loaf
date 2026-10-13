@@ -68,16 +68,16 @@ import WebKit
             alert.icon = LoafAppIcon.image
             alert.messageText = "downloads are still running"
             alert.informativeText = "keep loaf running in the background to finish them, or pause downloads and quit."
-            alert.addButton(withTitle: "keep downloading")
             alert.addButton(withTitle: "pause and quit")
-            alert.addButton(withTitle: "cancel")
+            alert.addButton(withTitle: "keep downloading").keyEquivalent = ""
+            alert.addButton(withTitle: "cancel").keyEquivalent = "\u{1b}"
             let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
                 guard let self else {
                     sender.reply(toApplicationShouldTerminate: false)
                     return
                 }
                 self.quitWarningVisible = false
-                if response == .alertSecondButtonReturn {
+                if response == .alertFirstButtonReturn {
                     Task {
                         await downloads.prepareToQuit()
                         self.coordinator?.terminating = true
@@ -86,7 +86,7 @@ import WebKit
                     }
                 } else {
                     sender.reply(toApplicationShouldTerminate: false)
-                    if response == .alertFirstButtonReturn { sender.hide(nil) }
+                    if response == .alertSecondButtonReturn { sender.hide(nil) }
                 }
             }
             presentQuitAlert(alert, for: sender, completion: finish)
@@ -104,20 +104,19 @@ import WebKit
         alert.messageText = "are you sure you want to quit loaf?"
         alert.informativeText = "you may have unsaved work in your tabs."
         let quit = alert.addButton(withTitle: "quit")
-        quit.hasDestructiveAction = true
-        quit.keyEquivalent = ""
+        quit.keyEquivalent = "\r"
+        alert.addButton(withTitle: "always quit").keyEquivalent = ""
         let cancel = alert.addButton(withTitle: "cancel")
         cancel.keyEquivalent = "\u{1b}"
-        alert.window.defaultButtonCell = cancel.cell as? NSButtonCell
-        alert.addButton(withTitle: "always quit")
+        alert.window.defaultButtonCell = quit.cell as? NSButtonCell
         let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard let self else {
                 sender.reply(toApplicationShouldTerminate: false)
                 return
             }
             self.quitWarningVisible = false
-            let confirmed = response == .alertFirstButtonReturn || response == .alertThirdButtonReturn
-            if response == .alertThirdButtonReturn {
+            let confirmed = response == .alertFirstButtonReturn || response == .alertSecondButtonReturn
+            if response == .alertSecondButtonReturn {
                 self.coordinator?.application.preferences.warnBeforeQuitting = false
             }
             if confirmed {

@@ -94,6 +94,10 @@ extension BrowserWindowState {
         browserTab?.clearHoveredLink()
         super.mouseExited(with: event)
     }
+    override func cursorUpdate(with event: NSEvent) {
+        if WebCursorOwnership.webView(for: event, in: window) === self { return }
+        super.cursorUpdate(with: event)
+    }
     override func hitTest(_ point: NSPoint) -> NSView? {
         if let host = superview as? WebViewHost.HostView {
             let local = convert(point, from: superview)

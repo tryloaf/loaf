@@ -50,7 +50,10 @@ struct ProfileTransparencyControl: View {
                     )
                     .contentShape(RoundedRectangle(cornerRadius: 14))
                     .overlay {
-                        CursorRegion(cursor: .openHand) { point, active in
+                        CursorRegion(
+                            cursor: .openHand,
+                            hoverCircle: CGRect(x: marker.x - 9, y: marker.y - 9, width: 18, height: 18)
+                        ) { point, active in
                             dragging = active
                             focused = true
                             value = ProfileTransparency.value(at: point.x, width: geometry.size.width)

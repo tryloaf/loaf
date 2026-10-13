@@ -361,7 +361,10 @@ struct ProfileColorPad: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 16))
             .overlay {
-                CursorRegion(cursor: .openHand) { point, active in
+                CursorRegion(
+                    cursor: .openHand,
+                    hoverCircle: CGRect(x: marker.x - 9, y: marker.y - 9, width: 18, height: 18)
+                ) { point, active in
                     dragging = active
                     focused = true
                     let position = ProfileColorPadPosition.at(point, in: geometry.size)

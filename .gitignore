@@ -5,6 +5,11 @@
 !/loaf/
 !/loaf.xcodeproj/
 
+/loaf/Fonts/*.ttf
+/loaf/Fonts/*.otf
+/loaf/Fonts/*.woff
+/loaf/Fonts/*.woff2
+
 !/tests/
 /tests/*
 !/tests/PageReadingTests.swift
@@ -19,6 +24,7 @@
 !/tests/ProfileIconOmnibarTests.swift
 !/tests/FaviconPipelineTests.swift
 !/tests/ImportSafetyTests.swift
+!/tests/CursorChecks.swift
 !/tests/Fixtures/
 /tests/Fixtures/*
 !/tests/Fixtures/userscripts.html
@@ -40,6 +46,7 @@
 !/scripts/test-profile-icons-omnibar.sh
 !/scripts/test-favicon-pipeline.sh
 !/scripts/test-import-safety.sh
+!/scripts/test-cursors.sh
 !/docs/
 /docs/*
 !/docs/ICLOUD_SYNC.md
