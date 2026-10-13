@@ -12,6 +12,7 @@
 !/tests/AIFeatureTests.swift
 !/tests/Release103Tests.swift
 !/tests/ShazamCompatibilityTests.swift
+!/tests/ExtensionInstallationTests.swift
 !/tests/ICloudSyncTests.swift
 !/tests/ConsoleLogRegressionTests.swift
 !/tests/UserScriptCompatibilityTests.swift
@@ -31,6 +32,7 @@
 !/scripts/test-ai-features.sh
 !/scripts/test-release103.sh
 !/scripts/test-shazam-compatibility.sh
+!/scripts/test-extension-installation.sh
 !/scripts/test-icloud-sync.sh
 !/scripts/test-console-regressions.sh
 !/scripts/FetchExtensionFixtures.swift

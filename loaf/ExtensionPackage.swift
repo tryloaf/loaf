@@ -7,6 +7,22 @@ struct PackageError: LocalizedError {
     let reason: String
     var errorDescription: String? { reason }
 }
+nonisolated enum ExtensionLimits {
+    static let packageBytes = 256_000_000
+    static let extractedBytes: UInt64 = 1_000_000_000
+    static let entries = 20_000
+    static let packageMessage = "This extension package exceeds loaf's 256 MB limit."
+    static let extractedMessage = "This extension exceeds loaf's 1 GB extracted size limit."
+
+    static func readPackage(_ url: URL) throws -> Data {
+        let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values.isRegularFile == true else { throw PackageError(reason: "Choose a CRX3 extension file.") }
+        guard let size = values.fileSize, size <= packageBytes else { throw PackageError(reason: packageMessage) }
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        guard data.count <= packageBytes else { throw PackageError(reason: packageMessage) }
+        return data
+    }
+}
 nonisolated enum CRXVerifier {
     struct Verified {
         let id: String
@@ -22,7 +38,10 @@ nonisolated enum CRXVerifier {
             .joined()
     }
     static func verify(_ package: Data, expectedID: String? = nil, requirePublisher: Bool = false) throws -> Verified {
-        guard package.count >= 12, package.count <= 50_000_000, package.prefix(4) == Data("Cr24".utf8),
+        guard package.count <= ExtensionLimits.packageBytes else {
+            throw PackageError(reason: ExtensionLimits.packageMessage)
+        }
+        guard package.count >= 12, package.prefix(4) == Data("Cr24".utf8),
             uint32(package, 4) == 3
         else { throw PackageError(reason: "Only bounded CRX3 packages are supported.") }
         let length = Int(uint32(package, 8))
@@ -191,7 +210,8 @@ nonisolated enum CRXVerifier {
 
 nonisolated enum ExtensionArchive {
     static func extract(_ zip: Data, to destination: URL) throws {
-        guard zip.count <= 50_000_000, !FileManager.default.fileExists(atPath: destination.path) else {
+        guard zip.count <= ExtensionLimits.packageBytes, !FileManager.default.fileExists(atPath: destination.path)
+        else {
             throw PackageError(reason: "Invalid extraction destination or package size.")
         }
         let archive = try Archive(data: zip, accessMode: .read)
@@ -200,12 +220,12 @@ nonisolated enum ExtensionArchive {
         var paths = Set<String>()
         for entry in archive {
             count += 1
-            guard entry.uncompressedSize <= 200_000_000 - total else {
-                throw PackageError(reason: "ZIP extraction size limit.")
+            guard entry.uncompressedSize <= ExtensionLimits.extractedBytes - total else {
+                throw PackageError(reason: ExtensionLimits.extractedMessage)
             }
             total += entry.uncompressedSize
             let components = entry.path.split(separator: "/", omittingEmptySubsequences: false)
-            guard count <= 20_000, total <= 200_000_000, entry.uncompressedSize <= 50_000_000, entry.type != .symlink,
+            guard count <= ExtensionLimits.entries, entry.type != .symlink,
                 !entry.path.hasPrefix("/"), !entry.path.contains("\\"), !entry.path.contains("\0"),
                 !components.contains(".."), !components.contains("."),
                 paths.insert(

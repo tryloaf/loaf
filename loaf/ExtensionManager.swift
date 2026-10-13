@@ -52,18 +52,37 @@ import WebKit
 
     func restore() async {
         guard !isDisposed, let store else { return }
-        for record in store.profileFor(profileID).extensions where record.enabled {
+        for record in store.profileFor(profileID).extensions
+        where record.enabled || record.status == "installed · load failed · disabled" {
             guard !isDisposed, !Task.isCancelled else { return }
-            guard store.profileFor(profileID).extensions.contains(where: { $0.id == record.id && $0.enabled }) else {
+            guard
+                store.profileFor(profileID).extensions.contains(where: {
+                    $0.id == record.id && ($0.enabled || $0.status == "installed · load failed · disabled")
+                })
+            else {
                 continue
             }
-            do { try await load(record) } catch is CancellationError { continue } catch {
+            do {
+                try await load(record)
+                application?.updateProfile(profileID) { profile in
+                    guard let index = profile.extensions.firstIndex(where: { $0.id == record.id }) else { return }
+                    profile.extensions[index].enabled = true
+                    if profile.extensions[index].status?.contains("load failed") == true {
+                        profile.extensions[index].status =
+                            record.storeID == ExtensionShazam.identifier
+                            ? "installed · song recognition unavailable" : "installed · compatibility unverified"
+                    }
+                }
+                if store.error?.hasPrefix("\(record.name) could not load: ") == true { store.error = nil }
+            } catch is CancellationError { continue } catch {
                 application?.updateProfile(profileID) { profile in
                     if let index = profile.extensions.firstIndex(where: { $0.id == record.id }) {
-                        profile.extensions[index].enabled = false
-                        profile.extensions[index].status = "installed · load failed · disabled"
-                        profile.extensions[index].diagnostics =
-                            (profile.extensions[index].diagnostics ?? []) + [error.localizedDescription]
+                        profile.extensions[index].enabled = true
+                        profile.extensions[index].status = "installed · load failed · retry on restart"
+                        if !(profile.extensions[index].diagnostics ?? []).contains(error.localizedDescription) {
+                            profile.extensions[index].diagnostics =
+                                (profile.extensions[index].diagnostics ?? []) + [error.localizedDescription]
+                        }
                     }
                 }
                 store.error = "\(record.name) could not load: \(error.localizedDescription)"
@@ -100,7 +119,7 @@ import WebKit
         defer { installing = false }
         do {
             if source.pathExtension.lowercased() == "crx" {
-                let data = try Data(contentsOf: source)
+                let data = try ExtensionLimits.readPackage(source)
                 let verified = try CRXVerifier.verify(data)
                 try await installPackage(data, verified: verified, confirm: true, owner: store)
             } else {
@@ -127,8 +146,16 @@ import WebKit
             guard let json = try JSONSerialization.jsonObject(with: versionData) as? [String: Any],
                 let versions = json["versions"] as? [[String: Any]], let version = versions.first?["version"] as? String
             else { throw PackageError(reason: "Couldn't determine the current extension package version.") }
-            let data = try await AssetRequest.data(
-                ChromeStore.packageURL(id: id, version: version), limit: 50_000_000, timeout: 90)
+            let data: Data
+            do {
+                data = try await AssetRequest.data(
+                    ChromeStore.packageURL(id: id, version: version), limit: ExtensionLimits.packageBytes, timeout: 90)
+            } catch let error as NSError
+                where error.domain == NSCocoaErrorDomain
+                && error.code == CocoaError.fileReadTooLarge.rawValue
+            {
+                throw PackageError(reason: ExtensionLimits.packageMessage)
+            }
             let verified = try CRXVerifier.verify(data, expectedID: id, requirePublisher: true)
             try await installPackage(data, verified: verified, confirm: true, owner: store)
         } catch { store.error = error.localizedDescription }
@@ -223,17 +250,45 @@ import WebKit
     }
 
     private func validateFolder(_ source: URL) throws {
+        let root = try source.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard root.isDirectory == true, root.isSymbolicLink != true else {
+            throw PackageError(reason: "Choose an unpacked extension folder or a CRX3 package.")
+        }
+        guard !["app", "appex", "safariextz"].contains(source.pathExtension.lowercased()) else {
+            throw PackageError(
+                reason: "Safari extension apps can't be loaded directly. Install the Chrome Web Store version instead.")
+        }
+        let manifest = source.appendingPathComponent("manifest.json")
+        guard FileManager.default.fileExists(atPath: manifest.path) else {
+            throw PackageError(reason: "Choose the extension folder containing manifest.json, or a CRX3 package.")
+        }
+        let manifestValues = try manifest.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+        guard manifestValues.isRegularFile == true, manifestValues.isSymbolicLink != true,
+            let manifestSize = manifestValues.fileSize, manifestSize <= 1_000_000
+        else { throw PackageError(reason: "The extension manifest is invalid or exceeds 1 MB.") }
+        var traversalError: Error?
         guard
             let enumerator = FileManager.default.enumerator(
-                at: source, includingPropertiesForKeys: [.isSymbolicLinkKey, .fileSizeKey])
+                at: source, includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey, .fileSizeKey],
+                errorHandler: { _, error in
+                    traversalError = error
+                    return false
+                })
         else { throw CocoaError(.fileReadUnknown) }
-        var bytes = 0
+        var bytes: UInt64 = 0
+        var count = 0
         for case let url as URL in enumerator {
-            let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .fileSizeKey])
+            let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey, .fileSizeKey])
             guard values.isSymbolicLink != true else { throw CocoaError(.fileReadNoPermission) }
-            bytes += values.fileSize ?? 0
-            guard bytes < 200_000_000 else { throw CocoaError(.fileReadTooLarge) }
+            count += 1
+            guard count <= ExtensionLimits.entries else { throw PackageError(reason: "Too many extension files.") }
+            if values.isDirectory == true { continue }
+            guard let size = values.fileSize, size >= 0, UInt64(size) <= ExtensionLimits.extractedBytes - bytes else {
+                throw PackageError(reason: ExtensionLimits.extractedMessage)
+            }
+            bytes += UInt64(size)
         }
+        if let traversalError { throw traversalError }
     }
 
     private func load(_ record: InstalledExtension) async throws {
@@ -242,6 +297,29 @@ import WebKit
         let revision = loadRevisions[record.id]
         let root = folder.appendingPathComponent(record.id.uuidString)
         let runtime = root.appendingPathComponent("runtime")
+        if !FileManager.default.fileExists(atPath: runtime.appendingPathComponent("manifest.json").path),
+            FileManager.default.fileExists(atPath: root.appendingPathComponent("original/manifest.json").path)
+        {
+            let original = root.appendingPathComponent("original")
+            try validateFolder(original)
+            let staging = root.appendingPathComponent("repair-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: staging) }
+            try FileManager.default.copyItem(at: original, to: staging)
+            let diagnostics = try ExtensionCompatibility.prepare(staging, extensionID: record.storeID)
+            try ExtensionResourceURLs.normalize(in: staging, identifier: record.storeID ?? record.id.uuidString)
+            if FileManager.default.fileExists(atPath: runtime.path) {
+                _ = try FileManager.default.replaceItemAt(runtime, withItemAt: staging)
+            } else {
+                try FileManager.default.moveItem(at: staging, to: runtime)
+            }
+            application?.updateProfile(profileID) { profile in
+                guard let index = profile.extensions.firstIndex(where: { $0.id == record.id }) else { return }
+                for diagnostic in diagnostics where !(profile.extensions[index].diagnostics ?? []).contains(diagnostic)
+                {
+                    profile.extensions[index].diagnostics = (profile.extensions[index].diagnostics ?? []) + [diagnostic]
+                }
+            }
+        }
         if record.storeID == ExtensionShazam.identifier,
             FileManager.default.fileExists(atPath: root.appendingPathComponent("original").path)
         {

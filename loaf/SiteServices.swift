@@ -20,7 +20,7 @@ enum AssetRequest {
     {
         guard (url.scheme == "https" || (allowHTTP && url.scheme == "http" && BrowserAddress.isLocalHost(url.host))),
             url.host != nil,
-            url.user == nil, url.password == nil, limit >= 0, limit <= 50_000_000
+            url.user == nil, url.password == nil, limit >= 0, limit <= ExtensionLimits.packageBytes
         else {
             throw URLError(.unsupportedURL)
         }

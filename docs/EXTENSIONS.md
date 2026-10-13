@@ -2,6 +2,12 @@
 
 Chrome extension support remains experimental. Install Tampermonkey from the Chrome Web Store through loaf's extension settings, then add scripts through its dashboard. Enabling a manager allows the scripts you add to run on its approved websites. Reload existing pages after adding a script.
 
+Safari extensions purchased in the App Store do not load automatically in loaf. Install the extension's Chrome Web Store version where available, or choose an unpacked folder containing `manifest.json`. Selecting a Safari app or a folder without a manifest now reports the actual installation problem before checking its size.
+
+Extension packages can be up to 256 MB, with at most 1 GB extracted across 20,000 entries. These limits apply to downloads, local CRX packages, and unpacked folders. CRX3 developer signatures and Chrome Web Store publisher proofs remain required; archive path, link, duplicate, checksum, and streamed byte checks still apply.
+
+Startup load failures preserve the enabled setting and retry on the next launch. Installations previously disabled by an automatic load failure also retry; extensions explicitly disabled in settings remain disabled. If the runtime folder or its manifest is missing, loaf rebuilds the runtime from its retained original without changing approved permissions, the original package, or manager registrations. Errors remain visible when recovery is unavailable.
+
 The compatibility layer implements the Manifest V3 `userScripts` registration API used by Tampermonkey: `register`, `update`, `unregister`, `getScripts`, `configureWorld`, `getWorldConfigurations`, and `resetWorldConfiguration`.
 
 - Registrations and world settings are stored locally with the extension, separately for each profile. They survive extension reloads and app restarts. Removing the extension removes its registrations.
@@ -29,3 +35,5 @@ Build the Debug app into `build/DerivedData`, then run:
 ```
 
 The check uses temporary profiles and a local HTTP fixture. It downloads the current Tampermonkey package when no cached fixture exists, then verifies the developer and Chrome Web Store signatures before loading it. Tampermonkey 5.5.1 passed during development.
+
+`./scripts/test-extension-installation.sh` checks a live Chrome Store download through loaf's downloader, a generated signed package above the former 50 MB cap, an unpacked folder above the former 200 MB cap, signature and transfer limits, missing runtime recovery, cold restoration, and deliberately disabled extensions. It also installs and restores the signed Chrome packages for UnTrap, SocialFocus, Honey, WhatFont, Shut Up, Mendeley, AdGuard, and Grammarly in temporary profiles. Loading a package does not certify its account-dependent features or every third-party API.
