@@ -39,6 +39,39 @@ enum AssetRequest {
     }
 }
 
+private actor FaviconRequestQueue {
+    private var active = 0
+    private var waiting: [(id: UUID, continuation: CheckedContinuation<Void, Error>)] = []
+    private let limit = 3
+
+    func acquire() async throws {
+        try Task.checkCancellation()
+        if active < limit {
+            active += 1
+            return
+        }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiting.append((id, continuation))
+            }
+        } onCancel: {
+            Task { await self.cancel(id) }
+        }
+    }
+    func release() {
+        if waiting.isEmpty {
+            active -= 1
+        } else {
+            waiting.removeFirst().continuation.resume()
+        }
+    }
+    private func cancel(_ id: UUID) {
+        guard let index = waiting.firstIndex(where: { $0.id == id }) else { return }
+        waiting.remove(at: index).continuation.resume(throwing: CancellationError())
+    }
+}
+
 @MainActor final class FaviconService {
     let directory: URL
     private var memory: [String: NSImage] = [:]
@@ -51,6 +84,7 @@ enum AssetRequest {
     private var recentDeclaredAttempts: [String: DeclaredAttempt] = [:]
     private var privateGenerations: [UUID: Int] = [:]
     private let assets: FaviconAssets
+    private let requestQueue = FaviconRequestQueue()
     private let fetch: (URL) async throws -> Data
     private struct Pending {
         let id: UUID
@@ -68,6 +102,19 @@ enum AssetRequest {
         self.directory = directory
         self.fetch = fetch
         assets = FaviconAssets(directory: directory)
+    }
+
+    private func fetchIcon(_ url: URL) async throws -> Data {
+        try await requestQueue.acquire()
+        do {
+            try Task.checkCancellation()
+            let data = try await fetch(url)
+            await requestQueue.release()
+            return data
+        } catch {
+            await requestQueue.release()
+            throw error
+        }
     }
 
     func cachedImage(for url: URL, privateID: UUID? = nil) -> NSImage? {
@@ -134,7 +181,10 @@ enum AssetRequest {
         if !refresh, declared.isEmpty, let failed = failures[key], Date().timeIntervalSince(failed) < 60 { return nil }
         let file = cacheFile(for: origin)
         let assets = assets
-        let fetch = fetch
+        let fetch: (URL) async throws -> Data = { [weak self] url in
+            guard let self else { throw CancellationError() }
+            return try await self.fetchIcon(url)
+        }
         let task = Task<NSImage?, Never> {
             func image(_ prepared: PreparedFavicon) -> NSImage {
                 NSImage(

@@ -139,15 +139,8 @@ struct SidebarView: View {
                     store.gridPinnedTabs.isEmpty && store.draggedTabID == nil && !store.rowPinnedTabs.isEmpty ? 10 : 0
                 )
         }
-        .opacity(max(0, 1 - store.profileSwipeProgress * 2))
         .offset(x: store.profileResistance)
-        .overlay {
-            if let target = store.profileSwipeTarget {
-                SidebarProfilePreview(store: store, profile: target)
-                    .opacity(max(0, store.profileSwipeProgress * 2 - 1))
-                    .allowsHitTesting(false).accessibilityHidden(true)
-            }
-        }.clipped()
+        .clipped()
     }
     private var address: some View {
         AddressFeedback(feedback: store.feedback, activate: { store.openOmnibar() }) {
@@ -777,111 +770,6 @@ struct TabRow: View {
             .background(TabHoverAnchor(tab: tab, store: store))
             .background(TabClosingAnchor(tabID: tab.id))
             .contextMenu { TabActions(tab: tab, store: store) }
-    }
-}
-
-private struct SidebarProfilePreview: View {
-    let store: BrowserStore
-    let profile: Profile
-    private struct Row: Identifiable {
-        let id: UUID
-        var tab: SavedTab?
-        var group: TabGroup?
-        var indented = false
-    }
-    private var rows: [Row] {
-        let workspace = store.workspaces[profile.id]
-        let tabs = workspace?.tabs ?? profile.tabs
-        let groups = (profile.pinnedGroups ?? []) + (workspace?.groups ?? [])
-        func groupRows(_ group: TabGroup) -> [Row] {
-            let members = group.savedTabs ?? tabs.filter { $0.groupID == group.id && !$0.pinned }
-            return [Row(id: group.id, group: group)]
-                + (group.collapsed ? [] : members.map { Row(id: $0.id, tab: $0, indented: true) })
-        }
-        let looseTabs = tabs.filter { tab in !tab.pinned && !groups.contains(where: { $0.id == tab.groupID }) }
-        let local = groups.filter { !$0.isPinned }
-        let available = local.map(\.id) + looseTabs.map(\.id)
-        let order = (workspace?.sidebarOrder ?? []).filter { available.contains($0) }
-        var result = (profile.pinShortcuts ?? []).filter { $0.pinPresentation == "row" }.map { Row(id: $0.id, tab: $0) }
-        result += groups.filter(\.isPinned).flatMap(groupRows)
-        result.append(Row(id: SidebarEntry.newTabID))
-        result += (order + available.filter { !order.contains($0) }).flatMap { id -> [Row] in
-            if let group = local.first(where: { $0.id == id }) { return groupRows(group) }
-            return looseTabs.first(where: { $0.id == id }).map { [Row(id: id, tab: $0)] } ?? []
-        }
-        return result
-    }
-    @ViewBuilder private func icon(_ tab: SavedTab) -> some View {
-        if let glyph = tab.pinnedIcon ?? tab.customIcon {
-            EmojiIcon(glyph: glyph, size: 16)
-        } else if let url = tab.address.flatMap(URL.init(string:)),
-            let image = store.application.favicons.cachedImage(
-                for: url, privateID: profile.privateMode ? profile.id : nil)
-        {
-            Image(nsImage: image).resizable().scaledToFit().frame(width: 16, height: 16)
-        } else {
-            GolzheimIcon(icon: tab.page == .web ? .globe : tab.page.icon, size: 16)
-        }
-    }
-    var body: some View {
-        let pins = (profile.pinShortcuts ?? []).filter { $0.pinPresentation != "row" }
-        let list = store.preferences.pinnedLayout == "list"
-        VStack(spacing: 0) {
-            if !pins.isEmpty {
-                ScrollView {
-                    LazyVGrid(
-                        columns: Array(
-                            repeating: GridItem(.flexible(), spacing: 6),
-                            count: list ? 1 : PinGridLayout.columns(for: pins.count)),
-                        spacing: list ? 4 : 6
-                    ) {
-                        ForEach(pins) { pin in
-                            HStack(spacing: 8) {
-                                icon(pin)
-                                if list {
-                                    Text(pin.pinnedTitle ?? pin.customTitle ?? pin.title).font(.system(size: 13))
-                                        .lineLimit(1)
-                                    Spacer(minLength: 0)
-                                }
-                            }.frame(maxWidth: .infinity).frame(height: PinGridLayout.tileHeight)
-                                .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
-                        }
-                    }
-                }.scrollIndicators(.hidden).frame(height: PinGridLayout.height(for: pins.count, list: list))
-                    .padding(.horizontal, 8).padding(.top, 10).padding(.bottom, 4)
-            }
-            ScrollView {
-                LazyVStack(spacing: 4) {
-                    ForEach(rows) { row in
-                        if let tab = row.tab {
-                            HStack(spacing: 8) {
-                                icon(tab)
-                                Text(tab.pinnedTitle ?? tab.customTitle ?? tab.title).font(.system(size: 13)).lineLimit(
-                                    1)
-                                Spacer(minLength: 0)
-                            }.padding(.leading, row.indented ? 24 : 8).padding(.trailing, 8).frame(height: 32)
-                                .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
-                        } else if let group = row.group {
-                            HStack(spacing: 8) {
-                                EmojiIcon(glyph: group.icon, size: 16)
-                                Text(group.name).font(.system(size: 13))
-                                Spacer(minLength: 0)
-                                GolzheimIcon(icon: group.collapsed ? .disclosureUp : .disclosureDown, size: 12)
-                            }.padding(.horizontal, 8).frame(height: 32)
-                        } else {
-                            HStack(spacing: 4) {
-                                GolzheimIcon(icon: .plus, size: 12)
-                                Text("new tab")
-                                Spacer()
-                            }
-                            .font(.system(size: 13)).padding(.horizontal, 8).frame(height: 32)
-                            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
-                            .padding(.top, 8).padding(.bottom, 4)
-                        }
-                    }
-                }.padding(.horizontal, 8)
-            }.scrollIndicators(.hidden)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 

@@ -109,7 +109,7 @@ struct ProfileWindowSurface: View {
     var body: some View {
         let opacity = ProfileTransparency.opacity(transparency, reduceTransparency: reduceTransparency)
         ZStack {
-            if opacity < 1 { WindowBackdrop(withinWindow: withinWindow) }
+            WindowBackdrop(withinWindow: withinWindow, visible: opacity < 1)
             color.opacity(opacity)
         }.allowsHitTesting(false).accessibilityHidden(true)
     }
@@ -117,18 +117,25 @@ struct ProfileWindowSurface: View {
 
 struct WindowBackdrop: NSViewRepresentable {
     var withinWindow = false
+    var visible = true
     func makeNSView(context: Context) -> BackdropView {
         let view = BackdropView()
         view.material = .sidebar
         view.blendingMode = withinWindow ? .withinWindow : .behindWindow
-        view.state = .active
+        view.state = visible ? .active : .inactive
+        view.isHidden = !visible
         view.identifier = .init("loaf.window.backdrop")
         view.setAccessibilityElement(false)
         return view
     }
     func updateNSView(_ view: BackdropView, context: Context) {
-        view.blendingMode = withinWindow ? .withinWindow : .behindWindow
-        view.appearance = NSAppearance(named: context.environment.colorScheme == .dark ? .darkAqua : .aqua)
+        let mode: NSVisualEffectView.BlendingMode = withinWindow ? .withinWindow : .behindWindow
+        if view.blendingMode != mode { view.blendingMode = mode }
+        let appearance: NSAppearance.Name = context.environment.colorScheme == .dark ? .darkAqua : .aqua
+        if view.appearance?.name != appearance { view.appearance = NSAppearance(named: appearance) }
+        if view.isHidden == visible { view.isHidden = !visible }
+        let state: NSVisualEffectView.State = visible ? .active : .inactive
+        if view.state != state { view.state = state }
     }
     final class BackdropView: NSVisualEffectView {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }

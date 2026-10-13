@@ -733,34 +733,38 @@ import WebKit
     }
 
     func switchProfile(_ id: UUID) {
-        markVisibleTabsActive()
-        if id != selectedProfileID { endSplit() }
-        guard profiles.contains(where: { $0.id == id }), id != selectedProfileID else { return }
-        for tab in tabs {
-            tab.existingChatGPTSearch?.clear()
-            tab.existingSideChat?.endSession()
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            markVisibleTabsActive()
+            if id != selectedProfileID { endSplit() }
+            guard profiles.contains(where: { $0.id == id }), id != selectedProfileID else { return }
+            for tab in tabs {
+                tab.existingChatGPTSearch?.clear()
+                tab.existingSideChat?.endSession()
+            }
+            cancelPasswordFill()
+            tabHover.dismiss()
+            profileDirection =
+                (profiles.firstIndex { $0.id == id } ?? 0) > (profiles.firstIndex { $0.id == selectedProfileID } ?? 0)
+                ? 1 : -1
+            feedback.clear()
+            cancelPointerLock()
+            if let tab = selectedTab { application.tabPreviews.capture(tab) }
+            selectedSidebarTabIDs = []
+            sidebarSelectionAnchor = nil
+            editingGroupID = nil
+            selectedProfileID = id
+            omnibarVisible = false
+            passwordOffer = nil
+            passwordFillOffer = nil
+            siteSettingsVisible = false
+            findVisible = false
+            translationText = nil
+            restoreTabs(for: id)
+            runtime.extensions.controller.didFocusWindow(extensionWindow(for: id))
+            persistSoon()
         }
-        cancelPasswordFill()
-        tabHover.dismiss()
-        profileDirection =
-            (profiles.firstIndex { $0.id == id } ?? 0) > (profiles.firstIndex { $0.id == selectedProfileID } ?? 0)
-            ? 1 : -1
-        feedback.clear()
-        cancelPointerLock()
-        if let tab = selectedTab { application.tabPreviews.capture(tab) }
-        selectedSidebarTabIDs = []
-        sidebarSelectionAnchor = nil
-        editingGroupID = nil
-        selectedProfileID = id
-        omnibarVisible = false
-        passwordOffer = nil
-        passwordFillOffer = nil
-        siteSettingsVisible = false
-        findVisible = false
-        translationText = nil
-        restoreTabs(for: id)
-        runtime.extensions.controller.didFocusWindow(extensionWindow(for: id))
-        persistSoon()
     }
 
     func addProfile(name: String, emoji: String, privateMode: Bool = false) {

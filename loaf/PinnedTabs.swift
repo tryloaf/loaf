@@ -337,12 +337,13 @@ struct PinnedTabTile: View {
             .onHover { hovered = $0 }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: hovered)
             .task(id: tab.pinnedAddress) {
-                guard tab.pinnedIcon == nil, tab.favicon == nil,
+                guard store.selectedProfileID == tab.profileID, tab.pinnedIcon == nil, tab.favicon == nil,
                     let address = tab.pinnedAddress ?? tab.url?.absoluteString, let url = URL(string: address)
                 else { return }
                 let image = await store.application.favicons.image(
-                    for: url, privateID: store.profileFor(tab.profileID).privateMode ? tab.profileID : nil)
-                guard !Task.isCancelled, !tab.isDisposed, tab.favicon == nil,
+                    for: url, privateID: store.profileFor(tab.profileID).privateMode ? tab.profileID : nil,
+                    quick: true, discoverPage: false)
+                guard !Task.isCancelled, !tab.isDisposed, store.selectedProfileID == tab.profileID, tab.favicon == nil,
                     tab.url.flatMap(BrowserAddress.websiteOrigin) == BrowserAddress.websiteOrigin(url)
                 else { return }
                 tab.favicon = image
