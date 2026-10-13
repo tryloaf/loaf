@@ -102,6 +102,10 @@ import WebKit
             diagnostics.append(try ExtensionShazam.prepare(folder, original: folder))
             manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any] ?? [:]
         }
+        if extensionID == ExtensionReturnYouTubeDislike.identifier {
+            diagnostics.append(try ExtensionReturnYouTubeDislike.prepare(folder, original: folder))
+            manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any] ?? [:]
+        }
         let shim = folder.appendingPathComponent("_loaf_bridge.js")
         try Data(script.utf8).write(to: shim, options: .atomic)
         var permissions = manifest["permissions"] as? [String] ?? []

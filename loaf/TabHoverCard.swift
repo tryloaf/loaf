@@ -307,7 +307,10 @@ struct TabHoverCard: View {
                 IconButton(icon: .back, label: store.isPersistentTab(tab) ? "return to pinned page" : "back") {
                     if store.isPersistentTab(tab) { store.returnToPin(tab) } else { tab.webView.goBack() }
                 }.disabled(store.isPersistentTab(tab) ? tab.pinnedAddress == nil && tab.url == nil : !tab.canGoBack)
-                IconButton(icon: .favorite, label: "toggle favorite") { store.favorite(tab) }.disabled(tab.url == nil)
+                IconButton(
+                    icon: store.isFavorite(tab) ? .favoriteFilled : .favorite,
+                    label: store.isFavorite(tab) ? "remove favorite" : "bookmark this page"
+                ) { store.favorite(tab) }.disabled(tab.url == nil)
                 IconButton(icon: .pinned, label: store.isPersistentTab(tab) ? "unpin tab" : "pin tab") {
                     if store.isPersistentTab(tab) { store.removePersistentTab(tab) } else { store.togglePin(tab) }
                 }

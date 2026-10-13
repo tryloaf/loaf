@@ -199,18 +199,54 @@ struct SoftwareUpdateReminder: View {
     @ObservedObject private var updates = SoftwareUpdateManager.shared
     var body: some View {
         if let version = updates.availableVersion {
-            Button {
+            SoftwareUpdateCard(version: version) {
                 updates.checkForUpdates()
-            } label: {
-                HStack(spacing: 8) {
-                    GolzheimIcon(icon: .download, size: 14)
-                    Text("loaf \(version) is available").font(.system(size: 11)).lineLimit(1).truncationMode(.tail)
-                    Spacer(minLength: 0)
-                    GolzheimIcon(icon: .forward, size: 12)
-                }.padding(8).contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(!updates.canCheckForUpdates)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-                .help("review and install the update")
+            }.disabled(!updates.canCheckForUpdates).padding(.bottom, 8)
         }
+    }
+}
+
+struct SoftwareUpdateCard: View {
+    let version: String
+    let review: () -> Void
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: review) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    GolzheimIcon(icon: .download, size: 16, weight: 200)
+                        .frame(width: 28, height: 28)
+                        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 7))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("update available").font(.system(size: 12, weight: .medium))
+                        Text("loaf \(version)").font(.system(size: 10)).foregroundStyle(.secondary)
+                    }.fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                HStack(spacing: 6) {
+                    Text("review update").font(.system(size: 11, weight: .medium))
+                    Spacer(minLength: 0)
+                    GolzheimIcon(icon: .forward, size: 12, weight: 180)
+                        .accessibilityHidden(true)
+                }.padding(.horizontal, 8).frame(height: 26)
+                    .background(
+                        Color.primary.opacity(enabled && hovered ? 0.085 : 0.045),
+                        in: RoundedRectangle(cornerRadius: 6))
+                    .opacity(enabled ? 1 : 0.4)
+            }.padding(8)
+                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.06)))
+                .shadow(color: .black.opacity(0.04), radius: 3, y: 1)
+        }.buttonStyle(LoafButtonStyle())
+            .onHover { hovered = $0 }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
+            .accessibilityLabel("loaf \(version) update available")
+            .accessibilityHint("review and install the update")
+            .help("review and install the update")
     }
 }

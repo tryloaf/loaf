@@ -456,7 +456,6 @@ struct ChatGPTSearchView: View {
                             modelID: search.modelID
                         ) { value in
                             if value != search.provider {
-                                search.clear()
                                 store.preferences.aiProvider = value
                                 store.persistSoon()
                             }

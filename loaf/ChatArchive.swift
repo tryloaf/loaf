@@ -18,8 +18,11 @@ nonisolated struct SavedChat: Codable, Identifiable, Sendable {
     private let file: URL
     private let localAccount: String
     private let keychainService: String
+    private var unlockedKeys: [Bool: SymmetricKey] = [:]
+    private let keyLoader: ((Bool, Bool) throws -> SymmetricKey)?
     private var syncPayloads: [UUID: (date: Date, data: Data)] = [:]
-    init(directory: URL, keychainService: String? = nil) {
+    init(directory: URL, keychainService: String? = nil, keyLoader: ((Bool, Bool) throws -> SymmetricKey)? = nil) {
+        self.keyLoader = keyLoader
         self.keychainService =
             keychainService ?? (Bundle.main.bundleIdentifier ?? BrowserBrand.bundleIdentifier) + ".chat-vault.v1"
         file = directory.appendingPathComponent("chats-v1.encrypted")
@@ -116,6 +119,13 @@ nonisolated struct SavedChat: Codable, Identifiable, Sendable {
         if try JSONEncoder().encode(next) != JSONEncoder().encode(chats) { try persist(next) }
     }
     private func key(synced: Bool, create: Bool = true) throws -> SymmetricKey {
+        // Reuse the unlocked key instead of asking Keychain again on every autosave.
+        if let key = unlockedKeys[synced] { return key }
+        let key = try keyLoader?(synced, create) ?? loadKey(synced: synced, create: create)
+        unlockedKeys[synced] = key
+        return key
+    }
+    private func loadKey(synced: Bool, create: Bool) throws -> SymmetricKey {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -135,7 +145,7 @@ nonisolated struct SavedChat: Codable, Identifiable, Sendable {
         query[kSecAttrAccessible as String] =
             synced ? kSecAttrAccessibleWhenUnlocked : kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         let added = SecItemAdd(query as CFDictionary, nil)
-        if added == errSecDuplicateItem { return try self.key(synced: synced) }
+        if added == errSecDuplicateItem { return try loadKey(synced: synced, create: false) }
         guard added == errSecSuccess else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(added)) }
         return key
     }

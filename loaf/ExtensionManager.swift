@@ -320,6 +320,19 @@ import WebKit
                 }
             }
         }
+        if record.storeID == ExtensionReturnYouTubeDislike.identifier,
+            FileManager.default.fileExists(atPath: root.appendingPathComponent("original").path),
+            !FileManager.default.fileExists(atPath: runtime.appendingPathComponent(ExtensionReturnYouTubeDislike.marker).path)
+        {
+            let diagnostic = try ExtensionReturnYouTubeDislike.prepare(runtime, original: root.appendingPathComponent("original"))
+            application?.updateProfile(profileID) { profile in
+                if let index = profile.extensions.firstIndex(where: { $0.id == record.id }),
+                    !(profile.extensions[index].diagnostics ?? []).contains(diagnostic)
+                {
+                    profile.extensions[index].diagnostics = (profile.extensions[index].diagnostics ?? []) + [diagnostic]
+                }
+            }
+        }
         if record.storeID == ExtensionShazam.identifier,
             FileManager.default.fileExists(atPath: root.appendingPathComponent("original").path)
         {

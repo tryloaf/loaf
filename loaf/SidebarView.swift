@@ -285,7 +285,7 @@ struct SidebarView: View {
                     .offset(y: 6 * (1 - extensionProgress))
                     .frame(height: extensionStripHeight * extensionProgress, alignment: .top).clipped()
                     .allowsHitTesting(store.extensionsVisible).accessibilityHidden(!store.extensionsVisible)
-                SoftwareUpdateReminder().padding(.horizontal, 8)
+                SoftwareUpdateReminder()
                 footer.zIndex(1)
             }.onGeometryChange(for: CGFloat.self, of: { $0.size.height + 8 }) { trayBaseHeight = $0 }
         }

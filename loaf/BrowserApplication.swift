@@ -25,6 +25,17 @@ import WebKit
         return monitor
     }
     lazy var chatArchive = ChatArchive(directory: directory)
+    lazy var sideChatAccess = SideChatAccess(onLock: { [weak self] in
+        guard let self, self.preferences.requireSideChatPassword == true else { return }
+        for runtime in self.runtimes.values {
+            for tab in runtime.tabs.values { tab.existingSideChat?.stop() }
+        }
+    })
+    func setSideChatPasswordRequired(_ required: Bool) {
+        preferences.requireSideChatPassword = required
+        sideChatAccess.lock()
+        persistSoon()
+    }
     lazy var cloudSync = ICloudSync(application: self)
     lazy var notifications = WebNotifications(application: self)
     lazy var startTimers = StartTimerService(

@@ -14,10 +14,15 @@ extension BrowserWindowState {
     func summarizePage() {
         guard canSummarizePage, let tab = selectedTab else { return }
         sideChatOpeningTask?.cancel()
-        sideChatOpeningTask = nil
-        sideChatVisible = true
-        sideChatFocusID = UUID()
-        tab.sideChat.summarize()
+        sideChatOpeningTask = Task { [weak self, weak tab] in
+            guard let self, let tab else { return }
+            defer { if !Task.isCancelled { self.sideChatOpeningTask = nil } }
+            guard await self.application.sideChatAccess.unlock(requiresPassword: self.preferences.requireSideChatPassword == true),
+                !Task.isCancelled, self.selectedTab === tab, self.canSummarizePage else { return }
+            self.sideChatVisible = true
+            self.sideChatFocusID = UUID()
+            tab.sideChat.summarize()
+        }
     }
     func sideChatReservedWidth(in windowWidth: CGFloat) -> CGFloat {
         guard sideChatVisible, canShowSideChat else { return 0 }
@@ -34,6 +39,11 @@ extension BrowserWindowState {
         guard canShowSideChat, let tab = selectedTab else { return }
         sideChatOpeningTask = Task { [weak self, weak tab] in
             guard let self, let tab else { return }
+            guard await self.application.sideChatAccess.unlock(requiresPassword: self.preferences.requireSideChatPassword == true),
+                !Task.isCancelled, self.selectedTab === tab, self.canShowSideChat else {
+                if !Task.isCancelled { self.sideChatOpeningTask = nil }
+                return
+            }
             await tab.sideChat.captureSelection()
             guard !Task.isCancelled, self.selectedTab === tab, self.canShowSideChat else {
                 if !Task.isCancelled { self.sideChatOpeningTask = nil }
@@ -47,6 +57,7 @@ extension BrowserWindowState {
     func closeSideChat() {
         sideChatOpeningTask?.cancel()
         sideChatOpeningTask = nil
+        if application.sideChatAccess.authenticating { application.sideChatAccess.lock() }
         selectedTab?.existingSideChat?.saveChat()
         sideChatVisible = false
         focusPage()
@@ -164,7 +175,9 @@ struct SideChatResizeHandle: View {
             provider: { [weak tab] in tab?.store?.preferences.aiProvider ?? .chatgpt },
             claudeAccount: tab.store?.application.claudeAccount,
             enabled: { [weak tab] in
-                tab.map { !$0.isDisposed && $0.store?.preferences.aiFeaturesEnabled != false } ?? false
+                guard let tab, !tab.isDisposed, let store = tab.store else { return false }
+                return store.preferences.aiFeaturesEnabled != false && store.application.sideChatAccess.allowsAccess(
+                    requiresPassword: store.preferences.requireSideChatPassword == true)
             },
             isSideChat: true,
             capturePage: { [weak tab] target in
@@ -240,9 +253,19 @@ struct SideChatResizeHandle: View {
         removeSelection()
     }
     func showPreview() { capture(send: false) }
+    func useProvider(_ provider: AIProvider) {
+        guard !capturing, !session.searching else { return }
+        if session.provider != provider {
+            cloudSharingAllowed = false
+            tab?.store?.preferences.aiProvider = provider
+            tab?.store?.persistSoon()
+        }
+        session.use(provider: provider)
+    }
     func summarize() {
         guard !capturing, !session.searching, let tab, let store = tab.store,
-            tab.page == .web, tab.url != nil, store.preferences.aiFeaturesEnabled != false
+            tab.page == .web, tab.url != nil, store.preferences.aiFeaturesEnabled != false,
+            store.application.sideChatAccess.allowsAccess(requiresPassword: store.preferences.requireSideChatPassword == true)
         else { return }
         guard saveChat() else { return }
         let draft = session.draft
@@ -267,7 +290,9 @@ struct SideChatResizeHandle: View {
     }
 
     private func capture(send: Bool) {
-        guard !capturing, let tab, !tab.isDisposed else { return }
+        guard !capturing, let tab, !tab.isDisposed, let store = tab.store,
+            store.application.sideChatAccess.allowsAccess(requiresPassword: store.preferences.requireSideChatPassword == true)
+        else { return }
         error = nil
         let summary = summaryPending
         let question = summary ? "summarize this page" : session.draft
@@ -407,7 +432,7 @@ struct SideChatPanel: View {
                     state.clear()
                     focused = true
                 } label: {
-                    GolzheimIcon(icon: .edit, size: 16, weight: 220).frame(width: 28, height: 28)
+                    GolzheimIcon(icon: .newChat, size: 16, weight: 220).frame(width: 28, height: 28)
                 }
                 .help("new chat").accessibilityLabel("new chat")
                 Button {
@@ -772,12 +797,7 @@ struct SideChatPanel: View {
         .frame(maxWidth: 170, alignment: .trailing).layoutPriority(-1).disabled(state.capturing || session.searching)
     }
     private func changeProvider(_ value: AIProvider) {
-        if session.provider != value {
-            guard state.clear() else { return }
-            store.preferences.aiProvider = value
-            store.persistSoon()
-        }
-        session.use(provider: value)
+        state.useProvider(value)
     }
     private var preview: some View {
         VStack(alignment: .leading, spacing: 12) {

@@ -117,6 +117,9 @@ enum SettingsSearch {
             id: "claude-connection", section: "intelligence", title: "Claude connection",
             keywords: "anthropic api key billing model connect"),
         .init(
+            id: "side-chat-password", section: "intelligence", title: "require password to use side chat",
+            keywords: "password authentication unlock touch id protect chat"),
+        .init(
             id: "saved-chats", section: "intelligence", title: "saved chats",
             keywords: "sync transcripts icloud encrypted"),
         .init(

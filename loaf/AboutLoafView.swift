@@ -6,13 +6,17 @@ struct AboutLoafView: View {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
     }
     private var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1" }
+    private var versionLabel: String {
+        ["version \(version)", BrowserBrand.releaseName(for: version), "build \(build)"]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
     var body: some View {
         VStack(spacing: 0) {
             Image("loaf-logo").resizable().scaledToFit().frame(width: 72, height: 72).accessibilityHidden(true)
             Image("loaf-word").resizable().scaledToFit().frame(width: 108, height: 42)
                 .padding(.top, 12).accessibilityLabel("loaf")
             Text("a browser for Mac").font(.system(size: 13)).foregroundStyle(.secondary).padding(.top, 8)
-            Text("version \(version) · build \(build)").font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(versionLabel).font(.system(size: 11)).foregroundStyle(.secondary)
                 .textSelection(.enabled).padding(.top, 6)
             Button("check for updates…") { updates.checkForUpdates() }
                 .disabled(!updates.canCheckForUpdates)

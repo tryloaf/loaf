@@ -105,6 +105,12 @@ struct AISettingsView: View {
                 ClaudeConnectionView(account: claude).id("claude-connection")
             }
             Section("saved chats") {
+                Toggle("require password to use side chat", isOn: Binding(
+                    get: { store.preferences.requireSideChatPassword == true },
+                    set: { store.application.setSideChatPasswordRequired($0) }
+                )).id("side-chat-password")
+                Text("unlock once with Touch ID or your Mac password. side chat locks again when loaf quits, your Mac sleeps, or you switch users.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("sync chat transcripts with iCloud", isOn: preference(\.syncSideChats, fallback: false)).id(
                     "saved-chats")
                 Text(

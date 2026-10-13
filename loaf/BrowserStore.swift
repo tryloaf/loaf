@@ -638,12 +638,15 @@ import WebKit
     }
     func navigate(_ input: String, inNewTab: Bool = false) {
         guard let url = resolveAddress(input, original: omnibarVisible ? omnibarOriginalURL : nil) else { return }
+        let opensPinnedPage = omnibarVisible && (profile.pinShortcuts ?? []).contains {
+            Self.matchesPinnedPage($0.pinnedAddress ?? $0.address, url: url)
+        }
         omnibarVisible = false
         if let page = BrowserPage.from(url) {
             openInternal(page, inNewTab: inNewTab || omnibarCreatesTab)
             return
         }
-        if inNewTab || omnibarCreatesTab || selectedTab == nil {
+        if inNewTab || omnibarCreatesTab || opensPinnedPage || selectedTab == nil {
             _ = newTab(url: url, showOmnibar: false)
         } else {
             selectedTab?.load(url)
@@ -898,8 +901,11 @@ import WebKit
     }
 
     var isCurrentPageFavorite: Bool {
-        guard let url = selectedTab?.url else { return false }
-        return profile.favorites.contains { $0.address == url.absoluteString }
+        selectedTab.map(isFavorite) ?? false
+    }
+    func isFavorite(_ tab: BrowserTab) -> Bool {
+        guard tab.store === self, !tab.isDisposed, let url = tab.url else { return false }
+        return profileFor(tab.profileID).favorites.contains { $0.address == url.absoluteString }
     }
     func favoriteCurrent() {
         guard let tab = selectedTab, let url = tab.url, ["http", "https"].contains(url.scheme), url.user == nil else {

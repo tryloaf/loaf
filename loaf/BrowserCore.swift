@@ -11,6 +11,13 @@ nonisolated enum BrowserBrand {
     static let bundleIdentifier = "app.tryloaf.loaf"
     static let supportDirectory = "loaf"
     static let passwordServicePrefix = "app.tryloaf.loaf.passwords."
+
+    static func releaseName(for version: String) -> String? {
+        switch version.split(separator: ".").first {
+        case "1": return "brioche"
+        default: return nil
+        }
+    }
 }
 
 enum BrowserAddress {
@@ -366,6 +373,7 @@ nonisolated struct BrowserPreferences: Codable, Sendable {
     }
     var aiFeaturesEnabled: Bool?
     var syncSideChats: Bool?
+    var requireSideChatPassword: Bool?
     var powerSaver: Bool?
     var powerSaverThreshold: Int?
     var tracksScreenTime: Bool?

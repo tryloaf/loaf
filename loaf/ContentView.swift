@@ -280,7 +280,7 @@ struct ContentView: View {
                 if store.sideChatReservedWidth(in: geometry.size.width) > 0, let tab = store.selectedTab {
                     HStack(spacing: 0) {
                         SideChatResizeHandle(store: store)
-                        SideChatPanel(store: store, tab: tab).id(tab.id)
+                        SideChatAccessPanel(store: store, tab: tab).id(tab.id)
                             .clipShape(RoundedRectangle(cornerRadius: store.pageCornerRadius))
                     }
                     .frame(width: store.sideChatReservedWidth(in: geometry.size.width))
@@ -335,7 +335,7 @@ struct ContentView: View {
                     })
             ) {
                 if let tab = store.selectedTab {
-                    SideChatPanel(store: store, tab: tab).id(tab.id).frame(width: 400, height: 620)
+                    SideChatAccessPanel(store: store, tab: tab).id(tab.id).frame(width: 400, height: 620)
                 }
             }
         }

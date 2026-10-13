@@ -41,7 +41,8 @@ import FoundationModels
         guard #available(macOS 26, *) else { throw ChatGPTFailure.message("Apple Intelligence requires macOS 26.") }
 
         let instructions =
-            ChatGPTProtocol.answerInstructions(query: query, preceding: history.filter(\.complete).map(\.query)) + """
+            "You are answering the person who sent the current question. Give only the answer they can use.\n"
+            + ChatGPTProtocol.answerInstructions(query: query, preceding: history.filter(\.complete).map(\.query)) + """
 
                 Cite page facts with [page], other attached tabs with [tab1], [tab2], etc., and web facts with [1], [2], etc. Only cite evidence that supports the claim.
                 """
@@ -80,7 +81,11 @@ import FoundationModels
             }.joined(separator: "\n")
         }
         var question = evidence() + pageEvidence() + "\n\nUser question:\n" + query
-        var prompt = String(context.suffix(2_000)) + question
+        func currentPrompt() -> String {
+            (context.isEmpty ? "" : "Earlier conversation (context only):\n" + context + "\n\n") + question
+        }
+        context = String(context.suffix(2_000))
+        var prompt = currentPrompt()
         if provider == .onDevice, #available(macOS 26.4, *) {
             let model = SystemLanguageModel.default
             let instructionTokens = try await model.tokenCount(for: Instructions(instructions))
@@ -104,7 +109,7 @@ import FoundationModels
                         "This question is too long for Apple Intelligence. Shorten it and try again.")
                 }
                 context = String(context.suffix(context.count / 2))
-                prompt = context + question
+                prompt = currentPrompt()
             }
         } else {
 
@@ -122,7 +127,7 @@ import FoundationModels
                     }
                     question = evidence() + pageEvidence() + "\n\nUser question:\n" + query
                 }
-                prompt = context + question
+                prompt = currentPrompt()
             }
             guard prompt.utf8.count <= 6_000 else {
                 throw ChatGPTFailure.message(

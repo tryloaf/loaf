@@ -69,16 +69,18 @@ enum StorePageIntegration {
                 banner.style.setProperty('display','none','important'); banner.dataset.loafChromePromo = 'hidden';
               }
             }
-            for (const el of document.querySelectorAll('span,p,aside,[role="alert"]')) {
+            const promoCopy = /^Switch to Chrome to install extensions and themes[.!]?(?:\s*(?:Install Chrome|Switch to Chrome|Get Chrome|Download Chrome))?$/i;
+            for (const el of document.querySelectorAll('span,p,div,aside,[role="alert"]')) {
+              if (el.closest('[data-loaf-chrome-promo="hidden"]')) continue;
               const text = clean(el);
-              if (!/^Switch to Chrome to install extensions and themes[.!]?$/i.test(text)) continue;
-              let banner = el.closest('aside,[role="alert"]') || el;
+              if (!promoCopy.test(text)) continue;
+              let banner = el;
               while (banner.parentElement && !['BODY','HTML','MAIN'].includes(banner.parentElement.tagName)) {
-                const parentText = banner.parentElement.textContent.replace(/\s+/g,' ').trim();
-                if (!/^Switch to Chrome to install extensions and themes[.!]?(?: (?:Switch to Chrome|Get Chrome|Download Chrome))?$/i.test(parentText)) break;
+                const parent = banner.parentElement;
+                if (parent.querySelector('h1,[data-loaf-install]') || !promoCopy.test(clean(parent))) break;
                 banner = banner.parentElement;
               }
-              banner.remove();
+              banner.style.setProperty('display','none','important'); banner.dataset.loafChromePromo = 'hidden';
             }
           };
           globalThis.loafStoreState = state => { if (listing !== identifier()) requestState(); if (state.id && state.id !== listing) return; installed = !!state.installed; busy = !!state.busy; refresh(); };

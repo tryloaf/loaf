@@ -68,7 +68,7 @@ import WebKit
             alert.icon = LoafAppIcon.image
             alert.messageText = "downloads are still running"
             alert.informativeText = "keep loaf running in the background to finish them, or pause downloads and quit."
-            alert.addButton(withTitle: "pause and quit")
+            alert.addButton(withTitle: "pause and quit").hasDestructiveAction = true
             alert.addButton(withTitle: "keep downloading").keyEquivalent = ""
             alert.addButton(withTitle: "cancel").keyEquivalent = "\u{1b}"
             let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
@@ -104,11 +104,12 @@ import WebKit
         alert.messageText = "are you sure you want to quit loaf?"
         alert.informativeText = "you may have unsaved work in your tabs."
         let quit = alert.addButton(withTitle: "quit")
-        quit.keyEquivalent = "\r"
-        alert.addButton(withTitle: "always quit").keyEquivalent = ""
+        quit.hasDestructiveAction = true
+        quit.keyEquivalent = ""
+        let alwaysQuit = alert.addButton(withTitle: "always quit")
+        alwaysQuit.keyEquivalent = ""
         let cancel = alert.addButton(withTitle: "cancel")
         cancel.keyEquivalent = "\u{1b}"
-        alert.window.defaultButtonCell = quit.cell as? NSButtonCell
         let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard let self else {
                 sender.reply(toApplicationShouldTerminate: false)

@@ -24,6 +24,8 @@ Other extension APIs still depend on WebKit. Some Tampermonkey network intercept
 
 Shazam 2.7.0 omits its declared developer-tools page and font styles. Its runtime copy drops the missing page reference and uses the macOS system font. Song recognition requires Chrome's `tabCapture` API, which loaf does not implement. The popup shows that limitation and handles failed capture without passing an invalid stream to Web Audio; saved history remains accessible. Existing installations migrate on restoration or when re-enabled. The original package and approved permissions stay unchanged.
 
+Return YouTube Dislike 4.0.5 stalled waiting for its dynamically inserted page helper's load event in WebKit. Its runtime copy registers that same helper as a `MAIN` content script at document start and removes the load-event wait. The count and extension APIs still run in the isolated content world. The helper retains the original content script's site matches and exclusions. Existing enabled installations migrate on restoration or re-enable; approved permissions and the signed original package remain unchanged. Reload YouTube pages after upgrading loaf.
+
 ## verification
 
 The integration check installs the signed Tampermonkey Chrome package and imports a real script that uses `GM_setValue` and `GM_getValue`. It also checks isolated and main worlds, frame IDs, runtime messages and ports, URL matching, atomic registration, partial updates, permission revocation, profile isolation, disabling, and restoration.

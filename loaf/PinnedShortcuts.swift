@@ -3,6 +3,18 @@ import Combine
 import WebKit
 
 extension BrowserWindowState {
+    static func matchesPinnedPage(_ address: String?, url: URL) -> Bool {
+        guard let address, let pinned = URL(string: address) else { return false }
+        func normalized(_ value: URL) -> String? {
+            guard var parts = URLComponents(url: value, resolvingAgainstBaseURL: false) else { return nil }
+            parts.scheme = parts.scheme?.lowercased()
+            parts.host = parts.host?.lowercased()
+            if parts.path.isEmpty { parts.path = "/" }
+            if parts.port == (parts.scheme == "https" ? 443 : 80) { parts.port = nil }
+            return parts.string
+        }
+        return normalized(pinned) == normalized(url)
+    }
 
     var gridPinnedTabs: [BrowserTab] { pinnedTabs.filter { $0.pinPresentation != "row" } }
     var rowPinnedTabs: [BrowserTab] { pinnedTabs.filter { $0.pinPresentation == "row" } }

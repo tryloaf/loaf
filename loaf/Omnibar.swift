@@ -444,7 +444,7 @@ nonisolated enum HistorySuggestionWork {
             {
                 return Suggestion(
                     id: "pin-\(pin.id)", title: pin.pinnedTitle ?? pin.title,
-                    detail: "go to pinned tab", icon: .pinned, destination: address,
+                    detail: "open pinned page in new tab", icon: .pinned, destination: address,
                     pinnedShortcutID: pin.id, kind: .tab)
             }
             guard suggestion.id != "input", suggestion.kind != .search && suggestion.kind != .page,
@@ -498,7 +498,7 @@ nonisolated enum HistorySuggestionWork {
                 consider(
                     Suggestion(
                         id: "pin-\(pin.id)", title: pin.pinnedTitle ?? pin.title,
-                        detail: "go to pinned tab", icon: .pinned, destination: address,
+                        detail: "open pinned page in new tab", icon: .pinned, destination: address,
                         pinnedShortcutID: pin.id, kind: .tab), score: score + (needle.isEmpty ? 30 : 45))
             }
         }
@@ -1379,13 +1379,8 @@ struct OmnibarView: View {
         guard chosen == nil || suggestion != nil else { return }
         if let suggestion { engine.remember(suggestion, query: store.omnibarQuery, store: store) }
         if let pinID = suggestion?.pinnedShortcutID {
-            guard let pin = store.pinnedTabs.first(where: { $0.pinnedShortcutID == pinID }),
-                let url = suggestion?.siteURL
-            else { return }
-            let open = store.openPinned(pin)
-            store.select(open)
-            if open.url != url { open.load(url) }
-            store.omnibarVisible = false
+            guard let url = suggestion?.siteURL else { return }
+            store.openPinnedSuggestion(pinID, url: url)
             store.focusPage()
         } else if let id = suggestion?.tabID {
             guard let tab = store.application.runtimes[profileID]?.tabs[id], let owner = tab.store,
@@ -1413,6 +1408,12 @@ struct OmnibarView: View {
 }
 
 extension BrowserWindowState {
+    func openPinnedSuggestion(_ shortcutID: UUID, url: URL) {
+        guard let pin = pinnedTabs.first(where: { $0.pinnedShortcutID == shortcutID }),
+            Self.matchesPinnedPage(pin.pinnedAddress ?? pin.saved.address, url: url)
+        else { return }
+        openSuggestionInNewTab(url)
+    }
     func openSuggestionInNewTab(_ url: URL, background: Bool = false) {
         if !background, let tab = selectedTab, tab.isEmptyNewTab {
             omnibarCreatesTab = false

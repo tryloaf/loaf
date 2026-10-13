@@ -6,6 +6,8 @@ profiles, split view, a customizable startpage, and a miniplayer. optional, expe
 
 [download](https://tryloaf.app) · [updates](https://tryloaf.app/updates) · [report a bug](https://tryloaf.app/report)
 
+major releases are named after breads. loaf 1.x is **brioche**; the name stays the same across minor and patch updates. release notes pair the name with the numeric version.
+
 requires macOS 15.4 or later. open `loaf.xcodeproj` in Xcode 27 to build it.
 
 Golzheim is bundled in the distributed app, so users don’t need to install it. the font files are excluded from this source repository. to build locally, supply your own licensed copy at `loaf/Fonts/GolzheimSansVAR.ttf`; loaf’s source license does not grant a font license. build and release checks reject an app with a missing or mismatched font.
