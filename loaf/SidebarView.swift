@@ -481,7 +481,7 @@ struct SidebarView: View {
             Button {
                 store.extensionsVisible.toggle()
             } label: {
-                GolzheimIcon(icon: .extensionPuzzle, size: 16).frame(width: 26, height: 26)
+                GolzheimIcon(icon: .extensionPuzzle, size: 20, weight: 100).frame(width: 26, height: 26)
                     .background(
                         Color.primary.opacity(0.08 * extensionProgress), in: RoundedRectangle(cornerRadius: 6)
                     )
