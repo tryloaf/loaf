@@ -2,6 +2,17 @@ import JavaScriptCore
 import WebKit
 
 @MainActor final class ExtensionUserScripts: NSObject, WKScriptMessageHandlerWithReply {
+    private struct HostPermissions: Equatable {
+        let granted: [String: Date]
+        let denied: [String: Date]
+
+        init(_ context: WKWebExtensionContext) {
+            granted = Dictionary(
+                uniqueKeysWithValues: context.grantedPermissionMatchPatterns.map { ($0.key.string, $0.value) })
+            denied = Dictionary(
+                uniqueKeysWithValues: context.deniedPermissionMatchPatterns.map { ($0.key.string, $0.value) })
+        }
+    }
     private struct Page {
         weak var view: WKWebView?
         var scripts: [WKUserScript] = []
@@ -24,6 +35,7 @@ import WebKit
     private var configurations: [[String: Any]] = []
     private var worlds: [String: WKContentWorld] = [:]
     private var preparedScripts: [WKUserScript]?
+    private var hostPermissions: HostPermissions
     private var pages: [ObjectIdentifier: Page] = [:]
     private var clients: [String: Client] = [:]
     private var connections: [String: Connection] = [:]
@@ -37,6 +49,7 @@ import WebKit
         self.record = record
         self.context = context
         self.root = root
+        hostPermissions = HostPermissions(context)
         super.init()
         let file = root.appendingPathComponent("userscripts.json")
         if FileManager.default.fileExists(atPath: file.path) {
@@ -65,7 +78,12 @@ import WebKit
         }
     }
 
-    @objc private func permissionsChanged() { if active { refresh() } }
+    @objc private func permissionsChanged() {
+        guard active, HostPermissions(context) != hostPermissions else { return }
+        // API permission notifications often leave the script's host access unchanged.
+        // Re-adding every script copies its source into WebKit shared memory each time.
+        refresh()
+    }
 
     func handle(_ operation: String, args: [String: Any]) throws -> Any {
         guard active, record.permissions.contains("userScripts")
@@ -241,8 +259,9 @@ import WebKit
     }
 
     func attach(_ view: WKWebView) {
-        guard active else { return }
-        if pages[ObjectIdentifier(view)] == nil { pages[ObjectIdentifier(view)] = Page(view: view) }
+        guard active, pages[ObjectIdentifier(view)]?.view !== view else { return }
+        if HostPermissions(context) != hostPermissions { refresh() }
+        pages[ObjectIdentifier(view)] = Page(view: view)
         rebuild(view)
     }
 
@@ -261,6 +280,7 @@ import WebKit
     }
 
     private func refresh() {
+        hostPermissions = HostPermissions(context)
         preparedScripts = nil
 
         for (id, connection) in connections where !messaging(connection.client.world) {
@@ -286,6 +306,10 @@ import WebKit
     private func rebuild(_ view: WKWebView) {
         let controller = view.configuration.userContentController
         let owned = Set((pages[ObjectIdentifier(view)]?.scripts ?? []).map(ObjectIdentifier.init))
+        guard !scripts.isEmpty || !owned.isEmpty else {
+            preparedScripts = []
+            return
+        }
         let other = controller.userScripts.filter { !owned.contains(ObjectIdentifier($0)) }
         controller.removeAllUserScripts()
         for script in other { controller.addUserScript(script) }
@@ -300,8 +324,8 @@ import WebKit
             for script in preparedScripts { add(script, to: controller, view: view) }
             return
         }
-        let hosts = context.grantedPermissionMatchPatterns.keys.map(\.string)
-        let access = Self.accessGate(context)
+        let hosts = hostPermissions.granted.keys.sorted()
+        let access = Self.accessGate(hostPermissions)
         var bootstrapped = Set<String>()
         for registered in scripts {
             guard let code = try? source(registered["js"] as! [[String: Any]]) else { continue }
@@ -396,15 +420,16 @@ import WebKit
         return result
     }
 
-    private static func accessGate(_ context: WKWebExtensionContext) -> String {
-        func rules(_ patterns: [WKWebExtension.MatchPattern: Date]) -> String {
-            let clauses = patterns.map { pattern, expiration in
-                "(Date.now() < \(expiration.timeIntervalSince1970 * 1000) && "
-                    + gate(["matches": [pattern.string]], hosts: [pattern.string]) + ")"
+    private static func accessGate(_ permissions: HostPermissions) -> String {
+        func rules(_ patterns: [String: Date]) -> String {
+            let clauses = patterns.keys.sorted().map { pattern in
+                let expiration = patterns[pattern]!
+                return "(Date.now() < \(expiration.timeIntervalSince1970 * 1000) && "
+                    + gate(["matches": [pattern]], hosts: [pattern]) + ")"
             }
             return "(" + (clauses.isEmpty ? ["false"] : clauses).joined(separator: " || ") + ")"
         }
-        return rules(context.grantedPermissionMatchPatterns) + " && !" + rules(context.deniedPermissionMatchPatterns)
+        return rules(permissions.granted) + " && !" + rules(permissions.denied)
     }
 
     func connect(_ port: WKWebExtension.MessagePort) {
@@ -564,6 +589,7 @@ import WebKit
             let owned = Set(page.scripts.map(ObjectIdentifier.init))
             detach(view)
             let controller = view.configuration.userContentController
+            guard !owned.isEmpty else { continue }
             let other = controller.userScripts.filter { !owned.contains(ObjectIdentifier($0)) }
             controller.removeAllUserScripts()
             for script in other { controller.addUserScript(script) }

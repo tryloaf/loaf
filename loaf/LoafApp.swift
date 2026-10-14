@@ -6,6 +6,7 @@ import WebKit
     @StateObject private var coordinator: WindowCoordinator
     @NSApplicationDelegateAdaptor(LoafAppDelegate.self) private var delegate
     init() {
+        ProfileMemoryDiagnostics.startIfRequested()
         UserDefaults.standard.set(false, forKey: "NSAutomaticPeriodSubstitutionEnabled")
         let coordinator = WindowCoordinator(application: MarketingLaunch.application())
         _coordinator = StateObject(wrappedValue: coordinator)

@@ -733,12 +733,16 @@ import WebKit
     }
 
     func switchProfile(_ id: UUID) {
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
+        guard profiles.contains(where: { $0.id == id }),
+            id != selectedProfileID || profileSwipeDistance != 0 || profileResistance != 0
+        else { return }
+        let transaction = Transaction(animation: nil)
         withTransaction(transaction) {
+            profileSwipeDistance = 0
+            profileResistance = 0
+            guard id != selectedProfileID else { return }
             markVisibleTabsActive()
-            if id != selectedProfileID { endSplit() }
-            guard profiles.contains(where: { $0.id == id }), id != selectedProfileID else { return }
+            endSplit()
             for tab in tabs {
                 tab.existingChatGPTSearch?.clear()
                 tab.existingSideChat?.endSession()
@@ -750,7 +754,6 @@ import WebKit
                 ? 1 : -1
             feedback.clear()
             cancelPointerLock()
-            if let tab = selectedTab { application.tabPreviews.capture(tab) }
             selectedSidebarTabIDs = []
             sidebarSelectionAnchor = nil
             editingGroupID = nil

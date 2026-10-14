@@ -91,6 +91,7 @@ private actor FaviconRequestQueue {
         let task: Task<NSImage?, Never>
         let declared: [URL]
         let discoverPage: Bool
+        var waiters: Set<UUID> = []
     }
     private var pending: [String: Pending] = [:]
     init(
@@ -114,6 +115,32 @@ private actor FaviconRequestQueue {
         } catch {
             await requestQueue.release()
             throw error
+        }
+    }
+
+    private func result(for request: Pending, key: String) async -> NSImage? {
+        guard pending[key]?.id == request.id else { return nil }
+        if Task.isCancelled {
+            if pending[key]?.waiters.isEmpty == true {
+                pending.removeValue(forKey: key)?.task.cancel()
+            }
+            return nil
+        }
+        let waiter = UUID()
+        pending[key]?.waiters.insert(waiter)
+        defer {
+            if pending[key]?.id == request.id { pending[key]?.waiters.remove(waiter) }
+        }
+        return await withTaskCancellationHandler {
+            await request.task.value
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard let self, pending[key]?.id == request.id else { return }
+                pending[key]?.waiters.remove(waiter)
+                if pending[key]?.waiters.isEmpty == true {
+                    pending.removeValue(forKey: key)?.task.cancel()
+                }
+            }
         }
     }
 
@@ -170,7 +197,7 @@ private actor FaviconRequestQueue {
             {
                 pending.removeValue(forKey: key)?.task.cancel()
             } else {
-                let image = await request.task.value
+                let image = await result(for: request, key: key)
                 guard valid(), !Task.isCancelled else { return nil }
                 if let image { return image }
                 if pending[key]?.id == request.id { pending[key] = nil }
@@ -252,9 +279,10 @@ private actor FaviconRequestQueue {
             return nil
         }
         let id = UUID()
-        pending[key] = Pending(id: id, task: task, declared: declared, discoverPage: discoverPage)
-        let result = await task.value
-        guard pending[key]?.id == id else { return valid() ? memory[key] : nil }
+        let request = Pending(id: id, task: task, declared: declared, discoverPage: discoverPage)
+        pending[key] = request
+        let result = await result(for: request, key: key)
+        guard pending[key]?.id == id else { return valid() && !Task.isCancelled ? memory[key] : nil }
         pending[key] = nil
         guard valid() else { return nil }
         if !declared.isEmpty {
@@ -271,7 +299,7 @@ private actor FaviconRequestQueue {
             if failures.count >= 512 { failures.removeAll() }
             failures[key] = Date()
         }
-        return result
+        return Task.isCancelled ? nil : result
     }
     nonisolated static func acceptsIconURL(_ icon: URL, for page: URL) -> Bool {
         guard icon.user == nil, icon.password == nil else { return false }

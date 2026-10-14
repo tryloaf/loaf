@@ -331,7 +331,9 @@ import WebKit
         window.identifier = NSUserInterfaceItemIdentifier(state.id.uuidString)
         window.delegate = self
         state.nativeWindow = window
-        window.contentView = WebCursorHostingView(rootView: ContentView(store: state))
+        let content = WebCursorHostingView(rootView: ContentView(store: state))
+        content.sizingOptions = []
+        window.contentView = content
         window.center()
         if let frame = state.savedFrame { window.setFrame(NSRectFromString(frame), display: false) }
         if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(window.frame) }) { window.center() }

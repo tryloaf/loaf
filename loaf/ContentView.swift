@@ -306,6 +306,7 @@ struct ContentView: View {
                     color: store.profileSwipeSurface(dark: scheme == .dark),
                     transparency: store.profileSwipeTransparency
                 )
+                .animation(reduceMotion ? nil : ProfileSwitchMotion.animation, value: store.selectedProfileID)
                 .environment(
                     \.colorScheme,
                     store.profile.privateMode

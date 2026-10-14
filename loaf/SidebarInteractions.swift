@@ -217,7 +217,6 @@ struct SidebarInteractions: NSViewRepresentable {
         var traySection: Binding<TraySection?>?
         var trayProgress: CGFloat = 0
         private var swipingTray = false
-        private var profileCommit: DispatchWorkItem?
         private var profileReset: DispatchWorkItem?
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -227,13 +226,15 @@ struct SidebarInteractions: NSViewRepresentable {
             }
             gesture.reset()
             mouseScroll = SidebarMouseScroll()
-            profileCommit?.cancel()
-            profileCommit = nil
             profileReset?.cancel()
-
+            let profileID = store?.selectedProfileID
+            let resistance = store?.profileResistance
+            let distance = store?.profileSwipeDistance
             let reset = DispatchWorkItem { [weak self, weak store] in
                 self?.profileReset = nil
-                guard let store else { return }
+                guard let store, store.selectedProfileID == profileID,
+                    store.profileResistance == resistance, store.profileSwipeDistance == distance
+                else { return }
                 if store.profileResistance != 0 { store.profileResistance = 0 }
                 if store.profileSwipeDistance != 0 { store.profileSwipeDistance = 0 }
             }
@@ -271,13 +272,6 @@ struct SidebarInteractions: NSViewRepresentable {
             pendingReset?.perform()
             pendingReset?.cancel()
             profileReset = nil
-            if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
-
-                let previousCommit = profileCommit
-                previousCommit?.perform()
-                previousCommit?.cancel()
-                profileCommit = nil
-            }
             let point = convert(event.locationInWindow, from: nil)
             let fromBottom = isFlipped ? bounds.maxY - point.y : point.y - bounds.minY
             let anchoredTray = store.trayGestureAnchor.map { anchor in
@@ -302,7 +296,7 @@ struct SidebarInteractions: NSViewRepresentable {
                 if swipingTray {
                     traySection?.wrappedValue = sections[index + direction]
                 } else {
-                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.26)) { store.swipeProfile(direction) }
+                    store.swipeProfile(direction)
                 }
             }
             if !event.hasPreciseScrollingDeltas {
@@ -337,43 +331,26 @@ struct SidebarInteractions: NSViewRepresentable {
 
             guard event.momentumPhase.isEmpty, result.consumed else { return result.consumed }
             if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
-                if let direction = result.direction, !reduceMotion {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        store.profileSwipeDistance = CGFloat(direction) * store.preferences.sidebarWidth
-                        store.profileResistance = 0
-                    }
-                    let profileID = store.selectedProfileID
-                    let work = DispatchWorkItem { [weak self, weak store] in
-                        self?.profileCommit = nil
-                        guard let store, store.selectedProfileID == profileID else { return }
-                        var transaction = Transaction()
-                        transaction.disablesAnimations = true
-                        withTransaction(transaction) {
-                            store.swipeProfile(direction)
-                            store.profileSwipeDistance = 0
-                        }
-                    }
-                    profileCommit = work
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+                if let direction = result.direction {
+                    store.swipeProfile(direction)
                 } else {
                     withAnimation(reduceMotion ? nil : .spring(duration: 0.24, bounce: 0)) {
-                        if let direction = result.direction { switchDestination(direction) }
-                        store.profileSwipeDistance = 0
-                        store.profileResistance = 0
+                        if store.profileSwipeDistance != 0 { store.profileSwipeDistance = 0 }
+                        if store.profileResistance != 0 { store.profileResistance = 0 }
                     }
                 }
             } else {
-                var transaction = Transaction()
-                transaction.animation = nil
+                let transaction = Transaction(animation: nil)
                 withTransaction(transaction) {
-                    store.profileSwipeDistance = reduceMotion ? 0 : result.translation
-                    store.profileResistance = reduceMotion ? 0 : result.resistance
+                    let distance = reduceMotion ? 0 : result.translation
+                    let resistance = reduceMotion ? 0 : result.resistance
+                    if store.profileSwipeDistance != distance { store.profileSwipeDistance = distance }
+                    if store.profileResistance != resistance { store.profileResistance = resistance }
                 }
             }
             return result.consumed
         }
         deinit {
-            profileCommit?.cancel()
             if let monitor { NSEvent.removeMonitor(monitor) }
         }
     }

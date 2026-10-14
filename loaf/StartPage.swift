@@ -536,6 +536,7 @@ private struct StartPageBackground: View {
     let image: (url: URL, image: NSImage)?
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var preferences: Personalization { store.profile.personalization ?? Personalization() }
     private func gradientColor(_ profile: Profile, top: Bool) -> Color {
         if profile.privateMode { return top ? PrivateChrome.surface : PrivateChrome.base }
@@ -569,8 +570,9 @@ private struct StartPageBackground: View {
         }.clipped().opacity(
             ProfileTransparency.opacity(store.profileSwipeTransparency, reduceTransparency: reduceTransparency)
         ).background {
-            if !reduceTransparency && store.profileSwipeTransparency > 0 { WindowBackdrop() }
+            WindowBackdrop(visible: !reduceTransparency && store.profileSwipeTransparency > 0)
         }
+        .animation(reduceMotion ? nil : ProfileSwitchMotion.animation, value: store.selectedProfileID)
     }
 }
 

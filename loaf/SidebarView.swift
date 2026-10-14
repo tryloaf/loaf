@@ -62,6 +62,10 @@ struct SidebarView: View {
                     }
                 address.padding(.horizontal, 8)
                 profileTabs
+                    .id(store.selectedProfileID)
+                    .transition(
+                        ProfileSwitchMotion.transition(direction: store.profileDirection, reduceMotion: reduceMotion))
+                    .animation(reduceMotion ? nil : ProfileSwitchMotion.animation, value: store.selectedProfileID)
                 VStack(spacing: 8) {
                     SidebarMediaPlayers(store: store, collection: store.sidebarMedia)
                     if !store.preferences.weatherCity.isEmpty && store.profile.personalization?.sidebarWeather != false
@@ -88,7 +92,7 @@ struct SidebarView: View {
                 ProfileWindowSurface(
                     color: chromeBase, transparency: store.profileSwipeTransparency
                 )
-                .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: store.selectedProfileID)
+                .animation(reduceMotion ? nil : ProfileSwitchMotion.animation, value: store.selectedProfileID)
             }
         }
         .environment(
@@ -139,7 +143,10 @@ struct SidebarView: View {
                     store.gridPinnedTabs.isEmpty && store.draggedTabID == nil && !store.rowPinnedTabs.isEmpty ? 10 : 0
                 )
         }
-        .offset(x: store.profileResistance)
+        .offset(
+            x: store.profileResistance
+                - (reduceMotion ? 0 : store.profileSwipeDistance / max(1, store.preferences.sidebarWidth) * 12))
+        .opacity(reduceMotion ? 1 : 1 - store.profileSwipeProgress * 0.08)
         .clipped()
     }
     private var address: some View {
@@ -433,6 +440,11 @@ struct SidebarView: View {
                         ProfileIcon(profile: store.profile, size: 14)
                         Text(store.profile.name).font(.system(size: 13)).lineLimit(1)
                     }
+                    .id(store.selectedProfileID)
+                    .transition(
+                        ProfileSwitchMotion.transition(
+                            direction: store.profileDirection, reduceMotion: reduceMotion, distance: 4))
+                    .animation(reduceMotion ? nil : ProfileSwitchMotion.animation, value: store.selectedProfileID)
                     HStack(spacing: 4) {
                         ForEach(store.profiles) { p in
                             Capsule().fill(store.profile.privateMode ? PrivateChrome.accent : profileTint(p)).frame(
@@ -440,7 +452,7 @@ struct SidebarView: View {
                             ).opacity(p.id == store.selectedProfileID ? 1 : 0.35)
                         }
                     }
-                    .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: store.selectedProfileID)
+                    .animation(reduceMotion ? nil : ProfileSwitchMotion.animation, value: store.selectedProfileID)
                 }.frame(height: 36)
             }.buttonStyle(LoafButtonStyle()).help("switch profile").popover(isPresented: $profilePicker) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -663,9 +675,6 @@ struct TabListContent: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: slot)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: entries.map(\.id))
-        .id(store.selectedProfileID)
-        .transition(.opacity)
-        .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: store.selectedProfileID)
     }
 }
 

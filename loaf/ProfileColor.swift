@@ -108,10 +108,7 @@ extension BrowserWindowState {
             nsColor: current.blended(withFraction: profileSwipeProgress, of: NSColor(color(target))) ?? current)
     }
     var profileSwipeTransparency: Double {
-        let current = ProfileTransparency.bounded(profile.personalization?.windowTransparency ?? 0)
-        guard let target = profileSwipeTarget else { return current }
-        let next = ProfileTransparency.bounded(target.personalization?.windowTransparency ?? 0)
-        return current + (next - current) * Double(profileSwipeProgress)
+        ProfileTransparency.bounded(profile.personalization?.windowTransparency ?? 0)
     }
     func profileSwipeSurface(dark: Bool) -> Color {
         profileSwipeColor { profile in
@@ -120,6 +117,18 @@ extension BrowserWindowState {
                 : ProfileColor.surfaceColor(
                     profileTint(profile), strength: profile.personalization?.tintStrength ?? 0.06, dark: dark)
         }
+    }
+}
+
+enum ProfileSwitchMotion {
+    static let animation = Animation.smooth(duration: 0.22)
+
+    static func transition(direction: Int, reduceMotion: Bool, distance: CGFloat = 14) -> AnyTransition {
+        guard !reduceMotion else { return .identity }
+        let sign: CGFloat = direction < 0 ? -1 : 1
+        return .asymmetric(
+            insertion: .offset(x: sign * distance).combined(with: .opacity),
+            removal: .offset(x: -sign * distance * 0.5).combined(with: .opacity))
     }
 }
 
