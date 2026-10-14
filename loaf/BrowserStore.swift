@@ -70,6 +70,9 @@ import WebKit
     @Published var profileDirection = 0
     @Published var profileResistance: CGFloat = 0
     @Published var profileSwipeDistance: CGFloat = 0
+    @Published var profileTransitionOrigin: Profile?
+    @Published var profileTransitionStart: CGFloat = 0
+    @Published var profileTransitionID = UUID()
     weak var trayGestureAnchor: NSView?
     @Published var traySwipeDistance: CGFloat = 0
     @Published var extensionsVisible = false
@@ -738,6 +741,13 @@ import WebKit
         else { return }
         let transaction = Transaction(animation: nil)
         withTransaction(transaction) {
+            let direction = (profiles.firstIndex { $0.id == id } ?? 0) > (profiles.firstIndex { $0.id == selectedProfileID } ?? 0) ? 1 : -1
+            if id != selectedProfileID, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                profileTransitionOrigin = profile
+                let previewed = profileSwipeTarget?.id == id ? profileSwipeDistance : 0
+                profileTransitionStart = CGFloat(direction) * preferences.sidebarWidth - previewed
+                profileTransitionID = UUID()
+            }
             profileSwipeDistance = 0
             profileResistance = 0
             guard id != selectedProfileID else { return }
@@ -749,9 +759,7 @@ import WebKit
             }
             cancelPasswordFill()
             tabHover.dismiss()
-            profileDirection =
-                (profiles.firstIndex { $0.id == id } ?? 0) > (profiles.firstIndex { $0.id == selectedProfileID } ?? 0)
-                ? 1 : -1
+            profileDirection = direction
             feedback.clear()
             cancelPointerLock()
             selectedSidebarTabIDs = []

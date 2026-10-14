@@ -35,16 +35,16 @@ struct SidebarView: View {
     @State private var extensionOrder: [UUID] = []
     @State private var extensionOverflow = false
     @State private var drop: TabDropPosition?
+    @State private var profileMotionID: UUID?
+    @State private var profileMotionOffset: CGFloat = 0
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     WindowDragArea().frame(maxWidth: .infinity, minHeight: 40)
                     HStack(spacing: 0) {
-                        IconButton(icon: .back, label: "back (⌘[)") { store.selectedTab?.webView.goBack() }.disabled(
-                            !(store.selectedTab?.canGoBack ?? false))
-                        IconButton(icon: .forward, label: "forward (⌘])") { store.selectedTab?.webView.goForward() }
-                            .disabled(!(store.selectedTab?.canGoForward ?? false))
+                        NavigationHistoryButton(store: store, backward: true).frame(width: 26, height: 26)
+                        NavigationHistoryButton(store: store, backward: false).frame(width: 26, height: 26)
                         IconButton(icon: store.selectedTab?.loading == true ? .close : .reload, label: "reload (⌘R)") {
                             if store.selectedTab?.loading == true {
                                 store.selectedTab?.webView.stopLoading()
@@ -61,11 +61,7 @@ struct SidebarView: View {
                         }
                     }
                 address.padding(.horizontal, 8)
-                profileTabs
-                    .id(store.selectedProfileID)
-                    .transition(
-                        ProfileSwitchMotion.transition(direction: store.profileDirection, reduceMotion: reduceMotion))
-                    .animation(reduceMotion ? nil : ProfileSwitchMotion.animation, value: store.selectedProfileID)
+                profileStrip
                 VStack(spacing: 8) {
                     SidebarMediaPlayers(store: store, collection: store.sidebarMedia)
                     if !store.preferences.weatherCity.isEmpty && store.profile.personalization?.sidebarWeather != false
@@ -113,6 +109,23 @@ struct SidebarView: View {
             draggedExtensionID = nil
             extensionOverflow = false
         }
+        .onChange(of: store.profileTransitionID) { _, token in
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                profileMotionID = token
+                profileMotionOffset = reduceMotion ? 0 : store.profileTransitionStart
+            }
+            DispatchQueue.main.async {
+                guard store.profileTransitionID == token else { return }
+                withAnimation(reduceMotion ? nil : .spring(duration: 0.28, bounce: 0)) { profileMotionOffset = 0 }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(320))
+                guard store.profileTransitionID == token else { return }
+                store.profileTransitionOrigin = nil
+            }
+        }
         .onAppear { extensionProgress = store.extensionsVisible ? 1 : 0 }
         .onChange(of: store.extensionsVisible) { _, open in animateExtensions(open) }
         .onDisappear {
@@ -143,11 +156,24 @@ struct SidebarView: View {
                     store.gridPinnedTabs.isEmpty && store.draggedTabID == nil && !store.rowPinnedTabs.isEmpty ? 10 : 0
                 )
         }
-        .offset(
-            x: store.profileResistance
-                - (reduceMotion ? 0 : store.profileSwipeDistance / max(1, store.preferences.sidebarWidth) * 12))
-        .opacity(reduceMotion ? 1 : 1 - store.profileSwipeProgress * 0.08)
         .clipped()
+    }
+    private var profileStrip: some View {
+        let width = store.preferences.sidebarWidth
+        let arrival = reduceMotion || store.profileTransitionOrigin == nil ? 0
+            : profileMotionID == store.profileTransitionID ? profileMotionOffset : store.profileTransitionStart
+        let drag = reduceMotion ? 0 : store.profileSwipeDistance
+        return ZStack(alignment: .topLeading) {
+            if !reduceMotion, let origin = store.profileTransitionOrigin {
+                ProfileSidebarPreview(store: store, profile: origin)
+                    .offset(x: arrival - CGFloat(store.profileDirection) * width).allowsHitTesting(false)
+            }
+            profileTabs.offset(x: arrival - drag + store.profileResistance)
+            if !reduceMotion, let target = store.profileSwipeTarget {
+                ProfileSidebarPreview(store: store, profile: target)
+                    .offset(x: (drag > 0 ? width : -width) - drag).allowsHitTesting(false)
+            }
+        }.clipped()
     }
     private var address: some View {
         AddressFeedback(feedback: store.feedback, activate: { store.openOmnibar() }) {

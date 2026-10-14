@@ -284,6 +284,7 @@ struct SidebarInteractions: NSViewRepresentable {
                         ?? (fromBottom >= 8 && fromBottom < 52 + TrayMetrics.contentHeight * min(1, trayProgress))))
             if event.phase.contains(.began) || event.phase.contains(.mayBegin) || !event.hasPreciseScrollingDeltas {
                 swipingTray = overTray && traySection?.wrappedValue != nil
+                if !swipingTray, store.profileTransitionOrigin != nil { store.profileTransitionOrigin = nil }
             }
             let sections = TraySection.allCases
             let index =

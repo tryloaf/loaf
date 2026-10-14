@@ -383,17 +383,20 @@ struct SideChatPanel: View {
     @State private var previewVisible = false
     @State private var copiedTurnID: UUID?
     @State private var deletingChat: SavedChat?
+    @State private var historyVisible = false
     @State private var followsAnswer = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shownContext: TabChatContext?
     @State private var shownCapture: TabChatCapture?
     @Environment(\.colorScheme) private var scheme
 
-    init(store: BrowserStore, tab: BrowserTab) {
+    init?(store: BrowserStore, tab: BrowserTab) {
+        guard !tab.isDisposed, tab.store === store, store.selectedTab === tab else { return nil }
         self.store = store
         self.tab = tab
-        state = tab.sideChat
-        session = tab.sideChat.session
+        let chat = tab.sideChat
+        state = chat
+        session = chat.session
         account = store.application.chatGPTAccount
         claude = store.application.claudeAccount
         archive = store.application.chatArchive
@@ -411,21 +414,19 @@ struct SideChatPanel: View {
                 .font(.system(size: 12)).help("summarize this page").accessibilityLabel("summarize page")
                 .disabled(!store.canSummarizePage)
                 if !store.profile.privateMode {
-                    Menu {
-                        ForEach(archive.chats.filter { $0.profileID == store.selectedProfileID }) { chat in
-                            Menu(chat.title) {
-                                Button("open chat") {
-                                    state.restoreChat(chat)
-                                    focused = true
-                                }
-                                Button("delete chat…", role: .destructive) { deletingChat = chat }
-                            }
-                        }
-                        if archive.chats.isEmpty { Text("no saved chats") }
-                    } label: {
+                    Button { historyVisible.toggle() } label: {
                         GolzheimIcon(icon: .history, size: 16, weight: 220).frame(width: 28, height: 28)
                     }
-                    .menuStyle(.button).menuIndicator(.hidden).accessibilityLabel("saved chats").help("saved chats")
+                    .popover(isPresented: $historyVisible, arrowEdge: .top) {
+                        SavedChatHistory(archive: archive, profileID: tab.profileID, selectedID: state.savedChatID,
+                            open: { chat in
+                                guard !tab.isDisposed, store.selectedTab === tab, chat.profileID == tab.profileID else { return }
+                                state.restoreChat(chat)
+                                historyVisible = false
+                                focused = true
+                            }, delete: { chat in historyVisible = false; deletingChat = chat })
+                    }
+                    .accessibilityLabel("saved chats").help("saved chats")
                     .disabled(session.searching || state.capturing)
                 }
                 Button {

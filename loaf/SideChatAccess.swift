@@ -87,8 +87,10 @@ struct SideChatAccessPanel: View {
         access = store.application.sideChatAccess
     }
     var body: some View {
-        if access.allowsAccess(requiresPassword: store.preferences.requireSideChatPassword == true) {
-            SideChatPanel(store: store, tab: tab)
+        if tab.isDisposed || tab.store !== store || store.selectedTab !== tab {
+            Color.clear.allowsHitTesting(false)
+        } else if access.allowsAccess(requiresPassword: store.preferences.requireSideChatPassword == true) {
+            if let panel = SideChatPanel(store: store, tab: tab) { panel }
         } else {
             VStack(spacing: 12) {
                 HStack {

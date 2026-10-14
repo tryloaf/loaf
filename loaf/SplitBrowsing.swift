@@ -80,6 +80,11 @@ extension BrowserWindowState {
 
 @MainActor final class LoafWebView: WKWebView {
     weak var browserTab: BrowserTab?
+    private lazy var historySwipe = PageNavigationSwipe(view: self)
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { historySwipe.stop() } else { historySwipe.attach() }
+    }
     private var linkPreviewTracking: NSTrackingArea?
     override func updateTrackingAreas() {
         super.updateTrackingAreas()

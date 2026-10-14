@@ -17,10 +17,8 @@ struct BrowserToolbar: View {
             Spacer().frame(width: 76)
             IconButton(icon: .sidebar, label: "show sidebar") { store.sidebarVisible = true }
             HStack(spacing: 0) {
-                IconButton(icon: .back, label: "back") { store.selectedTab?.webView.goBack() }.disabled(
-                    !(store.selectedTab?.canGoBack ?? false))
-                IconButton(icon: .forward, label: "forward") { store.selectedTab?.webView.goForward() }.disabled(
-                    !(store.selectedTab?.canGoForward ?? false))
+                NavigationHistoryButton(store: store, backward: true).frame(width: 26, height: 26)
+                NavigationHistoryButton(store: store, backward: false).frame(width: 26, height: 26)
                 IconButton(icon: store.selectedTab?.loading == true ? .close : .reload, label: "reload") {
                     if store.selectedTab?.loading == true {
                         store.selectedTab?.webView.stopLoading()

@@ -40,7 +40,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
 
     private weak var disposedWebView: WKWebView?
     private var pendingConfiguration: WKWebViewConfiguration?
-    private(set) var isDisposed = false
+    @Published private(set) var isDisposed = false
     private var requestedURL: URL?
     private var authenticationNavigationURL: URL?
     private var activeNavigation: WKNavigation?
@@ -252,7 +252,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         finder.webView = webView
         webView.navigationDelegate = self
         webView.uiDelegate = self
-        webView.allowsBackForwardNavigationGestures = true
+        webView.allowsBackForwardNavigationGestures = false
         webView.allowsMagnification = true
         WebKitAdapter.setInspectionEnabled(webView, store.preferences.developerMenu == true)
         config.userContentController.add(WeakScriptHandler(self), contentWorld: .defaultClient, name: "loafLinkPreview")
@@ -489,11 +489,11 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
 
     func dispose() {
         guard !isDisposed else { return }
+        isDisposed = true
         existingSideChat?.endSession()
         existingSideChat = nil
         existingChatGPTSearch?.clear()
         existingChatGPTSearch = nil
-        isDisposed = true
         store?.sidebarMedia.remove(id)
         if store?.selectedTab?.id == id || store?.passwordFillOffer?.tabID == id { store?.cancelPasswordFill() }
         disposedWebView = existingWebView
