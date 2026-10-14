@@ -11,3 +11,4 @@
 - Use `brioche` as the release-family tag for 1.x versions, not as a prefix in individual release headlines.
 
 - Release notes use Owen’s spare, lowercase voice. Headlines name the additions or fixes; avoid slogans such as “a steadier sidebar,” marketing claims, and generic “and more.” Describe visible behavior in plain sentences and keep implementation details out unless they explain a change.
+- Keep the full notes and headline for each version. For another build of the same version, add labeled build-update paragraphs beneath the introduction, newest first, as in 1.0.3. Never replace the version’s earlier additions and fixes with only the latest build’s changes; keep the website and Sparkle notes consistent.
