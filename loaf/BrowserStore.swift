@@ -47,7 +47,14 @@ import WebKit
         set { application.preferences = newValue }
     }
     @Published var browserSplit: BrowserSplit?
-    @Published var sideChatVisible = false
+    var sideChatVisible: Bool {
+        get { selectedTab?.sideChatVisible ?? false }
+        set {
+            guard let tab = selectedTab, tab.sideChatVisible != newValue else { return }
+            objectWillChange.send()
+            tab.sideChatVisible = newValue
+        }
+    }
     var sideChatOpeningTask: Task<Void, Never>?
     @Published var sideChatWidth: CGFloat = 380
     @Published var sideChatFocusID = UUID()
@@ -300,6 +307,7 @@ import WebKit
         adapters.removeValue(forKey: profileID)
     }
     func dispose() {
+        cancelSideChatOpening()
         restoredInteractionStates.removeAll()
         sidebarEntryCache = nil
         cancelPasswordFill()
@@ -448,6 +456,7 @@ import WebKit
         }
         if pointerLockOffer?.tabID != tab.id { cancelPointerLock() }
         if selectedTab?.id != tab.id {
+            cancelSideChatOpening()
             selectedTab?.approvedPasswordFill = nil
             cancelPasswordFill()
         }
@@ -478,6 +487,7 @@ import WebKit
             return
         }
         TabClosingAnimation.close(tab)
+        if selectedTab === tab { cancelSideChatOpening() }
         tabHover.dismiss()
         let splitSurvivor = browserSplit.flatMap { split -> UUID? in
             guard split.contains(tab.id) else { return nil }
@@ -751,6 +761,7 @@ import WebKit
             profileSwipeDistance = 0
             profileResistance = 0
             guard id != selectedProfileID else { return }
+            cancelSideChatOpening()
             markVisibleTabsActive()
             endSplit()
             for tab in tabs {

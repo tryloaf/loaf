@@ -41,6 +41,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     private weak var disposedWebView: WKWebView?
     private var pendingConfiguration: WKWebViewConfiguration?
     @Published private(set) var isDisposed = false
+    @Published var sideChatVisible = false
     private var requestedURL: URL?
     private var authenticationNavigationURL: URL?
     private var activeNavigation: WKNavigation?
@@ -490,6 +491,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func dispose() {
         guard !isDisposed else { return }
         isDisposed = true
+        sideChatVisible = false
         existingSideChat?.endSession()
         existingSideChat = nil
         existingChatGPTSearch?.clear()

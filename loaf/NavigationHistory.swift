@@ -45,8 +45,10 @@ struct NavigationHistoryButton: NSViewRepresentable {
         view.backward = backward
         view.isEnabled = store.selectedTab.map { !NavigationHistory.items($0, backward: backward).isEmpty } ?? false
         let icon: LoafIcon = backward ? .back : .forward
-        view.image = Golzheim.image(icon.rawValue, size: 16, weight: 220, fitInk: true)?.copy() as? NSImage
+        view.image = (Golzheim.image(icon.rawValue, size: 16, weight: 220, fitInk: true)?.copy() as? NSImage)
+            ?? NSImage(systemSymbolName: icon.fallback, accessibilityDescription: nil)
         view.image?.isTemplate = true
+        view.glyph.image = view.image
         view.contentTintColor = .labelColor
         view.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
         view.toolTip = backward ? "back (⌘[) · hold for history" : "forward (⌘]) · hold for history"
@@ -54,6 +56,12 @@ struct NavigationHistoryButton: NSViewRepresentable {
         view.setAccessibilityHelp("Hold or right-click to choose a page from this tab's history.")
     }
     final class HistoryButton: NSButton {
+        final class GlyphView: NSImageView {
+            override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        }
+        let glyph = GlyphView()
+        private var hovered = false
+        private var hoverTracking: NSTrackingArea?
         weak var store: BrowserStore?
         var backward = true
         private var openedHistory = false
@@ -64,8 +72,32 @@ struct NavigationHistoryButton: NSViewRepresentable {
             setButtonType(.momentaryChange)
             target = self
             action = #selector(navigate)
+            glyph.imageScaling = .scaleProportionallyUpOrDown
+            glyph.contentTintColor = .labelColor
+            glyph.setAccessibilityElement(false)
+            addSubview(glyph)
         }
         required init?(coder: NSCoder) { fatalError("Not decoded") }
+        override func layout() {
+            super.layout()
+            glyph.frame = NSRect(x: bounds.midX - 9, y: bounds.midY - 9, width: 18, height: 18)
+        }
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let hoverTracking { removeTrackingArea(hoverTracking) }
+            let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self)
+            addTrackingArea(area); hoverTracking = area
+        }
+        override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+        override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+        override func draw(_ dirtyRect: NSRect) {
+            // Keep native click/hold tracking, but match the neighboring SwiftUI icon controls.
+            if hovered && isEnabled {
+                NSColor.labelColor.withAlphaComponent(0.055).setFill()
+                NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+            }
+            glyph.alphaValue = isEnabled ? (isHighlighted ? 0.65 : 1) : 0.5
+        }
         @objc private func navigate() {
             guard !openedHistory, let tab = store?.selectedTab else { return }
             NavigationHistory.step(tab, backward: backward)

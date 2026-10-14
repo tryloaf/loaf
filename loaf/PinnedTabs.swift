@@ -323,10 +323,7 @@ struct PinnedTabTile: View {
         }.buttonStyle(.plain)
             .accessibilityLabel(tab.sidebarTitle)
             .accessibilityValue(selected ? "selected" : "")
-            .background(
-                (scheme == .dark ? Color.white : Color.black).opacity(selected ? 0.12 : hovered ? 0.08 : 0.045),
-                in: RoundedRectangle(cornerRadius: 8)
-            )
+            .background(PinnedTileBackground(selected: selected, hovered: hovered))
             .opacity(pressed || store.draggedTabID == tab.id ? 0.55 : 1)
             .overlay {
                 TabDragArea(tab: tab, store: store, title: tab.sidebarTitle, selected: selected, pressed: $pressed)

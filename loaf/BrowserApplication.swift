@@ -77,6 +77,7 @@ import WebKit
             for window in windows { window.closeSideChat() }
             for runtime in runtimes.values {
                 for tab in runtime.tabs.values {
+                    tab.sideChatVisible = false
                     tab.existingChatGPTSearch?.clear()
                     tab.existingSideChat?.endSession()
                 }

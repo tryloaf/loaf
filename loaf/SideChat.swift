@@ -54,13 +54,20 @@ extension BrowserWindowState {
             self.sideChatFocusID = UUID()
         }
     }
-    func closeSideChat() {
+    func cancelSideChatOpening() {
+        guard sideChatOpeningTask != nil else { return }
         sideChatOpeningTask?.cancel()
         sideChatOpeningTask = nil
         if application.sideChatAccess.authenticating { application.sideChatAccess.lock() }
-        selectedTab?.existingSideChat?.saveChat()
-        sideChatVisible = false
-        focusPage()
+    }
+    func closeSideChat(_ tab: BrowserTab? = nil) {
+        let target = tab ?? selectedTab
+        guard target == nil || target?.store === self else { return }
+        if tab == nil || target === selectedTab { cancelSideChatOpening() }
+        objectWillChange.send()
+        target?.existingSideChat?.saveChat()
+        target?.sideChatVisible = false
+        if target === selectedTab { focusPage() }
     }
 }
 
@@ -437,7 +444,7 @@ struct SideChatPanel: View {
                 }
                 .help("new chat").accessibilityLabel("new chat")
                 Button {
-                    store.closeSideChat()
+                    store.closeSideChat(tab)
                 } label: {
                     GolzheimIcon(icon: .close, size: 14, weight: 220).frame(width: 28, height: 28)
                 }
@@ -624,7 +631,7 @@ struct SideChatPanel: View {
         .onChange(of: store.sideChatFocusID) { _, _ in focused = true }
         .onChange(of: tab.navigationID) { _, _ in state.pageChanged() }
         .onChange(of: tab.url) { _, _ in state.pageChanged() }
-        .onExitCommand { store.closeSideChat() }
+        .onExitCommand { store.closeSideChat(tab) }
     }
 
     private var composer: some View {

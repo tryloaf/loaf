@@ -95,7 +95,7 @@ struct SideChatAccessPanel: View {
             VStack(spacing: 12) {
                 HStack {
                     Spacer()
-                    IconButton(icon: .close, label: "close chat") { store.closeSideChat() }
+                    IconButton(icon: .close, label: "close chat") { store.closeSideChat(tab) }
                 }
                 Spacer()
                 GolzheimIcon(icon: .lock, size: 24)

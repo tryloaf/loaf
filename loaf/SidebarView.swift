@@ -37,6 +37,7 @@ struct SidebarView: View {
     @State private var drop: TabDropPosition?
     @State private var profileMotionID: UUID?
     @State private var profileMotionOffset: CGFloat = 0
+    @AppStorage("loaf.appearance") private var appearance = "system"
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
@@ -135,7 +136,7 @@ struct SidebarView: View {
         .onChange(of: store.draggedTabID) { _, value in if value == nil { drop = nil } }
         .onChange(of: store.draggedFolderID) { _, value in if value == nil { drop = nil } }
     }
-    private var profileTabs: some View {
+    var profileTabs: some View {
         VStack(spacing: 0) {
             if !store.gridPinnedTabs.isEmpty || store.draggedTabID != nil {
                 Color.clear.frame(
@@ -166,14 +167,21 @@ struct SidebarView: View {
         return ZStack(alignment: .topLeading) {
             if !reduceMotion, let origin = store.profileTransitionOrigin {
                 ProfileSidebarPreview(store: store, profile: origin)
+                    .environment(\.colorScheme, previewScheme(origin))
                     .offset(x: arrival - CGFloat(store.profileDirection) * width).allowsHitTesting(false)
             }
             profileTabs.offset(x: arrival - drag + store.profileResistance)
             if !reduceMotion, let target = store.profileSwipeTarget {
                 ProfileSidebarPreview(store: store, profile: target)
+                    .environment(\.colorScheme, previewScheme(target))
                     .offset(x: (drag > 0 ? width : -width) - drag).allowsHitTesting(false)
             }
         }.clipped()
+    }
+    private func previewScheme(_ profile: Profile) -> ColorScheme {
+        let base = LoafAppearance.shared.colorScheme(for: appearance, privateMode: profile.privateMode)
+        return profile.privateMode ? .dark : ProfileColor.surfaceScheme(profileTint(profile),
+            strength: profile.personalization?.tintStrength ?? 0.06, dark: base == .dark)
     }
     private var address: some View {
         AddressFeedback(feedback: store.feedback, activate: { store.openOmnibar() }) {
@@ -658,20 +666,8 @@ struct TabListContent: View {
                             Button {
                                 _ = store.newTab()
                             } label: {
-                                HStack(spacing: 4) {
-                                    GolzheimIcon(
-                                        icon: store.draggedTabID == nil ? .plus : .favorite, size: 12, weight: 220
-                                    )
-                                    .frame(width: 16, height: 16)
-                                    Text(store.draggedTabID == nil ? "new tab" : "pin as tab")
-                                    Spacer()
-                                    if store.draggedTabID == nil {
-                                        Text("⌘T").font(.system(size: 10)).foregroundStyle(.tertiary)
-                                    }
-                                }
-                                .font(.system(size: 13)).padding(.horizontal, 8).frame(height: 32).background(
-                                    Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
-                            }.buttonStyle(LoafButtonStyle()).padding(.top, 8).padding(.bottom, 4)
+                                SidebarNewTabLabel(pinTarget: store.draggedTabID != nil)
+                            }.buttonStyle(LoafButtonStyle())
                                 .overlay { PinDropZone(store: store, row: true) }
                         }
                     }.offset(y: slot.map { row.index >= $0 ? SidebarTabMetrics.insertionGap : 0 } ?? 0)
@@ -788,19 +784,7 @@ struct TabRow: View {
                 }.padding(.trailing, 8).animation(
                     reduceMotion ? nil : .smooth(duration: 0.16), value: accessoriesVisible)
             }
-            .background {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(
-                        selected ? Color(nsColor: .textBackgroundColor) : Color.primary.opacity(hovered ? 0.06 : 0.025)
-                    )
-                    .shadow(color: .black.opacity(selected ? 0.10 : 0), radius: 3, y: 2)
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: selected)
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(selected ? 0.08 : 0.035))
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: selected)
-            }
+            .modifier(SidebarRowChrome(selected: selected, hovered: hovered))
             .onHover { hovered = $0 }
             .background(TabHoverAnchor(tab: tab, store: store))
             .background(TabClosingAnchor(tabID: tab.id))

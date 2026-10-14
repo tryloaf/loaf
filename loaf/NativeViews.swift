@@ -17,16 +17,7 @@ struct SiteIcon: View {
     @ObservedObject var tab: BrowserTab
     var size: CGFloat = 14
     var body: some View {
-        Group {
-            if let icon = tab.customIcon {
-                EmojiIcon(glyph: icon, size: size)
-            } else if let image = tab.favicon {
-                Image(nsImage: image).resizable().scaledToFit().frame(width: size, height: size).clipShape(
-                    RoundedRectangle(cornerRadius: max(2, size * 0.2)))
-            } else {
-                GolzheimIcon(icon: tab.page.icon, size: size)
-            }
-        }.accessibilityHidden(true)
+        SiteIconContent(glyph: tab.customIcon, image: tab.favicon, page: tab.page, size: size)
     }
 }
 struct WebsiteIcon: View {
