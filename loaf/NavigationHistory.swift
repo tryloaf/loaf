@@ -91,10 +91,32 @@ struct NavigationHistoryButton: NSViewRepresentable {
     }
 }
 
+/// A deliberate pull back disarms navigation before the gesture reaches its origin.
+nonisolated struct NavigationPullIntent {
+    private var direction: Bool?
+    private var retreat: CGFloat = 0
+    private var advance: CGFloat = 0
+    private(set) var cancelled = false
+    mutating func update(delta: CGFloat, backward: Bool) {
+        if direction == nil { direction = backward }
+        guard direction == backward else { cancelled = true; advance = 0; return }
+        let outward = backward ? delta : -delta
+        if outward < 0 {
+            advance = 0
+            retreat -= outward
+            if retreat >= 10 { cancelled = true }
+        } else {
+            advance += outward
+            if advance >= 18 { retreat = 0; cancelled = false }
+        }
+    }
+}
+
 @MainActor final class PageNavigationSwipe: ObservableObject {
     private weak var view: LoafWebView?
     private var monitor: Any?
     private var gesture = SidebarProfileGesture()
+    private var intent = NavigationPullIntent()
     private var active = false
     private var mayNavigate = false
     private var token = UUID()
@@ -143,6 +165,7 @@ struct NavigationHistoryButton: NSViewRepresentable {
             historyPicker?.close()
             historyPicker = nil
             gesture.reset()
+            intent = NavigationPullIntent()
             active = true
             openedHistory = false
             historyVertical = 0
@@ -173,11 +196,22 @@ struct NavigationHistoryButton: NSViewRepresentable {
         if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
             if event.phase.contains(.cancelled) { historyPicker?.close() }
             else if historyWasScrubbed { historyPicker?.chooseSelection() }
-            let commit = mayNavigate && !openedHistory ? result.direction : nil
+            let commit = mayNavigate && !openedHistory && !intent.cancelled ? result.direction : nil
             let consumed = result.consumed && mayNavigate
             finish()
             if let commit { NavigationHistory.step(tab, backward: commit < 0) }
             return consumed
+        }
+        guard mayNavigate, result.consumed else { return false }
+        if result.translation != 0 { backward = result.translation < 0 }
+        intent.update(delta: event.scrollingDeltaX, backward: backward)
+        if intent.cancelled {
+            hold?.cancel(); hold = nil
+            historyPicker?.close(); historyPicker = nil
+            openedHistory = false
+            historyWasScrubbed = false
+            progress = 0
+            return true
         }
         if openedHistory, let historyPicker {
             historyVertical += event.scrollingDeltaY
@@ -188,8 +222,7 @@ struct NavigationHistoryButton: NSViewRepresentable {
             }
             return true
         }
-        guard mayNavigate, result.consumed, result.translation != 0 else { return false }
-        backward = result.translation < 0
+        guard result.translation != 0 else { progress = 0; hold?.cancel(); hold = nil; return true }
         progress = min(1, abs(result.translation) / 136)
         if overlay == nil, let parent = view.superview {
             let hint = NavigationHintHost(rootView: NavigationSwipeHint(swipe: self))
@@ -226,14 +259,18 @@ private final class NavigationHintHost: NSHostingView<NavigationSwipeHint> {
 private struct NavigationSwipeHint: View {
     @ObservedObject var swipe: PageNavigationSwipe
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     var body: some View {
         GolzheimIcon(icon: swipe.backward ? .back : .forward, size: 22, weight: 260)
-            .frame(width: 44, height: 44).background(.regularMaterial, in: Circle())
+            .frame(width: 44, height: 44).background {
+                if reduceTransparency { Circle().fill(Color(nsColor: .windowBackgroundColor)) }
+                else { Circle().fill(.regularMaterial) }
+            }
             .overlay(Circle().strokeBorder(Color.primary.opacity(0.1)))
             .scaleEffect(reduceMotion ? 1 : 0.76 + swipe.progress * 0.28)
             .offset(x: reduceMotion ? 0 : (swipe.backward ? 1 : -1) * swipe.progress * 6)
-            .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.7), value: swipe.progress)
             .opacity(min(1, swipe.progress * 3)).frame(width: 52, height: 52)
+            .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.7), value: swipe.progress)
             .allowsHitTesting(false).accessibilityHidden(true)
     }
 }

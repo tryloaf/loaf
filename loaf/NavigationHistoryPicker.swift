@@ -36,7 +36,13 @@ import WebKit
         popover.behavior = .transient
         popover.animates = false
         popover.delegate = self
-        let size = NSSize(width: 296, height: min(430, CGFloat(entries.count) * 50 + 44))
+        let rowHeights = entries.map { entry -> CGFloat in
+            let title = entry.title.flatMap { $0.isEmpty ? nil : $0 } ?? entry.url.host ?? "page"
+            let text = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)])
+            let height = text.boundingRect(with: NSSize(width: 208, height: 30), options: .usesLineFragmentOrigin).height
+            return max(40, min(54, ceil(height) + 24))
+        }
+        let size = NSSize(width: 260, height: min(360, rowHeights.reduce(10, +) + CGFloat(max(0, entries.count - 1)) * 3))
         let host = NSHostingView(rootView: NavigationHistoryPicker(selection: selection))
         host.sizingOptions = []
         host.frame = NSRect(origin: .zero, size: size)
@@ -54,6 +60,7 @@ import WebKit
     }
     var isShown: Bool { popover.isShown }
     func show(anchor: NSView, rect: NSRect? = nil) {
+        popover.appearance = anchor.effectiveAppearance
         popover.show(relativeTo: rect ?? anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
     func close() { popover.performClose(nil) }
@@ -72,7 +79,7 @@ struct NavigationHistoryPicker: View {
     @State private var appeared = false
     @FocusState private var focused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var motion: Animation? { reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.76) }
+    private var motion: Animation? { reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.73) }
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
@@ -81,43 +88,37 @@ struct NavigationHistoryPicker: View {
                         ForEach(selection.entries.indices, id: \.self) { index in
                             let entry = selection.entries[index]
                             Button { selection.index = index; selection.choose?() } label: {
-                                HStack(alignment: .center, spacing: 10) {
-                                    historyIcon(entry)
-                                    VStack(alignment: .leading, spacing: 3) {
+                                HStack(alignment: .top, spacing: 8) {
+                                    historyIcon(entry).padding(.top, 1)
+                                    VStack(alignment: .leading, spacing: 2) {
                                         Text(entry.title.flatMap { $0.isEmpty ? nil : $0 } ?? entry.url.host ?? "page")
                                             .font(.system(size: 12, weight: .medium)).lineLimit(2)
                                             .multilineTextAlignment(.leading)
                                         Text(entry.url.host ?? entry.url.scheme ?? "page")
-                                            .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                                            .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
                                     }
                                     Spacer(minLength: 0)
-                                }.padding(.horizontal, 11).padding(.vertical, 9)
+                                }.padding(.horizontal, 9).padding(.vertical, 6)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .background {
                                         if selection.index == index {
-                                            RoundedRectangle(cornerRadius: 10)
+                                            RoundedRectangle(cornerRadius: 8)
                                                 .fill(selection.tint.opacity(0.16))
-                                                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selection.tint.opacity(0.28)))
+                                                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(selection.tint.opacity(0.28)))
                                                 .matchedGeometryEffect(id: "selection", in: bubble)
                                         }
                                     }
-                                    .contentShape(RoundedRectangle(cornerRadius: 10))
+                                    .contentShape(RoundedRectangle(cornerRadius: 8))
                             }.buttonStyle(LoafButtonStyle()).id(index)
                                 .onHover { inside in if inside { withAnimation(motion) { selection.index = index } } }
                                 .accessibilityValue(selection.index == index ? "selected" : "")
                         }
-                    }.padding(7).animation(motion, value: selection.index)
+                    }.padding(5).animation(motion, value: selection.index)
                 }.scrollIndicators(.hidden)
                     .onChange(of: selection.index) { _, index in withAnimation(motion) { proxy.scrollTo(index) } }
             }
-            HStack(spacing: 5) {
-                GolzheimIcon(icon: selection.backward ? .back : .forward, size: 11)
-                Text(selection.backward ? "back history" : "forward history")
-                Spacer()
-                Text("↑↓  ↵").foregroundStyle(.tertiary)
-            }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.bottom, 10)
         }
-        .scaleEffect(appeared || reduceMotion ? 1 : 0.93, anchor: .topLeading)
+        .scaleEffect(appeared || reduceMotion ? 1 : 0.96, anchor: .top)
         .opacity(appeared ? 1 : 0)
         .focusable().focused($focused).focusEffectDisabled()
         .onAppear { focused = true; withAnimation(motion) { appeared = true } }
@@ -130,7 +131,7 @@ struct NavigationHistoryPicker: View {
         if let tab = selection.tab, let store = tab.store,
             let image = store.application.favicons.cachedImage(for: entry.url,
                 privateID: store.profileFor(tab.profileID).privateMode ? tab.profileID : nil) {
-            Image(nsImage: image).resizable().scaledToFit().frame(width: 18, height: 18)
-        } else { GolzheimIcon(icon: .globe, size: 18).foregroundStyle(.secondary) }
+            Image(nsImage: image).resizable().scaledToFit().frame(width: 16, height: 16)
+        } else { GolzheimIcon(icon: .globe, size: 16).foregroundStyle(.secondary) }
     }
 }

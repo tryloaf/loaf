@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "reviewedAt": "2026-10-14T03:44:29.157Z",
+  "reviewedAt": "2026-10-14T03:57:22.728Z",
   "scope": "Defaults, remote providers, report retention, first-use agreement, and current privacy policy reviewed against these inputs.",
   "inputs": {
     "loaf-site/legal/eula.md": "05ee9d6af4cb718ae05a473397032d4c9dea163e36c989f80e19b3308bb1cc1d",
@@ -83,8 +83,8 @@
     "loaf/MediaPresentation.swift": "a7ad2eb092214ab30883473a1025d6e19e9b547c4ac468a7a71ed5e636e49440",
     "loaf/NativeTabList.swift": "032216979fc2c00542eaef818bd48112a08c0349bd0bebcb47e3282faaed4926",
     "loaf/NativeViews.swift": "2462018408ee868dc4ae3865879af3772482cb777a605fa7e4dd6e47287e8df0",
-    "loaf/NavigationHistory.swift": "f7e1d45354de386144eefabe960f9f31507c6e16d68baaa685529af1f4d74ffc",
-    "loaf/NavigationHistoryPicker.swift": "7c193c4e57cf790dd44795f6a2297e4b75d52bcda6bb476e11b5fc1b2b8db253",
+    "loaf/NavigationHistory.swift": "158aca2e37a376a4ce198889e00f94c2209b502145500eaf92c2607571d7d1f0",
+    "loaf/NavigationHistoryPicker.swift": "db5cfa59a06c93b024da0f660efd0162911ef974d2f219c1939bb77acbe5a30d",
     "loaf/Omnibar.swift": "1b4f6c71e12a26d8373651b1ff16c4d443970725099095c8483f0d288ecb17b1",
     "loaf/OmnibarTextField.swift": "e6a3eceb40e163c188c9187e343c7d58ad46bf040befef9760b0e69ee2758818",
     "loaf/OnboardingView.swift": "fa2ff4d7d1dcecc804d2b8a78736a0f6ea29cbe689a64ced6f5beeb6f3b13305",
