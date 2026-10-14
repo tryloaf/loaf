@@ -165,7 +165,8 @@ nonisolated struct NavigationPullIntent {
         stop()
         guard view?.window != nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
-            MainActor.assumeIsolated { self?.handle(event) == true ? nil : event }
+            let consumed = MainActor.assumeIsolated { self?.handle(event) == true }
+            return consumed ? nil : event
         }
     }
     func stop() {
@@ -264,7 +265,8 @@ nonisolated struct NavigationPullIntent {
         }
         if let overlay {
             let frame = view.frame
-            overlay.frame = .init(x: backward ? frame.minX + 12 : frame.maxX - 64,
+            let travel = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : (backward ? 1 : -1) * progress * 6
+            overlay.frame = .init(x: (backward ? frame.minX + 12 : frame.maxX - 64) + travel,
                 y: frame.midY - 26, width: 52, height: 52)
         }
         if progress <= 0.2 { hold?.cancel(); hold = nil }
@@ -300,7 +302,6 @@ private struct NavigationSwipeHint: View {
             }
             .overlay(Circle().strokeBorder(Color.primary.opacity(0.1)))
             .scaleEffect(reduceMotion ? 1 : 0.76 + swipe.progress * 0.28)
-            .offset(x: reduceMotion ? 0 : (swipe.backward ? 1 : -1) * swipe.progress * 6)
             .opacity(min(1, swipe.progress * 3)).frame(width: 52, height: 52)
             .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.7), value: swipe.progress)
             .allowsHitTesting(false).accessibilityHidden(true)

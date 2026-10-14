@@ -79,6 +79,7 @@ import WebKit
     @Published var profileSwipeDistance: CGFloat = 0
     @Published var profileTransitionOrigin: Profile?
     @Published var profileTransitionStart: CGFloat = 0
+    @Published var profileTransitionBounces = false
     @Published var profileTransitionID = UUID()
     weak var trayGestureAnchor: NSView?
     @Published var traySwipeDistance: CGFloat = 0
@@ -745,12 +746,13 @@ import WebKit
         tabChanged(tab)
     }
 
-    func switchProfile(_ id: UUID) {
+    func switchProfile(_ id: UUID, flick: Bool = false) {
         guard profiles.contains(where: { $0.id == id }),
             id != selectedProfileID || profileSwipeDistance != 0 || profileResistance != 0
         else { return }
         let transaction = Transaction(animation: nil)
         withTransaction(transaction) {
+            profileTransitionBounces = flick && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             let direction = (profiles.firstIndex { $0.id == id } ?? 0) > (profiles.firstIndex { $0.id == selectedProfileID } ?? 0) ? 1 : -1
             if id != selectedProfileID, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 profileTransitionOrigin = profile
@@ -802,11 +804,11 @@ import WebKit
     }
 
     func endPrivateSession() { application.endPrivateProfile(selectedProfileID) }
-    func swipeProfile(_ direction: Int) {
+    func swipeProfile(_ direction: Int, flick: Bool = false) {
         guard let current = profiles.firstIndex(where: { $0.id == selectedProfileID }),
             profiles.indices.contains(current + direction)
         else { return }
-        switchProfile(profiles[current + direction].id)
+        switchProfile(profiles[current + direction].id, flick: flick)
         LoafHaptics.perform(enabled: preferences.haptics != false)
     }
 

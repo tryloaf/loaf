@@ -9,3 +9,5 @@
 - Run native UI and memory stress tests sequentially in disposable profiles and ordinary desktop windows. Keep an independent memory/deadline guard for profile-switch stress tests; do not run them while system memory pressure is elevated.
 - Increment the build number for each published binary. Verify signing, notarization, full/delta signatures, live download bytes, update feed, and release notes before reporting a release as shipped.
 - Use `brioche` as the release-family tag for 1.x versions, not as a prefix in individual release headlines.
+
+- Release notes use Owen’s spare, lowercase voice. Headlines name the additions or fixes; avoid slogans such as “a steadier sidebar,” marketing claims, and generic “and more.” Describe visible behavior in plain sentences and keep implementation details out unless they explain a change.

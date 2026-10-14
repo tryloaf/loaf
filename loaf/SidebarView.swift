@@ -111,6 +111,8 @@ struct SidebarView: View {
             extensionOverflow = false
         }
         .onChange(of: store.profileTransitionID) { _, token in
+            let bounces = store.profileTransitionBounces && !reduceMotion
+            let fullFlick = bounces && abs(store.profileTransitionStart) < 0.5
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) {
@@ -119,10 +121,21 @@ struct SidebarView: View {
             }
             DispatchQueue.main.async {
                 guard store.profileTransitionID == token else { return }
-                withAnimation(reduceMotion ? nil : .spring(duration: 0.28, bounce: 0)) { profileMotionOffset = 0 }
+                if fullFlick {
+                    withAnimation(.easeOut(duration: 0.06)) { profileMotionOffset = CGFloat(-store.profileDirection) * 4 }
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(60))
+                        guard store.profileTransitionID == token, store.profileTransitionOrigin != nil else { return }
+                        withAnimation(.spring(duration: 0.3, bounce: 0.16)) { profileMotionOffset = 0 }
+                    }
+                } else {
+                    withAnimation(reduceMotion ? nil : .spring(duration: bounces ? 0.34 : 0.28, bounce: bounces ? 0.16 : 0)) {
+                        profileMotionOffset = 0
+                    }
+                }
             }
             Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(320))
+                try? await Task.sleep(for: .milliseconds(bounces ? 480 : 320))
                 guard store.profileTransitionID == token else { return }
                 store.profileTransitionOrigin = nil
             }

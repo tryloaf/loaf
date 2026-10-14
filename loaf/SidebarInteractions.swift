@@ -212,6 +212,7 @@ struct SidebarInteractions: NSViewRepresentable {
         weak var store: BrowserStore?
         private var monitor: Any?
         private var gesture = SidebarProfileGesture()
+        private var profileSwipeStartedAt: TimeInterval = 0
         private var traySwipe = TraySectionSwipe()
         private var mouseScroll = SidebarMouseScroll()
         var traySection: Binding<TraySection?>?
@@ -283,6 +284,7 @@ struct SidebarInteractions: NSViewRepresentable {
                     && (anchoredTray
                         ?? (fromBottom >= 8 && fromBottom < 52 + TrayMetrics.contentHeight * min(1, trayProgress))))
             if event.phase.contains(.began) || event.phase.contains(.mayBegin) || !event.hasPreciseScrollingDeltas {
+                profileSwipeStartedAt = event.timestamp
                 swipingTray = overTray && traySection?.wrappedValue != nil
                 if !swipingTray, store.profileTransitionOrigin != nil { store.profileTransitionOrigin = nil }
             }
@@ -333,7 +335,7 @@ struct SidebarInteractions: NSViewRepresentable {
             guard event.momentumPhase.isEmpty, result.consumed else { return result.consumed }
             if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
                 if let direction = result.direction {
-                    store.swipeProfile(direction)
+                    store.swipeProfile(direction, flick: event.timestamp - profileSwipeStartedAt < 0.24)
                 } else {
                     withAnimation(reduceMotion ? nil : .spring(duration: 0.24, bounce: 0)) {
                         if store.profileSwipeDistance != 0 { store.profileSwipeDistance = 0 }
