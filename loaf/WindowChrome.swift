@@ -79,6 +79,7 @@ struct FullscreenWindowControls: NSViewRepresentable {
     func updateNSView(_ view: ControlsView, context: Context) {}
     final class ControlsView: NSView {
         private var hoverArea: NSTrackingArea?
+        private var windowObservers: [NSObjectProtocol] = []
         private(set) var hoverSymbolsVisible = false
         var grayIdle = false {
             didSet {
@@ -182,9 +183,20 @@ struct FullscreenWindowControls: NSViewRepresentable {
         }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            placeButtons()
-            updateAppearance(animated: false)
+            windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
+            windowObservers = []
+            if let window {
+                for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification,
+                    NSWindow.didBecomeKeyNotification, NSWindow.didResizeNotification] {
+                    windowObservers.append(NotificationCenter.default.addObserver(forName: name,
+                        object: window, queue: .main) { [weak self] _ in
+                            DispatchQueue.main.async { [weak self] in self?.refreshWindowControls() }
+                        })
+                }
+            }
+            refreshWindowControls()
         }
+        deinit { windowObservers.forEach { NotificationCenter.default.removeObserver($0) } }
         override func layout() {
             super.layout()
             placeButtons()
@@ -198,9 +210,19 @@ struct FullscreenWindowControls: NSViewRepresentable {
                     : index == 1 ? !fullscreen : true
             }
         }
-        func refreshWindowControls() { placeButtons() }
+        func refreshWindowControls() {
+            placeButtons()
+            updateAppearance(animated: false)
+        }
         private func placeButtons() {
             updateAvailability()
+
+
+            for button in subviews {
+                button.isHidden = false
+                button.alphaValue = 1
+                button.needsDisplay = true
+            }
             guard let window = window as? LoafBrowserWindow else { return }
             for (button, frame) in zip(subviews, window.trafficLightFrames) {
                 let target = frame.offsetBy(dx: -floatingInset, dy: -floatingInset)

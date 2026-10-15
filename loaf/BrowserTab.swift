@@ -66,10 +66,14 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
     let finder = WebKitAdapter.FindController()
     @Published var title: String
-    @Published var url: URL? { didSet { if url != oldValue { pageRevision = UUID() } } }
+    @Published var url: URL? {
+        didSet {
+            if url != oldValue { pageRevision = UUID(); refreshNavigationAvailability() }
+        }
+    }
     private(set) var pageRevision = UUID()
     @Published var page: BrowserPage {
-        didSet { store?.application.refreshPowerPolicy() }
+        didSet { refreshNavigationAvailability(); store?.application.refreshPowerPolicy() }
     }
     private(set) var existingChatGPTSearch: ChatGPTSearch?
     private(set) var existingSideChat: SideChatState?
@@ -247,6 +251,10 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         config.mediaTypesRequiringUserActionForPlayback = .all
         config.userContentController.addUserScript(
             WKUserScript(
+                source: PageScripts.layoutViewport, injectionTime: .atDocumentStart, forMainFrameOnly: true,
+                in: .page))
+        config.userContentController.addUserScript(
+            WKUserScript(
                 source: SiteShortcutBridge.script, injectionTime: .atDocumentStart, forMainFrameOnly: false,
                 in: .defaultClient))
         config.userContentController.addUserScript(
@@ -357,13 +365,13 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             webView.observe(\.canGoBack, options: [.new]) { [weak self] view, _ in
                 Task { @MainActor [weak self] in
                     guard let self, self.existingWebView === view else { return }
-                    self.canGoBack = view.canGoBack
+                    self.refreshNavigationAvailability()
                 }
             },
             webView.observe(\.canGoForward, options: [.new]) { [weak self] view, _ in
                 Task { @MainActor [weak self] in
                     guard let self, self.existingWebView === view else { return }
-                    self.canGoForward = view.canGoForward
+                    self.refreshNavigationAvailability()
                 }
             },
             webView.observe(\.hasOnlySecureContent, options: [.new]) { [weak self] view, _ in
@@ -434,8 +442,9 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         activeNavigation = view.load(URLRequest(url: url))
         store?.tabChanged(self)
     }
+    var canReload: Bool { !isDisposed && page == .web && url != nil }
     func reload() {
-        guard !isDisposed, page == .web else { return }
+        guard canReload else { return }
         if let requestedURL {
             load(requestedURL)
         } else if !loaded || navigationError != nil, let url {
@@ -446,7 +455,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
 
     func reloadFromOrigin() {
-        guard !isDisposed, page == .web, let navigation = webView.reloadFromOrigin() else { return }
+        guard canReload, let navigation = webView.reloadFromOrigin() else { return }
         activeNavigation = navigation
         faviconRefreshNavigation = navigation
     }

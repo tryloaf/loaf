@@ -25,7 +25,7 @@ struct BrowserToolbar: View {
                     } else {
                         store.selectedTab?.reload()
                     }
-                }
+                }.disabled(store.selectedTab?.canReload != true)
             }
             Spacer(minLength: 8)
             AddressFeedback(feedback: store.feedback, activate: { store.openOmnibar() }, horizontalInset: 12) {
@@ -290,6 +290,7 @@ struct ContentView: View {
                     feedback: store.feedback,
                     enabled: !store.sidebarPresented && !store.hoveredSidebar && store.compactToolbarHeight == 0,
                     transparency: store.profile.personalization?.windowTransparency ?? 0,
+                    tint: profileTint(store.profile),
                     topInset: store.pageEdgeInset + 12, trailingInset: store.pageEdgeInset + 12
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity).zIndex(8)
@@ -344,8 +345,8 @@ struct ContentView: View {
                 scheme: systemAppearance.colorScheme(for: appearance, privateMode: store.profile.privateMode))
         )
         .preferredColorScheme(systemAppearance.colorScheme(for: appearance, privateMode: store.profile.privateMode))
-        .tint(store.profile.privateMode ? PrivateChrome.accent : Color.accentColor)
-        .accentColor(store.profile.privateMode ? PrivateChrome.accent : nil)
+        .tint(store.profile.privateMode ? profileTint(store.profile) : Color.accentColor)
+        .accentColor(store.profile.privateMode ? profileTint(store.profile) : nil)
         .animation(.easeOut(duration: reduceMotion ? 0.1 : 0.16), value: store.omnibarVisible)
         .onChange(of: store.omnibarVisible) { _, visible in
             if !visible { DispatchQueue.main.async { store.focusPage() } }

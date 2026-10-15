@@ -474,6 +474,7 @@ nonisolated struct SiteSettings: Codable, Sendable {
     var customUserAgent: String?
 }
 nonisolated struct Personalization: Codable, Equatable, Sendable {
+    var privateUsesProfileColor: Bool?
     var customTint: ProfileColor?
     var sidebarWeather: Bool?
     var compactSidebarWeather: Bool?

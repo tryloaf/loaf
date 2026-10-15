@@ -2,6 +2,28 @@ import Foundation
 import WebKit
 
 enum PageScripts {
+    static let layoutViewport = #"""
+        (() => {
+          for (const [name, dimension] of [['innerWidth', 'clientWidth'], ['innerHeight', 'clientHeight']]) {
+            const descriptor = Object.getOwnPropertyDescriptor(window, name);
+            if (!descriptor?.get || !descriptor.configurable) continue;
+            const read = descriptor.get;
+            let gutter = 0;
+            Object.defineProperty(window, name, {...descriptor, get() {
+              const native = read.call(this);
+              if (this !== window) return native;
+              const root = document.compatMode === 'BackCompat' ? document.body : document.documentElement;
+              const layout = root?.[dimension];
+              if (!layout || !window.visualViewport) return native;
+              if (Math.abs(window.visualViewport.scale - 1) < 0.001) {
+                gutter = Math.max(0, native - layout);
+                return native;
+              }
+              return layout + gutter;
+            }});
+          }
+        })();
+        """#
     static let pageEdits = #"""
         (() => {
           const edited = event => {

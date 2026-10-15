@@ -673,6 +673,7 @@ extension NSMenuItem {
         case .sideChat: return store?.canShowSideChat == true
         case .summarize: return store?.canSummarizePage == true
         case .bookmark, .duplicate: return store?.selectedTab?.url != nil
+        case .reload, .reloadFromOrigin: return store?.selectedTab?.canReload == true
         case .back: return store?.selectedTab?.canGoBack == true
         case .forward: return store?.selectedTab?.canGoForward == true
         case .reopenWindow: return coordinator.canReopenClosedWindow

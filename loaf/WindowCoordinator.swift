@@ -7,6 +7,7 @@ import WebKit
     let application: BrowserApplication
     @Published var focused: BrowserWindowState?
     private var native: [UUID: NSWindow] = [:]
+    private var pendingReopen: Task<Void, Never>?
     private var auxiliary: [NSWindow] = []
     private func configureAuxiliary(_ window: NSWindow) {
         window.level = .normal
@@ -234,6 +235,7 @@ import WebKit
         return state
     }
     deinit {
+        pendingReopen?.cancel()
         if let keyWindowObserver { NotificationCenter.default.removeObserver(keyWindowObserver) }
         if let auxiliaryCloseObserver { NotificationCenter.default.removeObserver(auxiliaryCloseObserver) }
         for observer in menuTrackingObservers { NotificationCenter.default.removeObserver(observer) }
@@ -249,6 +251,8 @@ import WebKit
     @discardableResult func newWindow(
         profileID: UUID? = nil, url: URL? = nil, configuration: WKWebViewConfiguration? = nil
     ) -> BrowserWindowState {
+        pendingReopen?.cancel()
+        pendingReopen = nil
         if application.onboardingVisible, let owner = application.windows.first {
             show(owner)
             return owner
@@ -261,9 +265,30 @@ import WebKit
         application.persistSoon()
         return state
     }
+    func reopenBrowser() {
+        pendingReopen?.cancel()
+        pendingReopen = nil
+        if let state = commandState ?? application.windows.last {
+            if let window = state.nativeWindow, window.isMiniaturized { window.deminiaturize(nil) }
+            show(state)
+            return
+        }
+
+
+        pendingReopen = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            guard let self, !Task.isCancelled else { return }
+            self.pendingReopen = nil
+            if let state = self.commandState ?? self.application.windows.last { self.show(state) }
+            else { self.newWindow() }
+        }
+    }
+
     func openReceivedURLs(_ urls: [URL]) {
         let urls = urls.filter { ["http", "https"].contains($0.scheme?.lowercased() ?? "") }
         guard let first = urls.first else { return }
+        pendingReopen?.cancel()
+        pendingReopen = nil
         let state: BrowserWindowState
 
 

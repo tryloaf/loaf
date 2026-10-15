@@ -394,7 +394,7 @@ struct EditableTabIcon: View {
                             set: { save($0) }), gridHeight: 220)
                 }.padding(16).frame(width: 360)
                     .preferredColorScheme(store.profile.privateMode ? .dark : nil)
-                    .tint(store.profile.privateMode ? PrivateChrome.accent : Color.accentColor)
+                    .tint(store.profile.privateMode ? profileTint(store.profile) : Color.accentColor)
             }
             .onDisappear { if store.editingTabIconID == tab.id { store.editingTabIconID = nil } }
     }

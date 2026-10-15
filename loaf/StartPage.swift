@@ -56,7 +56,8 @@ struct StartPage: View, Equatable {
     private var preferences: Personalization { snapshot.personalization }
     private var widgets: [String] { preferences.visibleStartWidgets }
     private var tint: Color {
-        snapshot.privateMode ? PrivateChrome.accent : preferences.customTint?.color ?? profileTint(snapshot.tint)
+        snapshot.privateMode && preferences.privateUsesProfileColor != true
+            ? PrivateChrome.accent : preferences.customTint?.color ?? profileTint(snapshot.tint)
     }
     private func update(_ edit: (inout Personalization) -> Void) {
         store.updateCurrent { profile in
@@ -539,7 +540,10 @@ private struct StartPageBackground: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var preferences: Personalization { store.profile.personalization ?? Personalization() }
     private func gradientColor(_ profile: Profile, top: Bool) -> Color {
-        if profile.privateMode { return top ? PrivateChrome.surface : PrivateChrome.base }
+        if profile.privateMode {
+            return profile.personalization?.background == "plain"
+                ? PrivateChrome.base : PrivateChrome.background(profile, raised: top)
+        }
         let preferences = profile.personalization ?? Personalization()
         let usesTint = preferences.background == "profile"
         let tint = usesTint ? profileTint(profile) : Color(nsColor: .windowBackgroundColor)
@@ -966,6 +970,7 @@ struct StartCustomizer: View {
                     store.updateCurrent {
                         let old = $0.personalization ?? Personalization()
                         $0.personalization = Personalization(
+                            privateUsesProfileColor: old.privateUsesProfileColor,
                             customTint: old.customTint, sidebarWeather: old.sidebarWeather,
                             compactSidebarWeather: old.compactSidebarWeather,
                             tintStrength: old.tintStrength, windowTransparency: old.windowTransparency,

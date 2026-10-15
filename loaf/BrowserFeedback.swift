@@ -47,7 +47,7 @@ struct AddressFeedback<Content: View>: View {
             .blur(radius: reduceMotion || feedback.notice == nil ? 0 : 4)
             .offset(y: reduceMotion || feedback.notice == nil ? 0 : 8)
             .allowsHitTesting(feedback.notice == nil).accessibilityHidden(feedback.notice != nil)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.26), value: feedback.notice != nil)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: feedback.notice != nil)
             .overlay(alignment: .leading) {
                 if let notice = feedback.notice {
                     Button(action: activate) {
@@ -83,7 +83,7 @@ struct AddressFeedback<Content: View>: View {
                         .accessibilityLabel(notice.text + ", address bar").help("search or surf...")
                 }
             }.clipped().animation(
-                reduceMotion ? .easeOut(duration: 0.1) : .smooth(duration: 0.26), value: feedback.notice?.id)
+                reduceMotion ? .easeOut(duration: 0.1) : .smooth(duration: 0.18), value: feedback.notice?.id)
     }
 }
 
@@ -107,13 +107,14 @@ struct BrowserNotificationToast: NSViewRepresentable {
     @ObservedObject var feedback: BrowserFeedback
     var enabled = true
     var transparency: Double = 0
+    var tint: Color = .accentColor
     var topInset: CGFloat = 12
     var trailingInset: CGFloat = 12
     @Environment(\.self) private var environment
     func makeNSView(context: Context) -> Container { Container() }
     func updateNSView(_ view: Container, context: Context) {
         view.configure(
-            notice: enabled ? feedback.notice : nil, environment: environment, transparency: transparency,
+            notice: enabled ? feedback.notice : nil, environment: environment, transparency: transparency, tint: NSColor(tint),
             topInset: topInset, trailingInset: trailingInset, dismiss: { feedback.clear() })
     }
     static func dismantleNSView(_ view: Container, coordinator: ()) { view.stopMotion() }
@@ -164,7 +165,7 @@ struct BrowserNotificationToast: NSViewRepresentable {
         }
         deinit { link?.invalidate() }
         func configure(
-            notice: BrowserNotice?, environment: EnvironmentValues, transparency: Double = 0,
+            notice: BrowserNotice?, environment: EnvironmentValues, transparency: Double = 0, tint: NSColor = .controlAccentColor,
             topInset: CGFloat, trailingInset: CGFloat, dismiss: @escaping () -> Void
         ) {
             self.topInset = topInset
@@ -176,7 +177,7 @@ struct BrowserNotificationToast: NSViewRepresentable {
                 shown = true
                 text = notice.text
                 host.configure(
-                    notice: notice, dark: environment.colorScheme == .dark, transparency: transparency,
+                    notice: notice, dark: environment.colorScheme == .dark, transparency: transparency, tint: tint,
                     reduceTransparency: environment.accessibilityReduceTransparency, dismiss: dismiss)
                 surface.isHidden = false
                 needsLayout = true
@@ -205,6 +206,7 @@ struct BrowserNotificationToast: NSViewRepresentable {
             if entering {
                 if update {
                     surface.alphaValue = 0.55
+                    blur = reduceMotion ? 0 : 3
                 } else if surface.alphaValue == 1 || surface.isHidden {
                     offset = reduceMotion ? 0 : -8
                     blur = reduceMotion ? 0 : 4
@@ -217,7 +219,7 @@ struct BrowserNotificationToast: NSViewRepresentable {
             targetBlur = entering || reduceMotion ? 0 : 4
             startOpacity = surface.alphaValue
             targetOpacity = entering ? 1 : 0
-            duration = reduceMotion ? 0.1 : update ? 0.18 : 0.26
+            duration = reduceMotion ? 0.1 : entering ? 0.18 : 0.16
             started = CACurrentMediaTime()
             position(offset: offset, opacity: startOpacity, blur: startBlur)
             let link = displayLink(target: TickTarget(self), selector: #selector(TickTarget.update(_:)))
@@ -246,10 +248,12 @@ struct BrowserNotificationToast: NSViewRepresentable {
             let eased =
                 progress >= 1 || reduceMotion
                 ? progress : Spring.smooth(duration: duration).value(target: 1.0, time: progress * duration)
+            let blurProgress = min(1, max(0, (CACurrentMediaTime() - started) / 0.1))
+            let blurEased = 1 - pow(1 - blurProgress, 3)
             position(
                 offset: reduceMotion ? 0 : startOffset + (targetOffset - startOffset) * eased,
                 opacity: startOpacity + (targetOpacity - startOpacity) * eased,
-                blur: reduceMotion ? 0 : startBlur + (targetBlur - startBlur) * eased)
+                blur: reduceMotion ? 0 : startBlur + (targetBlur - startBlur) * blurEased)
             if progress >= 1 {
                 stopMotion()
                 if !shown {
@@ -294,22 +298,22 @@ final class BrowserNotificationCardView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.cornerRadius = 10
+        layer?.cornerRadius = 12
         layer?.cornerCurve = .continuous
         layer?.borderWidth = 1
-        layer?.shadowOpacity = 0.14
+        layer?.shadowOpacity = 0.1
         layer?.shadowRadius = 8
         layer?.shadowOffset = CGSize(width: 0, height: -2)
-        backdrop.material = .sidebar
+        backdrop.material = .popover
         backdrop.blendingMode = .withinWindow
         backdrop.state = .active
         backdrop.wantsLayer = true
-        backdrop.layer?.cornerRadius = 10
+        backdrop.layer?.cornerRadius = 12
         backdrop.layer?.cornerCurve = .continuous
         backdrop.layer?.masksToBounds = true
         backdrop.setAccessibilityElement(false)
         fill.wantsLayer = true
-        fill.layer?.cornerRadius = 10
+        fill.layer?.cornerRadius = 12
         fill.layer?.cornerCurve = .continuous
         fill.setAccessibilityElement(false)
         addSubview(backdrop)
@@ -339,7 +343,7 @@ final class BrowserNotificationCardView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     func configure(
-        notice: BrowserNotice, dark: Bool, transparency: Double = 0,
+        notice: BrowserNotice, dark: Bool, transparency: Double = 0, tint: NSColor = .controlAccentColor,
         reduceTransparency: Bool = false, dismiss: @escaping () -> Void
     ) {
         self.dismiss = dismiss
@@ -371,10 +375,12 @@ final class BrowserNotificationCardView: NSView {
         measuredSize = NSSize(width: 71 + textWidth, height: max(32, textHeight + 16))
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let opacity = ProfileTransparency.opacity(transparency, reduceTransparency: reduceTransparency)
+        let opacity = ProfileTransparency.opacity(max(0.65, transparency), reduceTransparency: reduceTransparency)
         backdrop.isHidden = opacity == 1
-        fill.layer?.backgroundColor = NSColor(white: dark ? 0.16 : 0.97, alpha: opacity).cgColor
-        layer?.borderColor = (dark ? NSColor.white : NSColor.black).withAlphaComponent(dark ? 0.16 : 0.1).cgColor
+        let base = NSColor(white: dark ? 0.16 : 0.97, alpha: 1)
+        let color = base.blended(withFraction: 0.06, of: tint) ?? base
+        fill.layer?.backgroundColor = color.withAlphaComponent(opacity).cgColor
+        layer?.borderColor = (dark ? NSColor.white : NSColor.black).withAlphaComponent(dark ? 0.12 : 0.07).cgColor
         CATransaction.commit()
         needsLayout = true
     }
@@ -390,7 +396,7 @@ final class BrowserNotificationCardView: NSView {
         icon.frame = NSRect(x: 12, y: 9, width: 15, height: 15)
         label.frame = NSRect(x: 35, y: 8, width: textWidth, height: textHeight)
         dismissButton.frame = NSRect(x: bounds.width - 28, y: 8, width: 16, height: 16)
-        layer?.shadowPath = RoundedRectangle(cornerRadius: 10, style: .continuous).path(in: bounds).cgPath
+        layer?.shadowPath = RoundedRectangle(cornerRadius: 12, style: .continuous).path(in: bounds).cgPath
     }
     @objc private func dismissNotice() { dismiss?() }
 }

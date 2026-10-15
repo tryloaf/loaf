@@ -44,4 +44,12 @@ enum PrivateChrome {
     static let base = Color(white: 0.065)
     static let surface = Color(white: 0.115)
     static let accent = Color(white: 0.72)
+    static func background(_ profile: Profile, raised: Bool = false) -> Color {
+        let base = raised ? surface : base
+        guard profile.personalization?.privateUsesProfileColor == true else { return base }
+        let tint = ProfileColor.surfaceColor(profileTint(profile),
+            strength: profile.personalization?.tintStrength ?? 0.06, dark: true)
+        let color = NSColor(base).blended(withFraction: 0.7, of: NSColor(tint)) ?? NSColor(base)
+        return Color(nsColor: color)
+    }
 }

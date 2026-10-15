@@ -550,6 +550,18 @@ struct SettingsView: View {
     private var appearanceSettings: some View {
         Group {
             Section("\(store.profile.name) · profile color") {
+                if store.profile.privateMode {
+                    Toggle("use profile color in private browsing", isOn: Binding(
+                        get: { store.profile.personalization?.privateUsesProfileColor == true },
+                        set: { value in
+                            store.updateCurrent {
+                                $0.personalization = $0.personalization ?? Personalization()
+                                $0.personalization?.privateUsesProfileColor = value
+                            }
+                        }))
+                    Text("appearance changes last until this private session ends.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 ProfileThemeControls(
                     tint: Binding(
                         get: { store.profile.tint }, set: { value in store.updateCurrent { $0.tint = value } }),
@@ -910,6 +922,9 @@ struct SettingsView: View {
     }
     private var extensions: some View {
         Section("extensions · \(store.profile.name)") {
+            if store.profile.extensions.isEmpty {
+                Text("no installed extensions").foregroundStyle(.secondary)
+            }
             ForEach(store.profile.extensions) { record in
                 DisclosureGroup(
                     isExpanded: Binding(

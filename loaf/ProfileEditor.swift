@@ -124,6 +124,7 @@ struct ProfileEditor: View {
     @State private var tint = 0
     @State private var strength = 0.06
     @State private var transparency = 0.0
+    @State private var privateUsesProfileColor = false
     @State private var customTint: ProfileColor?
     @State private var confirmDeletion = false
     @State private var deleting = false
@@ -137,6 +138,11 @@ struct ProfileEditor: View {
             }
             FocusRingSafeScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    if store.profileFor(profileID).privateMode {
+                        Toggle("use profile color in private browsing", isOn: $privateUsesProfileColor)
+                        Text("appearance changes last until this private session ends.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     ProfileThemeControls(
                         tint: $tint, customTint: $customTint, strength: $strength, transparency: $transparency)
                     Divider()
@@ -187,6 +193,7 @@ struct ProfileEditor: View {
                         $0.personalization = $0.personalization ?? Personalization()
                         $0.personalization?.tintStrength = ProfileColor.surfaceStrength(strength)
                         $0.personalization?.customTint = customTint
+                        $0.personalization?.privateUsesProfileColor = privateUsesProfileColor
                         $0.personalization?.windowTransparency = ProfileTransparency.bounded(transparency)
                     }
                     dismiss()
@@ -245,6 +252,7 @@ struct ProfileEditor: View {
                 tint = profile.tint
                 strength = profile.personalization?.tintStrength ?? 0.06
                 customTint = profile.personalization?.customTint
+                privateUsesProfileColor = profile.personalization?.privateUsesProfileColor == true
                 transparency = ProfileTransparency.bounded(profile.personalization?.windowTransparency ?? 0)
             }
     }

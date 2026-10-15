@@ -63,7 +63,7 @@ import WebKit
 
 @MainActor enum NavigationHistory {
     static func items(_ tab: BrowserTab, backward: Bool) -> [WKBackForwardListItem] {
-        guard !tab.isDisposed, let view = tab.existingWebView else { return [] }
+        guard !tab.isDisposed, tab.page == .web, tab.url != nil, let view = tab.existingWebView else { return [] }
         if backward {
             let native = Array(view.backForwardList.backList.reversed().prefix(30))
             return native + (tab.openerTrail?.items(limit: 30 - native.count) ?? [])
@@ -78,7 +78,7 @@ import WebKit
         return Array(entries.prefix(30))
     }
     @discardableResult static func go(_ tab: BrowserTab, to item: WKBackForwardListItem) -> WKNavigation? {
-        guard !tab.isDisposed, !tab.closeRequested, let store = tab.store, store.isOpenTab(tab),
+        guard !tab.isDisposed, !tab.closeRequested, tab.page == .web, tab.url != nil, let store = tab.store, store.isOpenTab(tab),
             let view = tab.existingWebView else { return nil }
         if item === tab.openerReturnItem, let trail = tab.openerReturnTrail {
 
@@ -317,6 +317,55 @@ nonisolated struct NavigationPickerDismissIntent {
     }
 }
 
+nonisolated enum PageNavigationScrollEligibility {
+    static let script = """
+        const scrollable = value => /^(auto|scroll|overlay)$/.test(value);
+        const clipped = value => value === 'hidden' || value === 'clip';
+        const hasHorizontalScroll = (doc, x, y, depth = 0) => {
+            if (depth > 8) return true;
+            const root = doc.documentElement;
+            if (!root) return false;
+            const body = doc.body;
+            const scrolling = doc.scrollingElement || root;
+            const style = el => doc.defaultView.getComputedStyle(el);
+            let el = doc.elementFromPoint(x, y);
+            const hits = new Set();
+            while (el?.shadowRoot && !hits.has(el)) {
+                hits.add(el);
+                const inner = el.shadowRoot.elementFromPoint?.(x, y);
+                if (!inner || inner === el) break;
+                el = inner;
+            }
+            const seen = new Set();
+            while (el && !seen.has(el)) {
+                seen.add(el);
+                if (el.tagName === 'IFRAME') {
+                    let child = null;
+                    try { child = el.contentDocument; } catch (_) {}
+                    if (child?.documentElement) {
+                        const rect = el.getBoundingClientRect();
+                        const scaleX = rect.width > 0 ? el.offsetWidth / rect.width : 1;
+                        const scaleY = rect.height > 0 ? el.offsetHeight / rect.height : 1;
+                        if (hasHorizontalScroll(child, (x - rect.left) * scaleX - el.clientLeft,
+                            (y - rect.top) * scaleY - el.clientTop, depth + 1)) return true;
+                    } else if (!clipped(style(el).overflowX)
+                        && el.getAttribute('scrolling')?.toLowerCase() !== 'no') {
+                        return true;
+                    }
+                }
+                if (el !== root && el !== scrolling && scrollable(style(el).overflowX)
+                    && el.scrollWidth > el.clientWidth + 2) return true;
+                el = el.parentElement || el.getRootNode()?.host;
+            }
+            const rootOverflow = style(root).overflowX;
+            const viewportOverflow = rootOverflow === 'visible' && body ? style(body).overflowX : rootOverflow;
+            if (clipped(viewportOverflow)) return false;
+            return scrolling.scrollWidth > (root.clientWidth || doc.defaultView.innerWidth) + 2;
+        };
+        return hasHorizontalScroll(document, x, y);
+        """
+}
+
 @MainActor final class PageNavigationSwipe: ObservableObject {
     private weak var view: LoafWebView?
     private var monitor: Any?
@@ -327,7 +376,6 @@ nonisolated struct NavigationPickerDismissIntent {
     private var token = UUID()
     private var openedHistory = false
     private(set) var historyPicker: NavigationHistoryPresenter?
-    private var historyWasScrubbed = false
     private(set) var preview: NavigationHistoryPresenter?
     private var verticalPull: CGFloat = 0
     private var hintStartedAt: TimeInterval?
@@ -398,19 +446,15 @@ nonisolated struct NavigationPickerDismissIntent {
             if !event.momentumPhase.isEmpty { return true }
             if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
                 active = true
-                historyWasScrubbed = false
                 historyPicker.settleScroll()
             }
             if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
                 if event.phase.contains(.cancelled) { historyPicker.close() }
-                else if historyWasScrubbed { historyPicker.chooseSelection() }
-                else { historyPicker.settleScroll() }
+                else { historyPicker.chooseSelection() }
                 finish()
                 return true
             }
-            if historyPicker.scrub(horizontal: event.scrollingDeltaX, vertical: event.scrollingDeltaY) == .changed {
-                historyWasScrubbed = true
-            }
+            historyPicker.scrub(horizontal: event.scrollingDeltaX, vertical: event.scrollingDeltaY)
             return true
         }
         if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
@@ -423,21 +467,12 @@ nonisolated struct NavigationPickerDismissIntent {
             intent = NavigationPullIntent()
             active = true
             openedHistory = false
-            historyWasScrubbed = false
             mayNavigate = false
             let current = token
             let point = view.convert(event.locationInWindow, from: nil)
             let y = view.isFlipped ? point.y : view.bounds.height - point.y
-            view.callAsyncJavaScript("""
-                let el = document.elementFromPoint(x, y);
-                while (el) {
-                    if (el.tagName === 'IFRAME') return true;
-                    const style = getComputedStyle(el);
-                    if (/auto|scroll/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 2) return true;
-                    el = el.parentElement;
-                }
-                return document.documentElement.scrollWidth > innerWidth + 2;
-                """, arguments: ["x": point.x, "y": y], in: nil, in: .defaultClient) { [weak self] result in
+            view.callAsyncJavaScript(PageNavigationScrollEligibility.script,
+                arguments: ["x": point.x, "y": y], in: nil, in: .defaultClient) { [weak self] result in
                 guard let self, self.token == current else { return }
                 if case .success(let scrollable) = result { self.mayNavigate = scrollable as? Bool == false }
             }
@@ -449,8 +484,7 @@ nonisolated struct NavigationPickerDismissIntent {
         if !event.momentumPhase.isEmpty { return result.consumed && mayNavigate }
         if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
             if event.phase.contains(.cancelled) { historyPicker?.close() }
-            else if historyWasScrubbed { historyPicker?.chooseSelection() }
-            else { historyPicker?.settleScroll() }
+            else { historyPicker?.chooseSelection() }
             let commit = mayNavigate && !openedHistory && !intent.cancelled ? result.direction : nil
             let consumed = result.consumed && mayNavigate
             finish()
@@ -463,9 +497,7 @@ nonisolated struct NavigationPickerDismissIntent {
         if preview != nil, abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) {
             verticalPull += event.scrollingDeltaY
             if abs(verticalPull) >= 12, beginHistory(tab, in: view) {
-                if historyPicker?.scrub(horizontal: 0, vertical: verticalPull) == .changed {
-                    historyWasScrubbed = true
-                }
+                historyPicker?.scrub(horizontal: 0, vertical: verticalPull)
                 verticalPull = 0
             }
             return true
@@ -477,7 +509,6 @@ nonisolated struct NavigationPickerDismissIntent {
             historyPicker?.close(); historyPicker = nil
             openedHistory = false
             dismissPreview()
-            historyWasScrubbed = false
             progress = 0
             return true
         }

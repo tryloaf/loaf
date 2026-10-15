@@ -490,7 +490,7 @@ struct TabGroupRow: View {
     @State private var styling = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var editing: Bool { store.editingGroupID == group.id }
-    private var tint: Color { store.profile.privateMode ? PrivateChrome.accent : profileTint(group.color) }
+    private var tint: Color { store.profile.privateMode ? profileTint(store.profile) : profileTint(group.color) }
     var body: some View {
         let profileID = store.selectedProfileID
         return HStack(spacing: 4) {
@@ -573,7 +573,7 @@ private struct TabGroupStylePicker: View {
                     Button {
                         store.updateGroup(group.id) { $0.color = index }
                     } label: {
-                        Circle().fill(store.profile.privateMode ? PrivateChrome.accent : profileTint(index)).frame(
+                        Circle().fill(store.profile.privateMode ? profileTint(store.profile) : profileTint(index)).frame(
                             width: 22, height: 22
                         ).overlay(
                             Circle().strokeBorder(Color.primary.opacity(group.color == index ? 0.7 : 0), lineWidth: 2)

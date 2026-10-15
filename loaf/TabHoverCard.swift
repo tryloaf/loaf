@@ -199,7 +199,7 @@ struct HoverActionLayout: Layout {
                 card
                     .onHover { [weak self] inside in if inside { self?.keepOpen() } else { self?.deferHide() } }
                     .preferredColorScheme(store.profile.privateMode ? .dark : nil).tint(
-                        store.profile.privateMode ? PrivateChrome.accent : Color.accentColor)))
+                        store.profile.privateMode ? profileTint(store.profile) : Color.accentColor)))
         let size = NSSize(width: TabHoverMetrics.width, height: ceil(hosting.fittingSize.height))
         let frame = NSRect(
             x: max(screen.minX, min(rect.maxX + 6, screen.maxX - size.width)),

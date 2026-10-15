@@ -32,13 +32,13 @@ nonisolated enum NavigationHistoryLayout {
     func float(horizontal delta: CGFloat) {
         guard !dismissed, !reduceMotion, delta.isFinite else { return }
         horizontal = min(160, max(-160, horizontal + delta))
-        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+        withAnimation(.interactiveSpring(response: 0.22, dampingFraction: 0.94, blendDuration: 0.04)) {
             drift = 8 * tanh(horizontal / 65)
         }
     }
     func settle() {
         horizontal = 0
-        withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.84)) { drift = 0 }
+        withAnimation(reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.94)) { drift = 0 }
     }
 }
 
@@ -56,6 +56,19 @@ struct NavigationBubbleTransition: ViewModifier {
     }
 }
 
+nonisolated enum NavigationHistoryDetents {
+    static let pointsPerItem: CGFloat = 72
+    static let captureRadius: CGFloat = 0.22
+    static func position(_ raw: CGFloat) -> CGFloat {
+        let center = raw.rounded()
+        let offset = raw - center
+        let travel = max(0, abs(offset) - captureRadius) / (0.5 - captureRadius)
+
+        let eased = travel * travel * (2 - travel)
+        return center + (offset < 0 ? -0.5 : 0.5) * eased
+    }
+}
+
 @MainActor final class NavigationHistorySelection: ObservableObject {
     let motion = NavigationBubbleMotion()
     @Published var browsing: Bool
@@ -64,7 +77,8 @@ struct NavigationBubbleTransition: ViewModifier {
     let backward: Bool
     @Published var index = 0
     @Published private(set) var pull: CGFloat = 0
-    var position: CGFloat { CGFloat(index) + pull }
+    var position: CGFloat { NavigationHistoryDetents.position(CGFloat(index) + pull) }
+    var centered: Bool { abs(position - CGFloat(index)) < 0.025 }
     var choose: (() -> Void)?
     var dismiss: (() -> Void)?
     init(tab: BrowserTab, entries: [WKBackForwardListItem], backward: Bool, preview: Bool = false) {
@@ -84,7 +98,7 @@ struct NavigationBubbleTransition: ViewModifier {
         if ended { pull = 0; return false }
         guard delta.isFinite, !entries.isEmpty else { return false }
         let previous = index
-        let nextPosition = min(CGFloat(entries.count - 1), max(0, position - delta / 56))
+        let nextPosition = min(CGFloat(entries.count - 1), max(0, CGFloat(index) + pull - delta / NavigationHistoryDetents.pointsPerItem))
         let nextIndex = Int(nextPosition.rounded())
         if nextIndex != index {
             index = nextIndex
@@ -251,7 +265,7 @@ struct NavigationBubbleTransition: ViewModifier {
         dismissIntent = NavigationPickerDismissIntent()
         selection.motion.settle()
         let motion: Animation? = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            ? nil : .spring(response: 0.24, dampingFraction: 0.86)
+            ? nil : .spring(response: 0.24, dampingFraction: 0.94)
         withAnimation(motion) { selection.scrub(0, ended: true) }
     }
     @discardableResult func scrub(_ delta: CGFloat) -> Bool { selection.scrub(delta) }
@@ -263,7 +277,10 @@ struct NavigationBubbleTransition: ViewModifier {
             close()
             return .dismissed
         }
-        return selection.scrub(vertical) ? .changed : .unchanged
+        let animation: Animation? = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? nil : .interactiveSpring(response: 0.16, dampingFraction: 1, blendDuration: 0.04)
+        let changed = withAnimation(animation) { selection.scrub(vertical) }
+        return changed ? .changed : .unchanged
     }
     func chooseSelection() {
         guard !closed else { return }
@@ -273,7 +290,7 @@ struct NavigationBubbleTransition: ViewModifier {
     }
 }
 
-struct NavigationDestinationPill: View {
+struct NavigationDestinationPill: View, Animatable {
     let entry: WKBackForwardListItem?
     let backward: Bool
     var store: BrowserStore?
@@ -282,6 +299,13 @@ struct NavigationDestinationPill: View {
     var historyPosition: CGFloat? = nil
     var expansion: CGFloat = 1
     var selected = false
+    var animatableData: CGFloat {
+        get { historyPosition ?? 0 }
+        set { if historyPosition != nil { historyPosition = newValue } }
+    }
+    private var highlighted: Bool {
+        selected && (reduceMotion || historyPosition.map { abs($0 - $0.rounded()) < 0.025 } != false)
+    }
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var tint: Color { store.map { profileTint($0.profile) } ?? .accentColor }
@@ -308,8 +332,8 @@ struct NavigationDestinationPill: View {
                     else { Capsule().fill(.regularMaterial) }
                     Capsule().fill(Color.primary.opacity(0.12))
                         .padding(4)
-                        .opacity(selected ? 1 : 0)
-                        .animation(.easeInOut(duration: 0.14), value: selected)
+                        .opacity(highlighted ? 1 : 0)
+                        .animation(nil, value: highlighted)
                 }
             }
             .clipShape(Capsule())
@@ -384,7 +408,7 @@ struct NavigationHistoryPicker: View {
     }
     @FocusState private var focused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var motion: Animation? { reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.86) }
+    private var motion: Animation? { reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.94) }
     var body: some View {
         VStack(spacing: 8) {
             if selection.entries.indices.contains(selection.index) {

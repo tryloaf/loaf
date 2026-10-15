@@ -136,7 +136,7 @@ import WebKit
             LegalAcceptance.shared.showExistingWindow()
             return true
         }
-        if !flag { coordinator?.newWindow() }
+        if !flag { coordinator?.reopenBrowser() }
         return true
     }
     func application(_ application: NSApplication, open urls: [URL]) {

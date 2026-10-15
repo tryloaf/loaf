@@ -168,15 +168,15 @@ struct TabSwitcherView: View {
                 }
             }.frame(height: previewHeight).clipped()
                 .overlay(alignment: .topLeading) {
-                    if let group = switcher.store?.tabGroups.first(where: { $0.id == tab.groupID }) {
+                    if let store = switcher.store, let group = store.tabGroups.first(where: { $0.id == tab.groupID }) {
                         HStack(spacing: 4) {
                             EmojiIcon(glyph: group.icon, size: 9)
                             Text(group.name).font(.system(size: 9, weight: .medium)).lineLimit(1)
                             Spacer(minLength: 0)
                         }
                         .padding(4).background(.regularMaterial).overlay(
-                            (switcher.store?.profile.privateMode == true
-                                ? PrivateChrome.accent : profileTint(group.color)).opacity(0.1)
+                            (store.profile.privateMode
+                                ? profileTint(store.profile) : profileTint(group.color)).opacity(0.1)
                         ).allowsHitTesting(false)
                     }
                 }

@@ -52,7 +52,7 @@ struct SidebarView: View {
                             } else {
                                 store.selectedTab?.reload()
                             }
-                        }
+                        }.disabled(store.selectedTab?.canReload != true)
                     }.offset(y: store.chromeControlsCenterY - 20 - (floating ? 3 : 0))
                 }.padding(.trailing, 8).frame(height: 40).fixedSize(horizontal: false, vertical: true)
                     .overlay(alignment: .topLeading) {
@@ -104,41 +104,31 @@ struct SidebarView: View {
         .overlay(alignment: .trailing) { SidebarDivider(store: store).frame(width: 8) }
         .onChange(of: store.selectedProfileID) { _, _ in
             cancelRebound()
+            drop = nil
             traySection = nil
             trayProgress = 0
             extensionOrder = []
             draggedExtensionID = nil
             extensionOverflow = false
         }
-        .onChange(of: store.profileTransitionID) { _, token in
-            let bounces = store.profileTransitionBounces && !reduceMotion
-            let fullFlick = bounces && abs(store.profileTransitionStart) < 0.5
+        .task(id: store.profileTransitionID) {
+            guard store.profileTransitionOrigin != nil else { return }
+            let token = store.profileTransitionID
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) {
                 profileMotionID = token
                 profileMotionOffset = reduceMotion ? 0 : store.profileTransitionStart
             }
-            DispatchQueue.main.async {
-                guard store.profileTransitionID == token else { return }
-                if fullFlick {
-                    withAnimation(.easeOut(duration: 0.06)) { profileMotionOffset = CGFloat(-store.profileDirection) * 4 }
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(60))
-                        guard store.profileTransitionID == token, store.profileTransitionOrigin != nil else { return }
-                        withAnimation(.spring(duration: 0.3, bounce: 0.16)) { profileMotionOffset = 0 }
-                    }
-                } else {
-                    withAnimation(reduceMotion ? nil : .spring(duration: bounces ? 0.34 : 0.28, bounce: bounces ? 0.16 : 0)) {
-                        profileMotionOffset = 0
-                    }
-                }
+            await Task.yield()
+            guard !Task.isCancelled, store.profileTransitionID == token,
+                store.profileTransitionOrigin != nil else { return }
+            withAnimation(reduceMotion ? nil : .spring(duration: 0.24, bounce: 0)) {
+                profileMotionOffset = 0
             }
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(bounces ? 480 : 320))
-                guard store.profileTransitionID == token else { return }
-                store.profileTransitionOrigin = nil
-            }
+            do { try await Task.sleep(for: .milliseconds(280)) } catch { return }
+            guard !Task.isCancelled, store.profileTransitionID == token else { return }
+            store.profileTransitionOrigin = nil
         }
         .onAppear { extensionProgress = store.extensionsVisible ? 1 : 0 }
         .onChange(of: store.extensionsVisible) { _, open in animateExtensions(open) }
@@ -177,17 +167,28 @@ struct SidebarView: View {
         let arrival = reduceMotion || store.profileTransitionOrigin == nil ? 0
             : profileMotionID == store.profileTransitionID ? profileMotionOffset : store.profileTransitionStart
         let drag = reduceMotion ? 0 : store.profileSwipeDistance
+        let offset = arrival - drag + store.profileResistance
         return ZStack(alignment: .topLeading) {
             if !reduceMotion, let origin = store.profileTransitionOrigin {
                 ProfileSidebarPreview(store: store, profile: origin)
                     .environment(\.colorScheme, previewScheme(origin))
-                    .offset(x: arrival - CGFloat(store.profileDirection) * width).allowsHitTesting(false)
+                    .offset(x: offset - CGFloat(store.profileDirection) * width).allowsHitTesting(false)
             }
-            profileTabs.offset(x: arrival - drag + store.profileResistance)
-            if !reduceMotion, let target = store.profileSwipeTarget {
+            profileTabs
+                .id(store.selectedProfileID)
+                .transition(.identity)
+                .transaction { transaction in
+                    if store.profileTransitionOrigin != nil || store.profileSwipeDistance != 0 {
+                        transaction.animation = nil
+                        transaction.disablesAnimations = true
+                    }
+                }
+                .offset(x: offset)
+            if !reduceMotion, let target = store.profileSwipeTarget,
+                target.id != store.profileTransitionOrigin?.id {
                 ProfileSidebarPreview(store: store, profile: target)
                     .environment(\.colorScheme, previewScheme(target))
-                    .offset(x: (drag > 0 ? width : -width) - drag).allowsHitTesting(false)
+                    .offset(x: offset + (drag > 0 ? width : -width)).allowsHitTesting(false)
             }
         }.clipped()
     }
@@ -408,8 +409,14 @@ struct SidebarView: View {
                 .accessibilityLabel(extensionOverflow ? "hide other extensions" : "show other extensions")
             }
             HStack(spacing: 0) {
-                ForEach(pinned) { extensionButton($0) }
-                if pinned.count < 4 { Spacer(minLength: 0) }
+                if enabled.isEmpty {
+                    Text(store.profile.extensions.isEmpty ? "no installed extensions" : "no enabled extensions")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 4)
+                } else {
+                    ForEach(pinned) { extensionButton($0) }
+                    if pinned.count < 4 { Spacer(minLength: 0) }
+                }
                 Button {
                     store.showPage(.extensions)
                 } label: {
@@ -479,6 +486,7 @@ struct SidebarView: View {
                     .contentShape(Rectangle())
             }.buttonStyle(.plain).help(trayProgress == 0 ? "open tray" : "close tray").accessibilityLabel(
                 trayProgress == 0 ? "open tray" : "close tray")
+            SidebarPerformanceControl(store: store)
             Spacer(minLength: 4)
             Button {
                 profilePicker.toggle()
@@ -489,13 +497,10 @@ struct SidebarView: View {
                         Text(store.profile.name).font(.system(size: 13)).lineLimit(1)
                     }
                     .id(store.selectedProfileID)
-                    .transition(
-                        ProfileSwitchMotion.transition(
-                            direction: store.profileDirection, reduceMotion: reduceMotion, distance: 4))
-                    .animation(reduceMotion ? nil : ProfileSwitchMotion.animation, value: store.selectedProfileID)
+                    .transition(.identity)
                     HStack(spacing: 4) {
                         ForEach(store.profiles) { p in
-                            Capsule().fill(store.profile.privateMode ? PrivateChrome.accent : profileTint(p)).frame(
+                            Capsule().fill(store.profile.privateMode ? profileTint(store.profile) : profileTint(p)).frame(
                                 width: p.id == store.selectedProfileID ? 20 : 8, height: 2
                             ).opacity(p.id == store.selectedProfileID ? 1 : 0.35)
                         }
@@ -543,7 +548,7 @@ struct SidebarView: View {
             )
             .help(store.extensionsVisible ? "hide extensions" : "show extensions")
             .contextMenu { Button("manage extensions…") { store.showPage(.extensions) } }
-        }.padding(.horizontal, 8).padding(.bottom, 4).padding(.top, 4)
+        }.padding(.horizontal, 4).padding(.bottom, 4).padding(.top, 4)
     }
 }
 

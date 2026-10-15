@@ -827,7 +827,24 @@ nonisolated enum HistorySuggestionWork {
             }.sorted { $0.1 == $1.1 ? $0.0.id < $1.0.id : $0.1 > $1.1 }
         }
 
-        sorted = sorted.filter { matchesAddress($0.0) } + sorted.filter { !matchesAddress($0.0) }
+
+
+        func destinationPriority(_ suggestion: Suggestion) -> Int {
+            if matchesAddress(suggestion) { return 2 }
+            guard !needle.isEmpty, suggestion.defaultSearchQuery == nil else { return 0 }
+            let typedAddress = addressKey(literal)
+            if !literal.contains(where: { $0.isWhitespace }), typedAddress.contains(where: { "/?#".contains($0) }),
+                !addressKey(suggestion.destination).hasPrefix(typedAddress) { return 0 }
+            if [.tab, .history, .favorite].contains(suggestion.kind) { return 1 }
+            if suggestion.kind == .site, suggestion.id.hasPrefix("site-"),
+                suggestion.title.localizedStandardContains(literal) { return 1 }
+            return 0
+        }
+        sorted = sorted.sorted {
+            let lhs = destinationPriority($0.0), rhs = destinationPriority($1.0)
+            if lhs != rhs { return lhs > rhs }
+            return $0.1 == $1.1 ? $0.0.id < $1.0.id : $0.1 > $1.1
+        }
         var chosen: [Suggestion] = []
         var keys = Set<String>()
         var domains: [String: Int] = [:]

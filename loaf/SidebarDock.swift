@@ -40,7 +40,7 @@ struct SidebarDockPane: View {
             .ignoresSafeArea()
             .animation(nil, value: store.sidebarPresented)
             .animation(nil, value: store.hoveredSidebar)
-            .tint(store.profile.privateMode ? PrivateChrome.accent : Color.accentColor)
+            .tint(store.profile.privateMode ? profileTint(store.profile) : Color.accentColor)
     }
 }
 
