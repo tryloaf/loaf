@@ -41,13 +41,6 @@ struct SidebarDockPane: View {
             .animation(nil, value: store.sidebarPresented)
             .animation(nil, value: store.hoveredSidebar)
             .tint(store.profile.privateMode ? PrivateChrome.accent : Color.accentColor)
-            .onHover {
-                if !store.sidebarPresented && !$0
-                    && !(store.siteSettingsVisible && store.siteSettingsTrigger == .sidebar)
-                {
-                    store.hoveredSidebar = false
-                }
-            }
     }
 }
 
@@ -121,14 +114,18 @@ struct SidebarDockHost: NSViewRepresentable {
     func updateNSView(_ view: ContainerView, context: Context) {
         let shown = store.sidebarPresented || store.hoveredSidebar
 
-        if shown { view.floating = !store.sidebarPresented }
+        view.updatePresentation(
+            floating: !store.sidebarPresented, shown: shown, reduceMotion: reduceMotion, store: store)
         view.updateScheme(scheme, store: store)
         view.configure(
             width: store.preferences.sidebarWidth, shown: shown,
             duration: store.hoveredSidebar ? 0.22 : SidebarMotion.duration, reduceMotion: reduceMotion,
             hiddenOffset: -store.preferences.sidebarWidth - 32)
     }
-    static func dismantleNSView(_ view: ContainerView, coordinator: ()) { view.stopMotion() }
+    static func dismantleNSView(_ view: ContainerView, coordinator: ()) {
+        view.finishPresentation()
+        view.stopMotion()
+    }
 
     final class ContainerView: NSView {
         let hostedSidebar: NSHostingView<SidebarDockPane>
@@ -147,13 +144,17 @@ struct SidebarDockHost: NSViewRepresentable {
         private var scheme: ColorScheme
         private(set) var shown = true
         private(set) var moving = false
-        var floating: Bool
+        private(set) var floating: Bool
+        private var targetFloating: Bool
+        private var presentationTask: Task<Void, Never>?
         private var initialized = false
         private var laidOut = false
         private var targetX: CGFloat = 0
+        private var hoverArea: NSTrackingArea?
         override var isFlipped: Bool { true }
         init(pane: SidebarDockPane) {
-            floating = !pane.store.sidebarPresented && pane.store.hoveredSidebar
+            floating = pane.floating
+            targetFloating = pane.floating
             scheme = pane.scheme
             hostedSidebar = NSHostingView(rootView: pane)
             hostedSidebar.sizingOptions = []
@@ -167,6 +168,48 @@ struct SidebarDockHost: NSViewRepresentable {
             registerForDraggedTypes(BrowserDragTypes.links)
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        func updatePresentation(floating: Bool, shown: Bool, reduceMotion: Bool, store: BrowserStore) {
+            guard shown else {
+                presentationTask?.cancel()
+                presentationTask = nil
+                targetFloating = self.floating
+                return
+            }
+            guard targetFloating != floating || presentationTask != nil && (!shown || reduceMotion) else { return }
+            presentationTask?.cancel()
+            presentationTask = nil
+            targetFloating = floating
+            if self.floating, self.shown, !hostedSidebar.isHidden, !floating, shown, !reduceMotion, window != nil {
+
+                presentationTask = Task { @MainActor [weak self, weak store] in
+                    do { try await Task.sleep(for: .seconds(SidebarMotion.duration)) } catch { return }
+                    guard !Task.isCancelled, let self, let store, !self.targetFloating else { return }
+                    self.presentationTask = nil
+                    self.floating = false
+                    self.updateScheme(self.scheme, store: store)
+                    self.updateShape()
+                    self.updateHoverTracking()
+                }
+            } else {
+                self.floating = floating
+                updateScheme(scheme, store: store)
+                updateShape()
+            }
+        }
+        func finishPresentation() {
+            presentationTask?.cancel()
+            presentationTask = nil
+            floating = targetFloating
+            updateScheme(scheme, store: hostedSidebar.rootView.store)
+            updateShape()
+        }
+        private func updateShape() {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            hostedSidebar.layer?.masksToBounds = true
+            hostedSidebar.layer?.cornerRadius = floating ? 16 : 0
+            CATransaction.commit()
+        }
         func updateScheme(_ value: ColorScheme, store: BrowserStore) {
             guard scheme != value || hostedSidebar.rootView.floating != floating else { return }
             scheme = value
@@ -175,12 +218,12 @@ struct SidebarDockHost: NSViewRepresentable {
         func configure(
             width: CGFloat, shown: Bool, duration: Double, reduceMotion: Bool, hiddenOffset: CGFloat
         ) {
-            hostedSidebar.layer?.masksToBounds = true
-            hostedSidebar.layer?.cornerRadius = floating ? 16 : 0
+            updateShape()
             let destination: CGFloat = shown ? 0 : floating ? -width - 32 : hiddenOffset
             let changed = !initialized || self.shown != shown || sidebarWidth != width
             self.shown = shown
             sidebarWidth = width
+            updateHoverTracking()
             hostedSidebar.setAccessibilityHidden(!shown)
             guard changed || reduceMotion && moving else { return }
             initialized = true
@@ -223,7 +266,7 @@ struct SidebarDockHost: NSViewRepresentable {
             link = nil
             moving = false
         }
-        deinit { link?.invalidate() }
+        deinit { link?.invalidate(); presentationTask?.cancel() }
         override func layout() {
             super.layout()
             CATransaction.begin()
@@ -239,9 +282,39 @@ struct SidebarDockHost: NSViewRepresentable {
             super.setFrameSize(newSize)
             needsLayout = true
         }
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            updateHoverTracking()
+        }
+        private func updateHoverTracking() {
+            let rect = NSRect(x: 0, y: 0, width: sidebarWidth, height: bounds.height)
+            if shown, floating, hoverArea?.rect == rect { return }
+            if let hoverArea { removeTrackingArea(hoverArea) }
+            hoverArea = nil
+            guard shown, floating else { return }
+
+            let area = NSTrackingArea(
+                rect: rect,
+                options: [.mouseEnteredAndExited, .activeAlways], owner: self, userInfo: nil)
+            addTrackingArea(area)
+            hoverArea = area
+        }
+        override func mouseExited(with event: NSEvent) {
+            guard let window else { return }
+            dismissFloatingSidebarIfOutside(at: convert(window.mouseLocationOutsideOfEventStream, from: nil))
+        }
+        func dismissFloatingSidebarIfOutside(at point: NSPoint) {
+            let store = hostedSidebar.rootView.store
+            guard shown, floating, !store.sidebarPresented, store.hoveredSidebar,
+                !(store.siteSettingsVisible && store.siteSettingsTrigger == .sidebar),
+                !NSRect(x: 0, y: 0, width: sidebarWidth, height: bounds.height).contains(point)
+            else { return }
+            store.hoveredSidebar = false
+        }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if window == nil {
+                finishPresentation()
                 stopMotion()
                 position(targetX)
                 hostedSidebar.isHidden = !shown

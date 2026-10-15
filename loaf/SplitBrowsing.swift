@@ -80,6 +80,16 @@ extension BrowserWindowState {
 
 @MainActor final class LoafWebView: WKWebView {
     weak var browserTab: BrowserTab?
+    override var canGoBack: Bool { super.canGoBack || browserTab?.openerTrail != nil }
+    override var canGoForward: Bool { super.canGoForward || browserTab?.openerReturnItem != nil }
+    override func goBack() -> WKNavigation? {
+        guard let tab = browserTab else { return super.goBack() }
+        return NavigationHistory.step(tab, backward: true)
+    }
+    override func goForward() -> WKNavigation? {
+        guard let tab = browserTab else { return super.goForward() }
+        return NavigationHistory.step(tab, backward: false)
+    }
     private lazy var historySwipe = PageNavigationSwipe(view: self)
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -98,10 +108,6 @@ extension BrowserWindowState {
     override func mouseExited(with event: NSEvent) {
         browserTab?.clearHoveredLink()
         super.mouseExited(with: event)
-    }
-    override func cursorUpdate(with event: NSEvent) {
-        if WebCursorOwnership.webView(for: event, in: window) === self { return }
-        super.cursorUpdate(with: event)
     }
     override func hitTest(_ point: NSPoint) -> NSView? {
         if let host = superview as? WebViewHost.HostView {

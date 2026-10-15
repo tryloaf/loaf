@@ -34,7 +34,7 @@ enum ExtensionReturnYouTubeDislike {
         scripts.removeAll { $0["world"] as? String == "MAIN" && $0["js"] as? [String] == ["menu-fixer.js"] }
         scripts.insert(pageHelper, at: 0)
         manifest["content_scripts"] = scripts
-        // Keep extension APIs in the isolated script; only the existing page helper shares YouTube's world.
+
         try Data(source.replacingOccurrences(of: startup, with: "const pageWorldHelpersReady = Promise.resolve(true);").utf8)
             .write(to: runtime.appendingPathComponent("ryd.content-script.js"), options: .atomic)
         try Data(contentsOf: helper).write(to: runtime.appendingPathComponent("menu-fixer.js"), options: .atomic)

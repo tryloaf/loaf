@@ -1,6 +1,24 @@
 import AppKit
 import SwiftUI
 
+struct ChromeScrollbarsHidden: NSViewRepresentable {
+    func makeNSView(context: Context) -> Marker { Marker() }
+    func updateNSView(_ view: Marker, context: Context) { view.hideScrollbars() }
+    final class Marker: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); hideScrollbars() }
+        override func layout() { super.layout(); hideScrollbars() }
+        func hideScrollbars() {
+            guard let scroll = enclosingScrollView else { return }
+
+            if scroll.scrollerStyle != .overlay { scroll.scrollerStyle = .overlay }
+            if scroll.hasVerticalScroller { scroll.hasVerticalScroller = false }
+            if scroll.hasHorizontalScroller { scroll.hasHorizontalScroller = false }
+            scroll.autohidesScrollers = true
+        }
+    }
+}
+
 struct FocusRingSafeScrollView<Content: View>: View {
     private let content: Content
     init(@ViewBuilder content: () -> Content) { self.content = content() }

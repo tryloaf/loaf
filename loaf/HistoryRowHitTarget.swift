@@ -5,11 +5,13 @@ struct HistoryRowHitTarget: NSViewRepresentable {
     @Environment(\.isEnabled) private var isEnabled
     let select: (NSEvent.ModifierFlags) -> Void
     let open: () -> Void
+    var isCurrent: (() -> Bool)? = nil
     func makeNSView(context: Context) -> ClickView {
         let view = ClickView()
         view.select = select
         view.open = open
         view.isEnabled = isEnabled
+        view.isCurrent = isCurrent
         view.setAccessibilityElement(false)
         return view
     }
@@ -17,13 +19,26 @@ struct HistoryRowHitTarget: NSViewRepresentable {
         view.select = select
         view.open = open
         view.isEnabled = isEnabled
+        view.isCurrent = isCurrent
+    }
+    static func dismantleNSView(_ view: ClickView, coordinator: ()) {
+        view.isEnabled = false
+        view.select = nil
+        view.open = nil
+        view.isCurrent = nil
     }
     final class ClickView: NSView {
         var select: ((NSEvent.ModifierFlags) -> Void)?
         var open: (() -> Void)?
-        var isEnabled = true
+        private var enabled = true
+        var isCurrent: (() -> Bool)?
+        var isEnabled: Bool {
+            get { enabled && (isCurrent?() ?? true) }
+            set { enabled = newValue }
+        }
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         override func hitTest(_ point: NSPoint) -> NSView? {
+            guard isEnabled else { return nil }
             if let event = NSApp.currentEvent,
                 event.type == .rightMouseDown || event.type == .leftMouseDown && event.modifierFlags.contains(.control)
             {

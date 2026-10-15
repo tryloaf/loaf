@@ -197,15 +197,25 @@ nonisolated enum HistorySuggestionWork {
         emptyQuery: Bool, now: Date, limit: Int = 128
     ) -> [HistorySuggestionMatch] {
         guard !rows.isEmpty, limit > 0 else { return [] }
-        var best: [HistorySuggestionMatch] = []
+
+
+        typealias Candidate = (match: HistorySuggestionMatch, id: String, slot: Int)
+        var best: [Candidate] = []
         best.reserveCapacity(min(limit, rows.count))
 
-        func outranks(_ lhs: HistorySuggestionMatch, _ rhs: HistorySuggestionMatch) -> Bool {
-            lhs.score == rhs.score ? lhs.visit.id.uuidString < rhs.visit.id.uuidString : lhs.score > rhs.score
+        func outranks(_ lhs: Candidate, _ rhs: Candidate) -> Bool {
+            if lhs.match.score != rhs.match.score { return lhs.match.score > rhs.match.score }
+            if lhs.id != rhs.id { return lhs.id < rhs.id }
+            return lhs.slot > rhs.slot
         }
-        func worstIndex() -> Int {
-            best.indices.reduce(0) { current, candidate in
-                outranks(best[current], best[candidate]) ? candidate : current
+        func siftDown(_ start: Int) {
+            var parent = start
+            while parent * 2 + 1 < best.count {
+                var child = parent * 2 + 1
+                if child + 1 < best.count, outranks(best[child], best[child + 1]) { child += 1 }
+                guard outranks(best[parent], best[child]) else { break }
+                best.swapAt(parent, child)
+                parent = child
             }
         }
 
@@ -218,16 +228,26 @@ nonisolated enum HistorySuggestionWork {
                 + min(20, log2(Double((addressVisits[visit.address] ?? 1) + 1)) * 5)
                 + max(0, 12 - now.timeIntervalSince(visit.date) / 86400)
                 - (row.savedSearch ? 15 : 0)
+            if best.count == limit, adjusted < best[0].match.score { continue }
             let match = HistorySuggestionMatch(visit: visit, label: row.label, score: adjusted)
             if best.count < limit {
-                best.append(match)
+                best.append((match, visit.id.uuidString, best.count))
+                if best.count == limit {
+                    for parent in (0..<(best.count / 2)).reversed() { siftDown(parent) }
+                }
             } else {
-                let index = worstIndex()
-                if outranks(match, best[index]) { best[index] = match }
+                let candidate = (match: match, id: visit.id.uuidString, slot: best[0].slot)
+                if outranks(candidate, best[0]) {
+                    best[0] = candidate
+                    siftDown(0)
+                }
             }
         }
-        best.sort(by: outranks)
-        return best
+        return best.sorted {
+            if $0.match.score != $1.match.score { return $0.match.score > $1.match.score }
+            if $0.id != $1.id { return $0.id < $1.id }
+            return $0.slot < $1.slot
+        }.map(\.match)
     }
 }
 
@@ -447,7 +467,7 @@ nonisolated enum HistorySuggestionWork {
                     detail: "open pinned page in new tab", icon: .pinned, destination: address,
                     pinnedShortcutID: pin.id, kind: .tab)
             }
-            guard suggestion.id != "input", suggestion.kind != .search && suggestion.kind != .page,
+            guard suggestion.kind != .search && suggestion.kind != .page,
                 let tab = tabsByAddress[canonical(suggestion.destination, kind: suggestion.kind)]
             else { return suggestion }
             return Suggestion(
@@ -480,14 +500,20 @@ nonisolated enum HistorySuggestionWork {
             ranking.offer(score: adjustedScore(value, score: score)) { value }
         }
         var inputAction: Suggestion?
+        var utilityCandidates: [(Suggestion, Double)] = []
         for page in BrowserPage.allCases {
             if page == .ask && store.preferences.aiFeaturesEnabled == false { continue }
             if let score = score(page.title, page.address) {
-                consider(
-                    Suggestion(
+                let suggestion = Suggestion(
                         id: "page-" + page.rawValue, title: page.title, detail: page.address, icon: page.icon,
-                        destination: page.address, kind: .page),
-                    score: needle.isEmpty ? -20 : score + (needle.hasPrefix("loaf:") ? 40 : 0))
+                        destination: page.address, kind: .page)
+                let pageScore = needle.isEmpty
+                    ? (page == .history ? 10.0 : page == .downloads ? 9.0 : -20.0)
+                    : score + (needle.hasPrefix("loaf:") ? 40 : 0)
+                consider(suggestion, score: pageScore)
+                if !needle.isEmpty || page == .history || page == .downloads {
+                    utilityCandidates.append((suggestion, pageScore))
+                }
             }
         }
 
@@ -638,6 +664,7 @@ nonisolated enum HistorySuggestionWork {
 
         let baseLocal =
             ranking.scoredResults
+            + utilityCandidates
             + (inputAction.map {
                 [($0, $0.kind == .site ? 200.0 : 70.0)]
             } ?? [])
@@ -662,11 +689,16 @@ nonisolated enum HistorySuggestionWork {
             : nil
 
         task = Task { @MainActor in
-            let historyMatches = await Task.detached(priority: .userInitiated) {
+            let historyWork = Task.detached(priority: .userInitiated) {
                 HistorySuggestionWork.matches(
                     rows: historyRows, addressVisits: historyAddressVisits, query: localQuery,
                     emptyQuery: needle.isEmpty, now: historyNow)
-            }.value
+            }
+            let historyMatches = await withTaskCancellationHandler {
+                await historyWork.value
+            } onCancel: {
+                historyWork.cancel()
+            }
             guard !Task.isCancelled, token == generation, store.selectedProfileID == profileID else { return }
 
             var local = baseLocal
@@ -761,6 +793,26 @@ nonisolated enum HistorySuggestionWork {
     private func ranked(
         _ candidates: [(Suggestion, Double)], query: String, domainPrefix: String?
     ) -> [Suggestion] {
+        let literal = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let needle = literal.lowercased()
+        func addressKey(_ value: String) -> String {
+            var key = value
+            for prefix in ["https://", "http://", "www."] {
+                if key.lowercased().hasPrefix(prefix) { key.removeFirst(prefix.count) }
+            }
+            let boundary = key.firstIndex(where: { "/?#".contains($0) }) ?? key.endIndex
+            let suffix = key[boundary...]
+            return key[..<boundary].lowercased() + (suffix == "/" ? "" : String(suffix))
+        }
+        func matchesAddress(_ suggestion: Suggestion) -> Bool {
+            guard !needle.isEmpty, !needle.contains(where: { $0.isWhitespace }),
+                suggestion.kind != .search, suggestion.kind != .page,
+                let url = suggestion.kind == .tab ? URL(string: suggestion.destination) : suggestion.siteURL
+            else { return false }
+            let typed = addressKey(literal)
+            return addressKey(url.absoluteString) == typed
+                || (suggestion.defaultSearchQuery == nil && addressKey(url.host ?? "") == typed)
+        }
         var sorted = candidates.sorted {
             $0.1 == $1.1 ? $0.0.id < $1.0.id : $0.1 > $1.1
         }
@@ -774,6 +826,8 @@ nonisolated enum HistorySuggestionWork {
                 )
             }.sorted { $0.1 == $1.1 ? $0.0.id < $1.0.id : $0.1 > $1.1 }
         }
+
+        sorted = sorted.filter { matchesAddress($0.0) } + sorted.filter { !matchesAddress($0.0) }
         var chosen: [Suggestion] = []
         var keys = Set<String>()
         var domains: [String: Int] = [:]
@@ -802,6 +856,15 @@ nonisolated enum HistorySuggestionWork {
             if !domain.isEmpty { domains[domain, default: 0] += 1 }
             return true
         }
+        if let first = sorted.first { _ = take(first.0) }
+        let utilities = sorted.filter { suggestion, _ in
+            guard suggestion.kind == .page else { return false }
+            if needle.isEmpty {
+                return [BrowserPage.history.address, BrowserPage.downloads.address].contains(suggestion.destination)
+            }
+            return true
+        }
+        for (suggestion, _) in utilities.prefix(2) { _ = take(suggestion) }
         for (suggestion, _) in sorted { _ = take(suggestion) }
 
         if let input = sorted.first(where: { $0.0.id == "input" })?.0,
@@ -836,9 +899,14 @@ nonisolated enum HistorySuggestionWork {
             addressVisits = [:]
         }
         historyPreparationTask = Task {
-            let snapshot = await Task.detached(priority: .utility) {
+            let preparation = Task.detached(priority: .utility) {
                 HistorySuggestionWork.prepare(visits, previous: previous)
-            }.value
+            }
+            let snapshot = await withTaskCancellationHandler {
+                await preparation.value
+            } onCancel: {
+                preparation.cancel()
+            }
             guard !Task.isCancelled, historySignature == signature else { return }
             preparedProfileID = profileID
             preparedHistory = snapshot.rows
@@ -897,7 +965,8 @@ nonisolated enum HistorySuggestionWork {
     }
     private func canonical(_ destination: String, kind: SuggestionKind) -> String {
         if kind == .page { return destination.lowercased() }
-        guard kind != .search, let url = BrowserAddress.resolve(destination),
+        let address = destination.contains("://") ? URL(string: destination) : BrowserAddress.resolve(destination)
+        guard kind != .search, let url = address,
             var parts = URLComponents(url: url, resolvingAgainstBaseURL: false), let host = parts.host
         else { return "search:" + destination.lowercased() }
         parts.scheme = parts.scheme?.lowercased()

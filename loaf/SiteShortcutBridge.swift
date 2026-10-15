@@ -39,10 +39,11 @@ extension LoafBrowserWindow {
     }
 
     func siteClaimedShortcut(_ key: String, tabID: UUID, claimed: Bool = true) {
-        guard store?.selectedTab?.id == tabID, ["s", "f", "l", "r", "a"].contains(key),
+        guard let tab = store?.selectedTab, tab.id == tabID, ["s", "f", "l", "r", "a"].contains(key),
             let index = pendingSiteShortcuts.firstIndex(where: { $0.key == key && $0.tabID == tabID })
         else { return }
         let pending = pendingSiteShortcuts.remove(at: index)
+        guard tab.navigationID == pending.navigationID else { return }
         if !claimed {
             armedSiteShortcut = nil
             resolveBrowserShortcut(key, event: pending.event)
@@ -52,12 +53,18 @@ extension LoafBrowserWindow {
             armedSiteShortcut = nil
             return
         }
-        armedSiteShortcut = (key, tabID, ProcessInfo.processInfo.systemUptime)
+        let armed = ArmedSiteShortcut(key: key, tabID: tabID, navigationID: tab.navigationID,
+            time: ProcessInfo.processInfo.systemUptime)
+        armedSiteShortcut = armed
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(ArmedSiteShortcut.lifetime))
+            if self?.armedSiteShortcut?.id == armed.id { self?.armedSiteShortcut = nil }
+        }
         let action = [
             "s": store?.sidebarVisible == true ? "hide the sidebar" : "show the sidebar", "f": "search this page",
             "l": "open the wonderbar", "r": "reload this page",
         ][key]!
         store?.feedback.show(
-            .info, icon: .info, text: "press ⌘\(key.uppercased()) again to \(action)", duration: .seconds(2))
+            .info, icon: .info, text: "press ⌘\(key.uppercased()) again to \(action)", duration: .seconds(ArmedSiteShortcut.lifetime))
     }
 }

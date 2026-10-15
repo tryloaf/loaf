@@ -172,7 +172,42 @@ import WebKit
     static let vimiumID = "dbepggeogbaibhgnhhndojpepiihcmeb"
     static let vimiumMarker = "_loaf_vimium_navigation_v1"
     static let tampermonkeyID = "dhdgffkkebhmkfjojejmpbldmpobfkfo"
-    static let tampermonkeyMarker = "_loaf_tampermonkey_startup_v2"
+    static let tampermonkeyMarker = "_loaf_tampermonkey_startup_v3"
+
+
+    static let tampermonkeyRulesScript = ##"""
+        globalThis.__loafTampermonkeyRules = (rules, nextID) => rules.flatMap(rule => {
+            const filter = rule.condition.regexFilter;
+            if (!filter) return [rule];
+            let filters = [filter.replace('(?:$|\\?|\\#)', '([?#].*)?$')];
+            for (const [group, alternatives] of [
+                ['(?:https?|ftp)', ['https?', 'ftp']],
+                ['(?:user|tamper)', ['user', 'tamper']],
+                ['(source|version)', ['source', 'version']],
+                ['(raw|wikis)', ['raw', 'wikis']],
+                ['[0-9]{1,9}', Array.from({length:9}, (_, index) => '[0-9]'.repeat(index + 1))]
+            ]) {
+                filters = filters.flatMap(value => value.includes(group)
+                    ? alternatives.map(alternative => value.replace(group, alternative)) : [value]);
+            }
+            return filters.flatMap((value, index) => {
+                const regexFilter = value.replaceAll('(?:', '(')
+                    .replaceAll('+?', '+').replaceAll('*?', '*').replaceAll('{1,1}', '')
+                    .replaceAll('\\#', '#').replaceAll('\\?', '?');
+                const {excludedRequestDomains, ...condition} = rule.condition;
+                const adapted = {...rule, id:index ? nextID() : rule.id,
+                    condition:{...condition, regexFilter}};
+                if (!excludedRequestDomains?.length) return [{...adapted, priority:rule.priority + 1}];
+
+
+                return [adapted, ...excludedRequestDomains.map(domain => ({
+                    ...adapted, id:nextID(), action:{type:'allow'}, condition:{...condition,
+                        regexFilter:regexFilter.replace('://[^#?]+/',
+                            '://([^/@]+@)?([^/:]+\\.)?' + domain.replaceAll('.', '\\.') + '(:[0-9]+)?/')}
+                }))];
+            });
+        });
+        """##
 
     static func prepareTampermonkey(_ runtime: URL, original: URL) throws -> String {
         let file = original.appendingPathComponent("background.js")
@@ -189,6 +224,14 @@ import WebKit
         let installed = try NSRegularExpression(pattern: #"\.onInstalled\.addListener\(\(([\w$]+)=>\{"#)
         guard installed.numberOfMatches(in: source, range: range) == 1 else {
             throw PackageError(reason: "This Tampermonkey package needs a new installation lifecycle adapter.")
+        }
+        let installationRules = "return t.push(i),t},rp=async e=>"
+        let installationCategories = "4===e.priority&&o.push(e)"
+        guard source.components(separatedBy: installationRules).count == 2,
+            source.components(separatedBy: installationCategories).count == 2,
+            source.contains("let KA,$A"), source.contains("id:KA++")
+        else {
+            throw PackageError(reason: "This Tampermonkey package needs a new script URL adapter.")
         }
         var adapted: [String: String] = [:]
         for path in ["background.js", "extension.js", "content.js", "offscreen.js"] {
@@ -211,12 +254,18 @@ import WebKit
             range: NSRange(worker.startIndex..., in: worker),
             withTemplate:
                 ".onInstalled.addListener(($1=>{if($1.reason==='install'&&globalThis.__loafExtensionRestored)return;")
+        adapted["background.js"] = tampermonkeyRulesScript + "\n" + adapted["background.js"]!
+            .replacingOccurrences(of: installationRules,
+                with: "return t.push(i),globalThis.__loafTampermonkeyRules(t,()=>KA++)},rp=async e=>")
+            .replacingOccurrences(of: installationCategories,
+                with: "(4===e.priority||5===e.priority)&&o.push(e)")
+            .replacingOccurrences(of: "v.error(\"dNr:\",e)", with: "v.error(\"dNr: \"+(e?.message||String(e)))")
         for (path, text) in adapted {
             try Data(text.utf8).write(to: runtime.appendingPathComponent(path), options: .atomic)
         }
         try Data("1".utf8).write(to: runtime.appendingPathComponent(tampermonkeyMarker), options: .atomic)
         return
-            "Tampermonkey's listener setup and restored installation events follow WebKit's lifecycle; internal pages use WebKit's extension protocol."
+            "Tampermonkey's startup, userscript messaging and script-install URL rules use loaf's WebKit adapter."
     }
     static func prepareVimium(_ runtime: URL, original: URL) throws -> String {
         let path = "background_scripts/main.js"

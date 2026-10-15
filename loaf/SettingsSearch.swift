@@ -44,8 +44,11 @@ enum SettingsSearch {
             id: "browsing-time", section: "advanced", title: "local browsing time",
             keywords: "tracking screen time private consent statistics widgets"),
         .init(
-            id: "power-saver", section: "advanced", title: "power saver",
-            keywords: "battery low energy percentage background"),
+            id: "power-saver", section: "advanced", title: "battery saver",
+            keywords: "battery low power energy percentage background"),
+        .init(
+            id: "game-mode", section: "advanced", title: "game mode",
+            keywords: "gaming performance fps frame rate latency power"),
         .init(
             id: "import-data", section: "profiles", title: "import browsing data",
             keywords: "profile cookies history bookmarks export migrate full disk access"),
@@ -132,6 +135,9 @@ enum SettingsSearch {
             id: "websites", section: "websites", title: "saved website decisions",
             keywords: "site permissions camera microphone javascript autoplay zoom"),
         .init(
+            id: "external-app-links", section: "websites", title: "app links",
+            keywords: "external local applications always open ask never block reset defaults handlers"),
+        .init(
             id: "pointerCapture", section: "websites", title: "allow websites to capture the pointer",
             keywords: "mouse cursor lock pointer capture games escape"),
         .init(
@@ -170,7 +176,10 @@ enum SettingsSearch {
             id: "identity", section: "advanced", title: "default browser identity",
             keywords: "user agent safari desktop automatic webkit"),
     ]
-    static func results(for query: String, websiteOrigins: [String] = []) -> [SettingsSearchResult] {
+    static func results(
+        for query: String, websiteOrigins: [String] = [], hasInternalBattery: Bool = true,
+        applicationNames: [String] = []
+    ) -> [SettingsSearchResult] {
         let words = query.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
         guard !words.isEmpty else { return [] }
@@ -181,7 +190,9 @@ enum SettingsSearch {
                 keywords: "saved website site permissions " + origin, websiteOrigin: origin)
         }
         return (entries + websites).filter { entry in
-            let terms = (entry.title + " " + entry.section + " " + entry.keywords).lowercased()
+            guard hasInternalBattery || entry.id != "power-saver" else { return false }
+            let apps = entry.id == "external-app-links" ? " " + applicationNames.joined(separator: " ") : ""
+            let terms = (entry.title + " " + entry.section + " " + entry.keywords + apps).lowercased()
             let vocabulary = terms.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map { stem(String($0)) }
             return words.allSatisfy { word in vocabulary.contains { $0.contains(stem(word)) } }
         }.sorted { left, right in

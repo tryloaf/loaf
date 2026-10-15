@@ -252,7 +252,10 @@ extension BrowserWindowState {
             ["http", "https"].contains(url.scheme?.lowercased() ?? "")
         else { return nil }
         if destination == .window, let coordinator = application.coordinator {
-            return coordinator.newWindow(profileID: profileID, url: url).selectedTab
+            let window = coordinator.newWindow(profileID: profileID, url: url)
+            guard let tab = window.selectedTab else { return nil }
+            if let source { window.joinBrowsingTrail(tab, source: source) }
+            return tab
         }
         let tab = newTab(url: url, profileID: profileID, showOmnibar: false, activate: destination != .backgroundTab)
         if let source { joinBrowsingTrail(tab, source: source) }
@@ -262,6 +265,8 @@ extension BrowserWindowState {
 
 extension BrowserWindowState {
     func joinBrowsingTrail(_ tab: BrowserTab, source: BrowserTab) {
+        guard tab !== source, !source.isDisposed, source.profileID == tab.profileID else { return }
+        tab.inheritHistory(from: source)
         guard preferences.linkTabGroups == true, tab.profileID == selectedProfileID,
             source.profileID == tab.profileID, source.store === self
         else { return }

@@ -14,12 +14,18 @@ nonisolated struct BrowsingTimeRecord: Codable {
 @MainActor final class ResourceMonitor: ObservableObject {
     @Published private(set) var batteryPercent: Int?
     @Published private(set) var charging = false
+    @Published private(set) var hasInternalBattery = false
     @Published private(set) var saverEnabled = false
+    @Published private(set) var systemLowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
     @Published private(set) var records: [BrowsingTimeRecord] = []
     private weak var application: BrowserApplication?
     private var timer: Timer?
     private var previousTick = ProcessInfo.processInfo.systemUptime
     private var ticks = 0
+    private var observers = Set<AnyCancellable>()
+    private var powerSource: CFRunLoopSource?
+    private var gameActivity: NSObjectProtocol?
+    var gameActivityActive: Bool { gameActivity != nil }
     init(application: BrowserApplication) {
         self.application = application
         if let data = try? Data(contentsOf: application.directory.appendingPathComponent("browsing-time.json")),
@@ -28,6 +34,24 @@ nonisolated struct BrowsingTimeRecord: Codable {
             records = Array(saved.suffix(5_000))
         }
         refreshBattery()
+        powerSource = IOPSNotificationCreateRunLoopSource({ context in
+            guard let context else { return }
+            MainActor.assumeIsolated {
+                Unmanaged<ResourceMonitor>.fromOpaque(context).takeUnretainedValue().refreshBattery()
+            }
+        }, Unmanaged.passUnretained(self).toOpaque())?.takeRetainedValue()
+        if let powerSource { CFRunLoopAddSource(CFRunLoopGetMain(), powerSource, .commonModes) }
+        for name in [
+            Notification.Name.NSProcessInfoPowerStateDidChange,
+            NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+            NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+            NSWindow.didMiniaturizeNotification, NSWindow.willCloseNotification,
+        ] {
+            NotificationCenter.default.publisher(for: name).sink { [weak self] _ in
+
+                Task { @MainActor [weak self] in self?.refreshBattery() }
+            }.store(in: &observers)
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -40,6 +64,7 @@ nonisolated struct BrowsingTimeRecord: Codable {
                 IOPSGetPowerSourceDescription(info, $0)?.takeUnretainedValue() as? [String: Any]
             }
             .first { $0[kIOPSTypeKey] as? String == kIOPSInternalBatteryType }
+            hasInternalBattery = battery != nil
             let current = battery?[kIOPSCurrentCapacityKey] as? Int
             let maximum = battery?[kIOPSMaxCapacityKey] as? Int
             batteryPercent = current.flatMap { value in
@@ -47,18 +72,40 @@ nonisolated struct BrowsingTimeRecord: Codable {
             }
             charging = battery?[kIOPSPowerSourceStateKey] as? String == kIOPSACPowerValue
         } else {
+            hasInternalBattery = false
             batteryPercent = nil
             charging = false
         }
+        systemLowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+        applyPowerPolicy()
+    }
+    func applyPowerPolicy() {
         guard let application else { return }
-        let threshold = application.preferences.powerSaverThreshold ?? 0
-        let enabled =
-            application.preferences.powerSaver == true
-            || (!charging && threshold > 0 && batteryPercent.map { $0 <= threshold } == true)
-        if saverEnabled != enabled { saverEnabled = enabled }
+        let policy = BrowsingPowerPolicy(
+            preferences: application.preferences, hasInternalBattery: hasInternalBattery,
+            onACPower: charging, batteryPercent: batteryPercent, systemLowPower: systemLowPower)
+        if saverEnabled != policy.batterySaver { saverEnabled = policy.batterySaver }
+        let foreground = NSApp.isActive ? application.windows.first {
+            $0.nativeWindow?.isKeyWindow == true && $0.nativeWindow?.isMiniaturized == false
+        } : nil
+        let foregroundTabs = Set(foreground?.tabs.filter {
+            !$0.isDisposed && $0.page == .web
+                && (foreground?.selectedTab?.id == $0.id || foreground?.visibleSplit?.contains($0.id) == true)
+        }.map(\.id) ?? [])
+        let wantsActivity = policy.gameMode && !foregroundTabs.isEmpty
+        if wantsActivity && gameActivity == nil {
+            gameActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+                reason: "loaf game mode foreground browsing")
+        } else if !wantsActivity, let gameActivity {
+            ProcessInfo.processInfo.endActivity(gameActivity)
+            self.gameActivity = nil
+        }
         for runtime in application.runtimes.values {
             for tab in runtime.tabs.values {
-                tab.existingWebView?.configuration.preferences.inactiveSchedulingPolicy = enabled ? .suspend : .throttle
+                guard let preferences = tab.existingWebView?.configuration.preferences else { continue }
+                let scheduling = policy.schedulingPolicy(foreground: foregroundTabs.contains(tab.id))
+                if preferences.inactiveSchedulingPolicy != scheduling { preferences.inactiveSchedulingPolicy = scheduling }
             }
         }
     }
@@ -113,7 +160,11 @@ nonisolated struct BrowsingTimeRecord: Codable {
         records = []
         save()
     }
-    deinit { timer?.invalidate() }
+    deinit {
+        timer?.invalidate()
+        if let powerSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), powerSource, .commonModes) }
+        if let gameActivity { ProcessInfo.processInfo.endActivity(gameActivity) }
+    }
 }
 
 struct BatteryWidget: View {
@@ -126,7 +177,7 @@ struct BatteryWidget: View {
                 .monospacedDigit()
             Text(
                 monitor.saverEnabled
-                    ? "power saver is on"
+                    ? "battery saver is on"
                     : monitor.charging
                         ? "connected to power" : monitor.batteryPercent == nil ? "no battery in this Mac" : "on battery"
             ).font(.system(size: 11)).foregroundStyle(.secondary)

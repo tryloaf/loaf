@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Saved metadata and existing icon caches only. This view never creates tabs or web views.
 struct ProfileSidebarPreview: View {
     let store: BrowserStore
     let profile: Profile

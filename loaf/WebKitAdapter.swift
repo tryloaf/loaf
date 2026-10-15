@@ -101,6 +101,13 @@ struct PointerCapturePosition {
 }
 
 @MainActor enum WebKitAdapter {
+
+    static func tryClose(_ view: WKWebView) -> Bool? {
+        let selector = NSSelectorFromString("_tryClose")
+        guard view.responds(to: selector), let implementation = view.method(for: selector) else { return nil }
+        typealias TryClose = @convention(c) (AnyObject, Selector) -> Bool
+        return unsafeBitCast(implementation, to: TryClose.self)(view, selector)
+    }
     static func enablePictureInPicture(_ preferences: WKPreferences) {
         let selector = NSSelectorFromString("_setAllowsPictureInPictureMediaPlayback:")
         guard preferences.responds(to: selector), let implementation = preferences.method(for: selector) else { return }

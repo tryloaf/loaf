@@ -55,37 +55,70 @@ private actor HistoryPreparationWorker {
 }
 
 private actor HistorySearchWorker {
+    private struct SearchText {
+        let title: String
+        let address: String
+        let host: String
+        let corpus: LocalPageSearch.Text
+        init(_ visit: Visit) {
+            title = visit.title.lowercased()
+            address = visit.address.lowercased()
+            host = URL(string: visit.address)?.host?.replacingOccurrences(of: "www.", with: "").lowercased() ?? ""
+            corpus = LocalPageSearch.Text((visit.title + " " + (visit.address.removingPercentEncoding ?? visit.address))
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current))
+        }
+        func matches(_ query: LocalPageSearch.Query, semantic: () -> Bool) -> Bool {
+            if host.hasPrefix(query.text.lowercased()) || address.hasPrefix(query.text.lowercased()) { return true }
+            if title.localizedCaseInsensitiveContains(query.text) || address.localizedCaseInsensitiveContains(query.text) {
+                return true
+            }
+            guard !query.patterns.isEmpty else { return false }
+            var needsSemantic = false
+            for alternatives in query.patterns {
+                if corpus.contains(alternatives[0]) { continue }
+                guard alternatives.dropFirst().contains(where: { corpus.contains($0) }) else { return false }
+                needsSemantic = true
+            }
+            return !needsSemantic || semantic()
+        }
+    }
     private var revision: UInt64?
     private var minimumRevision: UInt64 = 0
-    private var texts: [LocalPageSearch.Document] = []
+    private var texts: [SearchText] = []
+    private var semanticDocuments: [Int: LocalPageSearch.Document] = [:]
     private lazy var embedding = NLEmbedding.wordEmbedding(for: .english)
 
     func discard(before revision: UInt64) {
         minimumRevision = max(minimumRevision, revision)
         if let cached = self.revision, cached < revision {
             texts = []
+            semanticDocuments = [:]
             self.revision = nil
         }
     }
     func matches(_ visits: [Visit], revision: UInt64, query: String) -> [Int]? {
         guard !Task.isCancelled, revision >= minimumRevision else { return nil }
         if self.revision != revision {
-            var prepared: [LocalPageSearch.Document] = []
+            var prepared: [SearchText] = []
             prepared.reserveCapacity(visits.count)
             for (index, visit) in visits.enumerated() {
                 if index % 128 == 0, Task.isCancelled { return nil }
-                prepared.append(LocalPageSearch.Document(title: visit.title, address: visit.address))
+                prepared.append(SearchText(visit))
             }
             texts = prepared
+            semanticDocuments = [:]
             self.revision = revision
         }
         let query = LocalPageSearch.Query(query, embedding: embedding)
         var matches: [Int] = []
         for (index, text) in texts.enumerated() {
             if index % 128 == 0, Task.isCancelled { return nil }
-            if text.score(query) != nil {
-                matches.append(index)
-            }
+            if text.matches(query, semantic: {
+                let document = semanticDocuments[index]
+                    ?? LocalPageSearch.Document(title: visits[index].title, address: visits[index].address)
+                semanticDocuments[index] = document
+                return document.score(query) != nil
+            }) { matches.append(index) }
         }
         return Task.isCancelled ? nil : matches
     }
@@ -164,13 +197,38 @@ private actor HistorySearchWorker {
             sessions = result
         }
     }
+    struct ListItem: Identifiable {
+        enum Content { case day(String), session(String), visit(Summary) }
+        let id: String
+        let content: Content
+    }
+    @Published private(set) var listItems: [ListItem] = []
+    private func list(for sections: [Section]) -> [ListItem] {
+        var items: [ListItem] = []
+        for section in sections {
+            items.append(ListItem(id: "day-\(section.day.timeIntervalSince1970)", content: .day(section.title)))
+            for session in section.sessions {
+                items.append(ListItem(id: "session-\(session.id)", content: .session(session.title)))
+                for summary in session.summaries {
+                    items.append(ListItem(id: "visit-\(summary.id)", content: .visit(summary)))
+                }
+            }
+        }
+        return items
+    }
+    private func display(_ sections: [Section], items: [ListItem]? = nil) {
+        self.sections = sections
+        listItems = items ?? list(for: sections)
+    }
     private struct Source: Equatable {
         let profile: UUID
         let visits: [Visit]
     }
     @Published var query = "" { didSet { if query != oldValue { filter() } } }
     @Published private(set) var sections: [Section] = []
-    @Published private(set) var ordered: [UUID] = []
+    @Published private(set) var ordered: [UUID] = [] { didSet { visibleVisitIDs = Set(ordered) } }
+    private var visibleVisitIDs = Set<UUID>()
+    func containsVisit(_ id: UUID) -> Bool { visibleVisitIDs.contains(id) }
     @Published private(set) var isSearching = false
     @Published private(set) var isPreparing = false
     var isBusy: Bool { isPreparing || isSearching }
@@ -181,6 +239,7 @@ private actor HistorySearchWorker {
     private var rowsByID: [UUID: Row] = [:]
     private var dayTitles: [Date: String] = [:]
     private var unfilteredSections: [Section] = []
+    private var unfilteredListItems: [ListItem] = []
     private var unfilteredOrdered: [UUID] = []
     private var subscriptions = Set<AnyCancellable>()
     private lazy var embedding = NLEmbedding.wordEmbedding(for: .english)
@@ -226,7 +285,7 @@ private actor HistorySearchWorker {
         if changedProfile {
             cookieDomains = [:]
             rowsByID = [:]
-            sections = []
+            display([])
             ordered = []
         }
         profileID = profile
@@ -239,7 +298,7 @@ private actor HistorySearchWorker {
             isPreparing = true
             isSearching = false
             if !query.isEmpty {
-                sections = []
+                display([])
                 ordered = []
             }
             let worker = preparationWorker
@@ -274,6 +333,7 @@ private actor HistorySearchWorker {
                     let day = prepared.rows[range.lowerBound].day
                     return Section(day: day, title: prepared.dayTitles[day] ?? "", rows: Array(newRows[range]))
                 }
+                self.unfilteredListItems = self.list(for: self.unfilteredSections)
                 self.isPreparing = false
                 self.preparationTask = nil
                 self.filter()
@@ -298,6 +358,7 @@ private actor HistorySearchWorker {
                     ? "today — " : calendar.isDateInYesterday(row.day) ? "yesterday — " : "") + label
         }
         unfilteredSections = grouped(rows)
+        unfilteredListItems = list(for: unfilteredSections)
         unfilteredOrdered = rows.map(\.id)
         rowsByID = rows.reduce(into: [:]) { $0[$1.id] = $1 }
         filter()
@@ -309,14 +370,14 @@ private actor HistorySearchWorker {
         guard !isPreparing else {
             isSearching = false
             if !query.isEmpty, !ordered.isEmpty {
-                sections = []
+                display([])
                 ordered = []
             }
             return
         }
         guard !query.isEmpty else {
             isSearching = false
-            sections = unfilteredSections
+            display(unfilteredSections, items: unfilteredListItems)
             ordered = unfilteredOrdered
             return
         }
@@ -337,7 +398,7 @@ private actor HistorySearchWorker {
                 let self, self.searchRevision == revision, self.sourceRevision == source
             else { return }
             if indices.count == self.rows.count {
-                self.sections = self.unfilteredSections
+                self.display(self.unfilteredSections, items: self.unfilteredListItems)
                 self.ordered = self.unfilteredOrdered
             } else {
                 self.publish(indices.map { self.rows[$0] })
@@ -347,7 +408,7 @@ private actor HistorySearchWorker {
         }
     }
     private func publish(_ filtered: [Row]) {
-        sections = grouped(filtered)
+        display(grouped(filtered))
         ordered = filtered.map(\.id)
     }
     private func grouped(_ filtered: [Row]) -> [Section] {

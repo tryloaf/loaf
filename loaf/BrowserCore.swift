@@ -322,6 +322,7 @@ nonisolated struct Profile: Codable, Identifiable, Sendable {
     var privateMode = false
     var personalization: Personalization?
     var siteSettings: [String: SiteSettings]?
+    var externalAppLinks: [String: ExternalAppLinkPreference]?
     var blocksCookies: Bool?
 }
 
@@ -376,6 +377,7 @@ nonisolated struct BrowserPreferences: Codable, Sendable {
     var requireSideChatPassword: Bool?
     var powerSaver: Bool?
     var powerSaverThreshold: Int?
+    var gameMode: Bool?
     var tracksScreenTime: Bool?
     var linkTabGroups: Bool?
     var webNotifications: Bool?

@@ -320,6 +320,7 @@ struct SidebarView: View {
                     store: store, section: Binding(get: { traySection ?? .downloads }, set: { traySection = $0 })
                 ) { setTray(nil) }
                 .frame(height: TrayMetrics.contentHeight).opacity(min(1, max(0, trayProgress)))
+                .background(ChromeScrollbarsHidden())
             }
             .scrollIndicators(.hidden)
             .frame(

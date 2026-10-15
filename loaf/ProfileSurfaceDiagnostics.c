@@ -9,8 +9,7 @@
 #include <time.h>
 #include <unistd.h>
 
-// Only the guarded Debug launch supplies this inherited private log descriptor.
-// Interpose public surface APIs to observe allocations/imports without changing them.
+
 static int loaf_surface_log = -1;
 static _Thread_local int loaf_trace_busy;
 static uint64_t loaf_profile_limit;
@@ -59,7 +58,7 @@ static IOSurfaceRef loaf_surface_create(CFDictionaryRef properties) {
         size_t bytes = loaf_surface_property(properties, kIOSurfaceAllocSize);
         size_t width = loaf_surface_property(properties, kIOSurfaceWidth);
         size_t height = loaf_surface_property(properties, kIOSurfaceHeight);
-        // Record unusually large requests before entering the driver allocation.
+
         if (bytes >= 16 * 1024 * 1024 || width > 8192 || height > 8192) {
             loaf_trace_busy = 1;
             char row[256];
@@ -113,8 +112,8 @@ static void loaf_trace_vm(const char *operation, uint64_t size, int flags, int p
                               getpid(), (unsigned long long)size,
                               (unsigned long long)memory.phys_footprint, (unsigned long long)loaf_profile_limit);
             if (length > 0 && length < sizeof(row)) write(loaf_surface_log, row, (size_t)length);
-            // Diagnostic launch only: exit before the kernel charges this allocation.
-            // This never signals another process or runs in a Release build.
+
+
             _exit(86);
         }
     }

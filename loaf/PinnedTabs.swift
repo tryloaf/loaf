@@ -263,15 +263,17 @@ struct PinnedTabGrid: View {
                     .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
             } else if !items.isEmpty {
                 ScrollView {
-                    if list {
-                        VStack(spacing: 4) { ForEach(items) { item in tile(item, list: true) } }
-                    } else {
-                        LazyVGrid(
-                            columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: columns), spacing: 6
-                        ) {
-                            ForEach(items) { item in tile(item, list: false) }
+                    Group {
+                        if list {
+                            VStack(spacing: 4) { ForEach(items) { item in tile(item, list: true) } }
+                        } else {
+                            LazyVGrid(
+                                columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: columns), spacing: 6
+                            ) {
+                                ForEach(items) { item in tile(item, list: false) }
+                            }
                         }
-                    }
+                    }.background(ChromeScrollbarsHidden())
                 }.scrollIndicators(.hidden)
                     .frame(height: PinGridLayout.height(for: items.count, list: list))
             }

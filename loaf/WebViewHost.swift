@@ -16,6 +16,32 @@ enum WebCursorOwnership {
 }
 
 final class WebCursorHostingView<Content: View>: NSHostingView<Content> {
+    override func resetCursorRects() {
+
+        var pages: [NSRect] = []
+        var pending = subviews
+        while let view = pending.popLast() {
+            guard !view.isHiddenOrHasHiddenAncestor else { continue }
+            if view is WKWebView { pages.append(convert(view.visibleRect, from: view)) }
+            else { pending += view.subviews }
+        }
+        guard !pages.isEmpty else { super.resetCursorRects(); return }
+        discardCursorRects()
+        var chrome = [bounds]
+        for page in pages {
+            chrome = chrome.flatMap { rect -> [NSRect] in
+                let overlap = rect.intersection(page)
+                guard !overlap.isEmpty else { return [rect] }
+                return [
+                    NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: overlap.minY - rect.minY),
+                    NSRect(x: rect.minX, y: overlap.maxY, width: rect.width, height: rect.maxY - overlap.maxY),
+                    NSRect(x: rect.minX, y: overlap.minY, width: overlap.minX - rect.minX, height: overlap.height),
+                    NSRect(x: overlap.maxX, y: overlap.minY, width: rect.maxX - overlap.maxX, height: overlap.height),
+                ].filter { !$0.isEmpty }
+            }
+        }
+        for rect in chrome { addCursorRect(rect, cursor: .arrow) }
+    }
     override func cursorUpdate(with event: NSEvent) {
         guard WebCursorOwnership.webView(for: event, in: window) == nil else { return }
         super.cursorUpdate(with: event)

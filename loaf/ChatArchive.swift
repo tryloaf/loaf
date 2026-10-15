@@ -119,7 +119,7 @@ nonisolated struct SavedChat: Codable, Identifiable, Sendable {
         if try JSONEncoder().encode(next) != JSONEncoder().encode(chats) { try persist(next) }
     }
     private func key(synced: Bool, create: Bool = true) throws -> SymmetricKey {
-        // Reuse the unlocked key instead of asking Keychain again on every autosave.
+
         if let key = unlockedKeys[synced] { return key }
         let key = try keyLoader?(synced, create) ?? loadKey(synced: synced, create: create)
         unlockedKeys[synced] = key

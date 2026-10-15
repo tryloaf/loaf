@@ -46,6 +46,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     private var authenticationNavigationURL: URL?
     private var activeNavigation: WKNavigation?
     var contextMenuWindowURL: URL?
+    var externalAppLinks = ExternalAppLinks()
     var lastActivated = Date()
     var sleepState: Any?
     var sleepScrollPosition: CGPoint?
@@ -65,8 +66,11 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
     let finder = WebKitAdapter.FindController()
     @Published var title: String
-    @Published var url: URL?
-    @Published var page: BrowserPage
+    @Published var url: URL? { didSet { if url != oldValue { pageRevision = UUID() } } }
+    private(set) var pageRevision = UUID()
+    @Published var page: BrowserPage {
+        didSet { store?.application.refreshPowerPolicy() }
+    }
     private(set) var existingChatGPTSearch: ChatGPTSearch?
     private(set) var existingSideChat: SideChatState?
     var sideChat: SideChatState {
@@ -101,6 +105,34 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     @Published var loading = false
     @Published var fullscreenState: WKWebView.FullscreenState = .notInFullscreen
     @Published var progress = 0.0
+
+    var openerTrail: OpenerNavigationTrail?
+    var pendingOpenerReturn: OpenerNavigationTrail?
+    var confirmedOpenerCloseNavigationID: UUID?
+    private var approvedOpenerRestore: (navigationID: UUID, deadline: TimeInterval)?
+
+    func approveOpenerRestore(afterClosing navigationID: UUID?) {
+        guard navigationID == self.navigationID else { return }
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        approvedOpenerRestore = (self.navigationID, deadline)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            if self?.approvedOpenerRestore?.deadline == deadline { self?.approvedOpenerRestore = nil }
+        }
+    }
+    var openerReturnTrail: OpenerNavigationTrail?
+    var openerReturnItem: WKBackForwardListItem?
+    var openerBoundaryItem: WKBackForwardListItem?
+    var restoringOpenerHistory = false
+    func inheritHistory(from source: BrowserTab) {
+        guard source.profileID == profileID, let view = source.existingWebView else { return }
+        openerTrail = OpenerNavigationTrail(view: view, previous: source.openerTrail, source: source)
+        refreshNavigationAvailability()
+    }
+    func refreshNavigationAvailability() {
+        canGoBack = !NavigationHistory.items(self, backward: true).isEmpty
+        canGoForward = !NavigationHistory.items(self, backward: false).isEmpty
+    }
     @Published var canGoBack = false
     @Published var canGoForward = false
     @Published var secure = false
@@ -146,6 +178,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
     private var observations: [NSKeyValueObservation] = []
     private var chromeColorObservation: ChromeColorObservation?
+    var closeRequested = false
     var loaded = false
     var defaultUserAgent: String?
     private var appliedRules: [WKContentRuleList] = []
@@ -218,6 +251,10 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 in: .defaultClient))
         config.userContentController.addUserScript(
             WKUserScript(
+                source: AudioRecovery.script, injectionTime: .atDocumentStart, forMainFrameOnly: false,
+                in: .page))
+        config.userContentController.addUserScript(
+            WKUserScript(
                 source: NotificationScriptHandler.script, injectionTime: .atDocumentStart, forMainFrameOnly: true,
                 in: .page))
         config.userContentController.addScriptMessageHandler(
@@ -228,7 +265,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 in: .defaultClient))
         config.userContentController.addUserScript(
             WKUserScript(
-                source: PageScripts.linkPreview, injectionTime: .atDocumentStart, forMainFrameOnly: false,
+                source: PageScripts.linkPreview + "\n" + PageScripts.pageEdits, injectionTime: .atDocumentStart, forMainFrameOnly: false,
                 in: .defaultClient))
         config.userContentController.addUserScript(
             WKUserScript(
@@ -249,6 +286,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         if url?.scheme?.hasSuffix("-extension") == true { extensionThemeObservation = ExtensionTheme.bind(webView) }
         webView.browserTab = self
         existingWebView = webView
+        store.application.resources.applyPowerPolicy()
         store.runtime(for: profileID).extensions.attachUserScripts(to: webView)
         finder.webView = webView
         webView.navigationDelegate = self
@@ -257,6 +295,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         webView.allowsMagnification = true
         WebKitAdapter.setInspectionEnabled(webView, store.preferences.developerMenu == true)
         config.userContentController.add(WeakScriptHandler(self), contentWorld: .defaultClient, name: "loafLinkPreview")
+        config.userContentController.add(WeakScriptHandler(self), contentWorld: .defaultClient, name: "loafPageRevision")
         config.userContentController.add(WeakScriptHandler(self), contentWorld: .defaultClient, name: "loafFavicon")
         config.userContentController.add(WeakScriptHandler(self), contentWorld: .defaultClient, name: "loafMedia")
         config.userContentController.add(WeakScriptHandler(self), contentWorld: .defaultClient, name: "loafStore")
@@ -360,6 +399,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
     func load(_ url: URL) {
         guard !isDisposed, ["https", "http", "webkit-extension"].contains(url.scheme) else { return }
+        approvedOpenerRestore = nil
+        confirmedOpenerCloseNavigationID = nil
         faviconRefreshNavigation = nil
         existingChatGPTSearch?.clear()
         existingChatGPTSearch = nil
@@ -460,6 +501,10 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 in: .defaultClient))
         controller.addUserScript(
             WKUserScript(
+                source: AudioRecovery.script, injectionTime: .atDocumentStart, forMainFrameOnly: false,
+                in: .page))
+        controller.addUserScript(
+            WKUserScript(
                 source: NotificationScriptHandler.script, injectionTime: .atDocumentStart, forMainFrameOnly: true,
                 in: .page))
         controller.addUserScript(
@@ -468,7 +513,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 in: .defaultClient))
         controller.addUserScript(
             WKUserScript(
-                source: PageScripts.linkPreview, injectionTime: .atDocumentStart, forMainFrameOnly: false,
+                source: PageScripts.linkPreview + "\n" + PageScripts.pageEdits, injectionTime: .atDocumentStart, forMainFrameOnly: false,
                 in: .defaultClient))
         controller.addUserScript(
             WKUserScript(
@@ -491,6 +536,13 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func dispose() {
         guard !isDisposed else { return }
         isDisposed = true
+        pendingOpenerReturn = nil
+        confirmedOpenerCloseNavigationID = nil
+        approvedOpenerRestore = nil
+        openerTrail = nil
+        openerReturnTrail = nil
+        openerReturnItem = nil
+        openerBoundaryItem = nil
         sideChatVisible = false
         existingSideChat?.endSession()
         existingSideChat = nil
@@ -534,6 +586,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         webView.configuration.userContentController.removeScriptMessageHandler(
             forName: "loafLinkPreview", contentWorld: .defaultClient)
         webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: "loafPageRevision", contentWorld: .defaultClient)
+        webView.configuration.userContentController.removeScriptMessageHandler(
             forName: "loafFavicon", contentWorld: .defaultClient)
         webView.configuration.userContentController.removeScriptMessageHandler(
             forName: "loafMedia", contentWorld: .defaultClient)
@@ -570,18 +624,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         let scheme = target.scheme?.lowercased() ?? ""
         guard ["https", "http", "webkit-extension", "about", "blob"].contains(scheme) else {
             decisionHandler(.cancel)
-            if action.navigationType == .linkActivated, ["mailto", "tel"].contains(scheme) {
-                let alert = NSAlert()
-                alert.messageText = "open another app?"
-                alert.informativeText = String(target.absoluteString.prefix(300))
-                alert.addButton(withTitle: "open")
-                alert.addButton(withTitle: "cancel")
-                if let store, let coordinator = store.application.coordinator {
-                    coordinator.alert(alert, for: store) {
-                        if $0 == .alertFirstButtonReturn { NSWorkspace.shared.open(target) }
-                    }
-                }
-            }
+            externalAppLinks.request(target, from: self, action: action)
             return
         }
         if action.navigationType == .linkActivated, let destination = LinkOpenDestination.from(action.modifierFlags),
@@ -605,6 +648,13 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             return
         }
         if action.targetFrame?.isMainFrame == true {
+            if !restoringOpenerHistory, action.navigationType != .backForward,
+                action.navigationType != .reload, target != webView.url, openerReturnTrail != nil {
+                openerReturnTrail = nil
+                openerReturnItem = nil
+                openerBoundaryItem = nil
+                refreshNavigationAvailability()
+            }
             authenticationNavigationURL = target
             sleepEligibleNavigation =
                 (action.request.httpMethod ?? "GET") == "GET" && ["http", "https"].contains(scheme)
@@ -672,6 +722,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         if faviconRefreshNavigation !== navigation { faviconRefreshNavigation = nil }
         webViewHost?.invalidatePreparedResizeSnapshot()
         activeNavigation = navigation
+        approvedOpenerRestore = nil
+        confirmedOpenerCloseNavigationID = nil
         clearHoveredLink()
         if readerDocument != nil { exitReader() }
         restoreCapturedCursor()
@@ -836,11 +888,18 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
         guard action.targetFrame == nil, let store else { return nil }
+        if let target = action.request.url,
+            !["https", "http", "webkit-extension", "about", "blob"].contains(target.scheme?.lowercased() ?? "")
+        {
+            externalAppLinks.request(target, from: self, action: action)
+            return nil
+        }
         if let expected = contextMenuWindowURL {
             contextMenuWindowURL = nil
             if expected == action.request.url, let coordinator = store.application.coordinator {
                 let window = coordinator.newWindow(profileID: profileID, configuration: configuration)
                 guard let tab = window.selectedTab else { return nil }
+                window.joinBrowsingTrail(tab, source: self)
                 tab.loaded = true
                 return tab.webView
             }
@@ -852,10 +911,51 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
     func webViewDidClose(_ webView: WKWebView) {
         guard existingWebView === webView, page == .web else { return }
-        if let store, store.isPopupWindow, store.tabs.count == 1 {
+        if let store, store.isPopupWindow, store.tabs.count == 1, pendingOpenerReturn == nil {
             store.nativeWindow?.performClose(nil)
         } else {
-            store?.close(self)
+            store?.finishClosing(self)
+        }
+    }
+
+    @objc(_webView:runBeforeUnloadConfirmPanelWithMessage:initiatedByFrame:completionHandler:)
+    func confirmLeaving(
+        _ webView: WKWebView, message: String, frame: WKFrameInfo,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        guard existingWebView === webView, !isDisposed else { completionHandler(false); return }
+        if let approval = approvedOpenerRestore, approval.navigationID == navigationID,
+            ProcessInfo.processInfo.systemUptime <= approval.deadline {
+
+
+            approvedOpenerRestore = nil
+            completionHandler(true)
+            return
+        }
+        approvedOpenerRestore = nil
+
+        if closeRequested { store?.select(self) }
+        let dialog = SiteJavaScriptDialog(
+            kind: .confirm, message: "changes on this page may not be saved.", frame: frame,
+            privateMode: store?.profileFor(profileID).privateMode == true)
+        dialog.alert.messageText = closeRequested ? "close this tab?" : "leave this page?"
+        dialog.alert.buttons[0].title = closeRequested ? "close tab" : "leave page"
+        dialog.alert.buttons[1].title = "keep page open"
+        dialog.alert.buttons[0].keyEquivalent = ""
+        dialog.alert.buttons[1].keyEquivalent = "\r"
+        dialog.alert.window.defaultButtonCell = dialog.alert.buttons[1].cell as? NSButtonCell
+        let token = navigationID
+        presentSiteDialog(dialog, from: webView) { [weak self] response in
+            let allow = response == .alertFirstButtonReturn
+            if allow, let self, self.navigationID == token, self.closeRequested, self.pendingOpenerReturn != nil {
+                self.confirmedOpenerCloseNavigationID = token
+            }
+            if !allow {
+                self?.closeRequested = false
+                self?.pendingOpenerReturn = nil
+                self?.confirmedOpenerCloseNavigationID = nil
+            }
+            completionHandler(allow)
         }
     }
 
@@ -1003,6 +1103,10 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let liveView = existingWebView, message.webView === liveView, page == .web else { return }
         guard let body = message.body as? [String: Any] else { return }
+        if message.name == "loafPageRevision", body["edited"] as? Bool == true {
+            pageRevision = UUID()
+            return
+        }
         if message.name == "loafLinkPreview" {
             guard let frame = body["frame"] as? String, frame.count <= 64,
                 let address = body["address"] as? String, address.count <= 8192

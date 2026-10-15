@@ -4,7 +4,16 @@ import WebKit
 
 @MainActor final class BrowserApplication: ObservableObject {
     @Published var profiles: [Profile] = []
-    @Published var preferences = BrowserPreferences()
+    @Published var preferences = BrowserPreferences() {
+        didSet {
+            if preferences.powerSaver != oldValue.powerSaver
+                || preferences.powerSaverThreshold != oldValue.powerSaverThreshold
+                || preferences.gameMode != oldValue.gameMode
+            {
+                resourceMonitor?.refreshBattery()
+            }
+        }
+    }
     @Published var ready = false
     @Published var onboardingVisible = false
     @Published var error: String?
@@ -24,6 +33,7 @@ import WebKit
         resourceMonitor = monitor
         return monitor
     }
+    func refreshPowerPolicy() { resourceMonitor?.applyPowerPolicy() }
     lazy var chatArchive = ChatArchive(directory: directory)
     lazy var sideChatAccess = SideChatAccess(onLock: { [weak self] in
         guard let self, self.preferences.requireSideChatPassword == true else { return }

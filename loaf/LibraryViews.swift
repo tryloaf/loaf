@@ -30,9 +30,9 @@ struct HistoryView: View {
     @State private var deletionProfileName = ""
     @State private var cookies: [HTTPCookie] = []
     @FocusState private var listFocused: Bool
-    init(store: BrowserStore) {
+    init(store: BrowserStore, presentation: HistoryPresentation? = nil) {
         self.store = store
-        _presentation = StateObject(wrappedValue: HistoryPresentation(store: store))
+        _presentation = StateObject(wrappedValue: presentation ?? HistoryPresentation(store: store))
     }
     var body: some View {
         let ordered = presentation.ordered
@@ -86,14 +86,15 @@ struct HistoryView: View {
                                     : "try another title or address.")
                         }
                     }
-                    ForEach(presentation.sections) { section in
-                        Text(section.title).font(.system(size: 12, weight: .medium)).padding(.top, 8)
-                        ForEach(section.sessions) { session in
-                            Text(session.title).font(.system(size: 11)).foregroundStyle(.tertiary).padding(.top, 10)
+                    ForEach(presentation.listItems) { item in
+                        switch item.content {
+                        case .day(let title):
+                            Text(title).font(.system(size: 12, weight: .medium)).padding(.top, 8)
+                        case .session(let title):
+                            Text(title).font(.system(size: 11)).foregroundStyle(.tertiary).padding(.top, 10)
                                 .padding(.bottom, 3)
-                            ForEach(session.summaries) { summary in
-                                historyRow(summary.row, visitIDs: summary.visitIDs).disabled(presentation.isBusy)
-                            }
+                        case .visit(let summary):
+                            historyRow(summary.row, visitIDs: summary.visitIDs).disabled(presentation.isBusy)
                         }
                     }
                 }.frame(maxWidth: 600).padding(.horizontal, 28).padding(.bottom, 24).frame(maxWidth: .infinity)
@@ -176,7 +177,8 @@ struct HistoryView: View {
                 Text(row.host).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).frame(
                     maxWidth: 180, alignment: .trailing)
             }.contentShape(Rectangle())
-                .overlay(HistoryRowHitTarget(select: { selectSummary($0) }, open: { openVisit(row) }))
+                .overlay(HistoryRowHitTarget(select: { selectSummary($0) }, open: { openVisit(row) },
+                    isCurrent: { canAct(on: row.id) }))
                 .accessibilityElement(children: .combine).accessibilityAddTraits(
                     selected ? [.isButton, .isSelected] : .isButton
                 )
@@ -198,7 +200,7 @@ struct HistoryView: View {
             }
     }
     private func canAct(on id: UUID) -> Bool {
-        !presentation.isBusy && presentation.profileID == store.selectedProfileID && presentation.ordered.contains(id)
+        !presentation.isBusy && presentation.profileID == store.selectedProfileID && presentation.containsVisit(id)
     }
     private func openVisit(_ row: HistoryPresentation.Row) {
         if canAct(on: row.id) { store.navigate(row.visit.address, inNewTab: true) }
@@ -446,7 +448,7 @@ struct AboutPage: View {
     var body: some View {
         VStack(spacing: 0) {
             LibraryHeader(title: "about loaf", icon: .info)
-            AboutLoafView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            AboutBrowserContents(store: store).frame(maxWidth: .infinity, maxHeight: .infinity)
                 .environment(
                     \.openURL,
                     OpenURLAction { url in

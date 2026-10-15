@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreImage
 import SwiftUI
 
 struct BrowserNotice: Identifiable {
@@ -76,7 +77,7 @@ struct AddressFeedback<Content: View>: View {
                                         active: AddressNoticeMotion(y: -8, blur: 4, opacity: 0),
                                         identity: AddressNoticeMotion(y: 0, blur: 0, opacity: 1)),
                                     removal: .modifier(
-                                        active: AddressNoticeMotion(y: 8, blur: 4, opacity: 0),
+                                        active: AddressNoticeMotion(y: -8, blur: 4, opacity: 0),
                                         identity: AddressNoticeMotion(y: 0, blur: 0, opacity: 1)))
                         )
                         .accessibilityLabel(notice.text + ", address bar").help("search or surf...")
@@ -135,6 +136,10 @@ struct BrowserNotificationToast: NSViewRepresentable {
         private var targetOffset: CGFloat = 0
         private var startOpacity: CGFloat = 0
         private var targetOpacity: CGFloat = 1
+        private var blur: CGFloat = 0
+        private var startBlur: CGFloat = 0
+        private var targetBlur: CGFloat = 0
+        private lazy var motionFilter = CIFilter(name: "CIGaussianBlur")
         private final class TickTarget: NSObject {
             weak var view: Container?
             init(_ view: Container) { self.view = view }
@@ -202,26 +207,38 @@ struct BrowserNotificationToast: NSViewRepresentable {
                     surface.alphaValue = 0.55
                 } else if surface.alphaValue == 1 || surface.isHidden {
                     offset = reduceMotion ? 0 : -8
+                    blur = reduceMotion ? 0 : 4
                     surface.alphaValue = 0
                 }
             }
             startOffset = offset
-            targetOffset = entering || reduceMotion ? 0 : 8
+            targetOffset = entering || reduceMotion ? 0 : -8
+            startBlur = reduceMotion ? 0 : blur
+            targetBlur = entering || reduceMotion ? 0 : 4
             startOpacity = surface.alphaValue
             targetOpacity = entering ? 1 : 0
             duration = reduceMotion ? 0.1 : update ? 0.18 : 0.26
             started = CACurrentMediaTime()
-            position(offset: offset, opacity: startOpacity)
+            position(offset: offset, opacity: startOpacity, blur: startBlur)
             let link = displayLink(target: TickTarget(self), selector: #selector(TickTarget.update(_:)))
             self.link = link
             link.add(to: .main, forMode: .common)
         }
-        private func position(offset: CGFloat, opacity: CGFloat) {
+        private func position(offset: CGFloat, opacity: CGFloat, blur: CGFloat) {
             self.offset = offset
+            self.blur = max(0, blur)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             surface.setFrameOrigin(NSPoint(x: surface.frame.minX, y: topInset + offset))
             surface.alphaValue = opacity
+            if self.blur > 0, let motionFilter {
+                surface.layerUsesCoreImageFilters = true
+                motionFilter.setValue(self.blur, forKey: kCIInputRadiusKey)
+                surface.contentFilters = [motionFilter]
+            } else {
+                surface.contentFilters = []
+                surface.layerUsesCoreImageFilters = false
+            }
             CATransaction.commit()
         }
         private func tick() {
@@ -230,12 +247,15 @@ struct BrowserNotificationToast: NSViewRepresentable {
                 progress >= 1 || reduceMotion
                 ? progress : Spring.smooth(duration: duration).value(target: 1.0, time: progress * duration)
             position(
-                offset: startOffset + (targetOffset - startOffset) * eased,
-                opacity: startOpacity + (targetOpacity - startOpacity) * eased)
+                offset: reduceMotion ? 0 : startOffset + (targetOffset - startOffset) * eased,
+                opacity: startOpacity + (targetOpacity - startOpacity) * eased,
+                blur: reduceMotion ? 0 : startBlur + (targetBlur - startBlur) * eased)
             if progress >= 1 {
                 stopMotion()
                 if !shown {
                     surface.isHidden = true
+                    surface.contentFilters = []
+                    surface.layerUsesCoreImageFilters = false
                     host.clear()
                     text = nil
                 }

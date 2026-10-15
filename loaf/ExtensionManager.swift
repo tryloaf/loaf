@@ -21,6 +21,15 @@ import WebKit
     private var loadRevisions: [UUID: UUID] = [:]
     private var userScripts: [UUID: ExtensionUserScripts] = [:]
 
+    private func enabledStatus(for record: InstalledExtension) -> String {
+        if (record.diagnostics ?? []).contains(where: {
+            $0.hasPrefix("Background error: ") || $0.hasPrefix("WebKit error: ")
+        }) { return "installed · runtime errors · see diagnostics" }
+        if record.storeID == ExtensionShazam.identifier { return "installed · song recognition unavailable" }
+        if record.storeID == ExtensionCompatibility.tampermonkeyID { return "installed · compatibility adapter" }
+        return "installed · compatibility unverified"
+    }
+
     func attachUserScripts(to view: WKWebView) {
         for scripts in userScripts.values { scripts.attach(view) }
     }
@@ -67,11 +76,7 @@ import WebKit
                 application?.updateProfile(profileID) { profile in
                     guard let index = profile.extensions.firstIndex(where: { $0.id == record.id }) else { return }
                     profile.extensions[index].enabled = true
-                    if profile.extensions[index].status?.contains("load failed") == true {
-                        profile.extensions[index].status =
-                            record.storeID == ExtensionShazam.identifier
-                            ? "installed · song recognition unavailable" : "installed · compatibility unverified"
-                    }
+                    profile.extensions[index].status = enabledStatus(for: profile.extensions[index])
                 }
                 if store.error?.hasPrefix("\(record.name) could not load: ") == true { store.error = nil }
             } catch is CancellationError { continue } catch {
@@ -236,9 +241,7 @@ import WebKit
             }
             try await load(record)
             record.enabled = true
-            record.status =
-                record.storeID == ExtensionShazam.identifier
-                ? "installed · song recognition unavailable" : "installed · compatibility unverified"
+            record.status = enabledStatus(for: record)
         } catch {
             record.diagnostics = (record.diagnostics ?? []) + [error.localizedDescription]
             record.status = "installed · incompatible · disabled"
@@ -363,10 +366,26 @@ import WebKit
             let diagnostic = try ExtensionCompatibility.prepareTampermonkey(
                 runtime, original: root.appendingPathComponent("original"))
             application?.updateProfile(profileID) { profile in
-                if let index = profile.extensions.firstIndex(where: { $0.id == record.id }),
-                    !(profile.extensions[index].diagnostics ?? []).contains(diagnostic)
-                {
-                    profile.extensions[index].diagnostics = (profile.extensions[index].diagnostics ?? []) + [diagnostic]
+                guard let index = profile.extensions.firstIndex(where: { $0.id == record.id }) else { return }
+
+                var diagnostics = (profile.extensions[index].diagnostics ?? []).map { value in
+                    value.hasPrefix("WebKit error: ") || value.hasPrefix("Background error: ")
+                        ? "Previous runtime · " + value : value
+                }
+                if !diagnostics.contains(diagnostic) { diagnostics.append(diagnostic) }
+                profile.extensions[index].diagnostics = diagnostics
+                profile.extensions[index].status = "installed · compatibility unverified"
+            }
+        }
+        if record.storeID == ExtensionCompatibility.tampermonkeyID {
+            application?.updateProfile(profileID) { profile in
+                guard let index = profile.extensions.firstIndex(where: { $0.id == record.id }) else { return }
+                profile.extensions[index].diagnostics = profile.extensions[index].diagnostics?.map { diagnostic in
+                    if diagnostic.hasPrefix("Tampermonkey's background listener setup ")
+                        || diagnostic.hasPrefix("Tampermonkey's listener setup and restored installation events ") {
+                        return "Previous runtime · " + diagnostic
+                    }
+                    return diagnostic
                 }
             }
         }
@@ -543,14 +562,7 @@ import WebKit
                 if let index = p.extensions.firstIndex(where: { $0.id == record.id }) {
                     p.extensions[index].enabled = enabled
                     p.extensions[index].status =
-                        enabled
-                        ? ((p.extensions[index].diagnostics ?? []).contains {
-                            $0.hasPrefix("Background error: ") || $0.hasPrefix("WebKit error: ")
-                        }
-                            ? "installed · runtime errors · see diagnostics"
-                            : record.storeID == ExtensionShazam.identifier
-                                ? "installed · song recognition unavailable" : "installed · compatibility unverified")
-                        : "installed · disabled"
+                        enabled ? enabledStatus(for: p.extensions[index]) : "installed · disabled"
                 }
             }
             store.persistSoon()

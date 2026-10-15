@@ -33,7 +33,7 @@ enum ProfileMemoryDiagnostics {
                 task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
             }
         }
-        // Darwin's sizeof-based revision macros are not imported into Swift.
+
         let ledgerBytes = MemoryLayout<task_vm_info_data_t>.offset(of: \.limit_bytes_remaining)!
         guard status == KERN_SUCCESS, Int(count) * MemoryLayout<integer_t>.size >= ledgerBytes else { return nil }
         let values: [Double] = [

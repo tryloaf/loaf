@@ -29,7 +29,12 @@ import WebKit
         return engine
     }
     let application: BrowserApplication
-    weak var nativeWindow: NSWindow? { didSet { syncWindowTitle() } }
+    weak var nativeWindow: NSWindow? {
+        didSet {
+            syncWindowTitle()
+            application.refreshPowerPolicy()
+        }
+    }
     var workspaces: [UUID: WindowWorkspace]
     var restoredInteractionStates: [UUID: Any] = [:]
     var savedFrame: String?
@@ -40,13 +45,16 @@ import WebKit
             editingTabIconID = nil
             bookmarkDraft = nil
             syncWindowTitle()
+            application.refreshPowerPolicy()
         }
     }
     var preferences: BrowserPreferences {
         get { application.preferences }
         set { application.preferences = newValue }
     }
-    @Published var browserSplit: BrowserSplit?
+    @Published var browserSplit: BrowserSplit? {
+        didSet { application.refreshPowerPolicy() }
+    }
     var sideChatVisible: Bool {
         get { selectedTab?.sideChatVisible ?? false }
         set {
@@ -334,6 +342,7 @@ import WebKit
         for tab in groupPreviews.values { tab.dispose() }
         groupPreviews.removeAll()
         tabObservers.removeAll()
+        application.refreshPowerPolicy()
     }
 
     func runtime(for id: UUID) -> ProfileRuntime { application.runtime(for: id) }
@@ -487,6 +496,30 @@ import WebKit
         guard !tab.isDisposed, workspaces[tab.profileID]?.tabs.contains(where: { $0.id == tab.id }) == true else {
             return
         }
+        guard !tab.closeRequested else { return }
+        if tab.page == .web, let view = tab.existingWebView, !tab.sleeping {
+            tab.closeRequested = true
+            if WebKitAdapter.tryClose(view) == false { return }
+            tab.closeRequested = false
+        }
+        finishClosing(tab)
+    }
+    func finishClosing(_ tab: BrowserTab) {
+        guard isOpenTab(tab) else { return }
+        tab.closeRequested = false
+        let returnRequest = tab.pendingOpenerReturn
+        tab.pendingOpenerReturn = nil
+        let approvedNavigationID = tab.confirmedOpenerCloseNavigationID
+        tab.confirmedOpenerCloseNavigationID = nil
+        let returnTarget = returnRequest?.returnTarget(for: tab)
+        if let returnRequest, returnTarget == nil {
+
+            tab.approveOpenerRestore(afterClosing: approvedNavigationID)
+            NavigationHistory.restoreOpenerHistory(tab, trail: returnRequest)
+            return
+        }
+        let returnWasSelected = selectedTab === tab
+        let closeReturningPopup = returnTarget != nil && isPopupWindow && tabs.count == 1
         TabClosingAnimation.close(tab)
         if selectedTab === tab { cancelSideChatOpening() }
         tabHover.dismiss()
@@ -534,7 +567,7 @@ import WebKit
             profile.tabs.removeAll { $0.id == tab.id }
             if profile.selectedTab == tab.id {
                 profile.selectedTab =
-                    splitSurvivor ?? recent
+                    (returnTarget?.windowID == id ? returnTarget?.id : nil) ?? splitSurvivor ?? recent
                     ?? (profile.tabs.isEmpty ? nil : profile.tabs[min(index, profile.tabs.count - 1)].id)
             }
         }
@@ -542,6 +575,11 @@ import WebKit
             _ = newTab(profileID: tab.profileID, showOmnibar: false, activate: tab.profileID == selectedProfileID)
         }
         if let selectedTab { select(selectedTab) }
+        if closeReturningPopup { nativeWindow?.performClose(nil) }
+        if returnWasSelected, let returnTarget, let owner = returnTarget.store, owner !== self {
+            owner.select(returnTarget)
+            application.coordinator?.show(owner)
+        }
         persistSoon()
     }
 
@@ -911,11 +949,13 @@ import WebKit
     func updateProfile(_ id: UUID, _ update: (inout Profile) -> Void) {
         guard application.profiles.contains(where: { $0.id == id }) else { return }
         var profile = profileFor(id)
+        let previousSelection = profile.selectedTab
         update(&profile)
         workspaces[id] = WindowWorkspace(
             sidebarOrder: workspaces[id]?.sidebarOrder, groups: workspaces[id]?.groups, tabs: profile.tabs,
             selectedTab: profile.selectedTab)
         application.updateProfile(id) { $0 = profile }
+        if previousSelection != profile.selectedTab { application.refreshPowerPolicy() }
         syncWindowTitle()
         invalidateLater()
     }

@@ -80,8 +80,8 @@ import WebKit
 
     @objc private func permissionsChanged() {
         guard active, HostPermissions(context) != hostPermissions else { return }
-        // API permission notifications often leave the script's host access unchanged.
-        // Re-adding every script copies its source into WebKit shared memory each time.
+
+
         refresh()
     }
 

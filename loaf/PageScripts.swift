@@ -2,6 +2,15 @@ import Foundation
 import WebKit
 
 enum PageScripts {
+    static let pageEdits = #"""
+        (() => {
+          const edited = event => {
+            if (event.isTrusted) window.webkit.messageHandlers.loafPageRevision.postMessage({edited:true});
+          };
+          document.addEventListener('input', edited, true);
+          document.addEventListener('change', edited, true);
+        })();
+        """#
     static let linkPreview = #"""
         (() => {
           const frame = [...crypto.getRandomValues(new Uint32Array(4))].map(n => n.toString(16)).join('-');

@@ -65,7 +65,7 @@ struct SettingsView: View {
         case "search": "what appears when you search or surf"
         case "intelligence": "models, connections and page summaries"
         case "profiles": "separate spaces, shared across your windows"
-        case "websites": "decisions you've made for individual sites"
+        case "websites": "website permissions and app links"
         case "privacy": "blocking, cookies and browsing data"
         case "passwords": "credentials stored locally in Keychain"
         case "extensions": "installation and website access"
@@ -347,7 +347,10 @@ struct SettingsView: View {
         Array((store.profile.siteSettings ?? [:]).keys).sorted()
     }
     private var settingsSearchResults: [SettingsSearchResult] {
-        SettingsSearch.results(for: query, websiteOrigins: savedWebsiteOrigins)
+        SettingsSearch.results(
+            for: query, websiteOrigins: savedWebsiteOrigins,
+            hasInternalBattery: store.application.resources.hasInternalBattery,
+            applicationNames: (store.profile.externalAppLinks ?? [:]).values.map(\.name))
     }
     private var sectionHeading: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -787,6 +790,17 @@ struct SettingsView: View {
                 Text("macOS permissions remain authoritative for camera and microphone access.").font(.caption)
                     .foregroundStyle(.secondary)
             }.id("websites")
+            Section("\(store.profile.name) · app links") {
+                if (store.profile.externalAppLinks ?? [:]).isEmpty {
+                    Text("apps appear here when a website asks to open them.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(externalAppIdentities, id: \.self) { identity in
+                    ExternalAppLinkSettingsRow(store: store, identity: identity)
+                }
+                Text("choices apply to each app from any website in this profile, on this Mac. reset an app to ask again.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.id("external-app-links")
             Section("website interaction · all profiles") {
                 Toggle(
                     "ask before downloading from a new site", isOn: optional(\.asksBeforeDownloading, fallback: true)
@@ -827,6 +841,15 @@ struct SettingsView: View {
         return (store.profile.siteSettings ?? [:]).keys.sorted().filter {
             query.isEmpty || BrowserAddress.visible($0).localizedStandardContains(query)
                 || $0.localizedStandardContains(query)
+        }
+    }
+    private var externalAppIdentities: [String] {
+        (store.profile.externalAppLinks ?? [:]).keys.sorted {
+            let apps = store.profile.externalAppLinks ?? [:]
+            let left = apps[$0]?.name ?? $0
+            let right = apps[$1]?.name ?? $1
+            let order = left.localizedStandardCompare(right)
+            return order == .orderedSame ? $0 < $1 : order == .orderedAscending
         }
     }
     private var privacy: some View {
@@ -901,8 +924,20 @@ struct SettingsView: View {
                             Text(record.hosts.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
                         }
                         if let status = record.status { Text(status).font(.caption).foregroundStyle(.secondary) }
-                        ForEach(record.diagnostics ?? [], id: \.self) {
+                        let diagnostics = record.diagnostics ?? []
+                        let previous = diagnostics.filter { $0.hasPrefix("Previous runtime · ") }
+                        ForEach(diagnostics.filter { !$0.hasPrefix("Previous runtime · ") }, id: \.self) {
                             Text($0).font(.caption).foregroundStyle(.secondary)
+                        }
+                        if !previous.isEmpty {
+                            DisclosureGroup("previous runtime diagnostics · \(previous.count)") {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(previous, id: \.self) { diagnostic in
+                                        Text(String(diagnostic.dropFirst("Previous runtime · ".count)))
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }.padding(.top, 6)
+                            }.font(.caption)
                         }
                         HStack {
                             Toggle(
@@ -955,18 +990,23 @@ struct SettingsView: View {
     }
     private var advanced: some View {
         Group {
-            Section("power & time") {
-                Toggle("power saver", isOn: optional(\.powerSaver, fallback: false)).id("power-saver").onChange(
-                    of: store.preferences.powerSaver
-                ) { _, _ in store.application.resources.refreshBattery() }
-                Picker("enable on battery below", selection: optional(\.powerSaverThreshold, fallback: 0)) {
-                    Text("never").tag(0)
-                    ForEach([10, 20, 30, 50], id: \.self) { Text("\($0)%").tag($0) }
-                }.onChange(of: store.preferences.powerSaverThreshold) { _, _ in
-                    store.application.resources.refreshBattery()
+            Section("performance") {
+                if store.application.resources.hasInternalBattery {
+                    Toggle("battery saver", isOn: optional(\.powerSaver, fallback: false)).id("power-saver")
+                    Picker("enable on battery below", selection: optional(\.powerSaverThreshold, fallback: 0)) {
+                        Text("never").tag(0)
+                        ForEach([10, 20, 30, 50], id: \.self) { Text("\($0)%").tag($0) }
+                    }
+                    Text("reduces background activity and sleeps eligible idle tabs after five minutes. also follows macOS Low Power Mode. game mode takes priority.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                Text("reduces background activity and sleeps eligible idle tabs after five minutes.").font(.caption)
-                    .foregroundStyle(.secondary)
+                Toggle("game mode", isOn: optional(\.gameMode, fallback: false)).id("game-mode")
+                Text("prioritizes foreground browsing and suspends background pages while loaf is active. uses more power.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("macOS Low Power Mode and temperature limits can still reduce frame rates. turn off Low Power Mode in System Settings for the best performance.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("browsing time") {
                 Toggle("save local browsing time", isOn: optional(\.tracksScreenTime, fallback: false)).id(
                     "browsing-time")
                 Text("records focused-page and playing-media time by site, on this Mac. private browsing is excluded.")
