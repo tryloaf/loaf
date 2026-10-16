@@ -47,7 +47,7 @@ struct StartChecklistWidget: View {
         draft = ""
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        StartWidgetSection {
             if showsHeader {
                 HStack {
                     GolzheimIcon(icon: .check, size: 14)
@@ -69,6 +69,7 @@ struct StartChecklistWidget: View {
                     }
                 }
             }
+        } content: {
             ForEach(Array(visibleItems.prefix(expanded ? 100 : options.limit))) {
                 item in
                 WidgetTaskRow(
@@ -165,25 +166,25 @@ struct StartWorldClockWidget: View {
     var showsHeader = true
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            VStack(alignment: .leading, spacing: 12) {
+            StartWidgetSection {
                 if showsHeader {
                     HStack(spacing: 8) {
                         GolzheimIcon(icon: .globe, size: 14)
                         Text("world clock").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                     }
                 }
+            } content: {
                 ForEach(StartWorldClock.zones(options.timeZones), id: \.identifier) { zone in
-                    HStack(spacing: 4) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(StartWorldClock.city(zone)).font(.system(size: 12)).lineLimit(1).minimumScaleFactor(
-                                0.75)
-                            Text(StartWorldClock.day(context.date, zone: zone)).font(.system(size: 10)).foregroundStyle(
-                                .secondary)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            cityAndDay(zone, date: MarketingLaunch.displayDate(context.date))
+                            Spacer(minLength: 0)
+                            time(zone, date: MarketingLaunch.displayDate(context.date)).fixedSize()
                         }
-                        Spacer(minLength: 0)
-                        Text(StartWorldClock.time(context.date, zone: zone, hour24: options.clock24Hour == true)).font(
-                            .system(size: 14, weight: .regular)
-                        ).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
+                        VStack(alignment: .leading, spacing: 4) {
+                            cityAndDay(zone, date: MarketingLaunch.displayDate(context.date))
+                            time(zone, date: MarketingLaunch.displayDate(context.date))
+                        }
                     }
                 }
                 if StartWorldClock.zones(options.timeZones).isEmpty {
@@ -191,6 +192,18 @@ struct StartWorldClockWidget: View {
                 }
             }
         }
+    }
+    private func cityAndDay(_ zone: TimeZone, date: Date) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(StartWorldClock.city(zone)).font(.system(size: 12)).lineLimit(1)
+                .truncationMode(.tail).help(StartWorldClock.city(zone))
+            Text(StartWorldClock.day(date, zone: zone)).font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+    }
+    private func time(_ zone: TimeZone, date: Date) -> some View {
+        Text(StartWorldClock.time(date, zone: zone, hour24: options.clock24Hour == true))
+            .font(.system(size: 14)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.1)
+            .layoutPriority(1)
     }
 }
 

@@ -17,6 +17,16 @@ struct PinDropPreview: Equatable {
     let position: TabDropPosition?
 }
 
+struct ExtensionStripLayout {
+    let sidebarWidth: CGFloat
+
+    var pinnedCapacity: Int { max(1, Int((sidebarWidth - 64) / 32)) }
+    var overflowColumns: Int { max(1, Int((sidebarWidth - 38) / 34)) }
+    func overflowRows(for count: Int) -> Int {
+        min(4, (count + overflowColumns - 1) / overflowColumns)
+    }
+}
+
 struct SidebarView: View {
     @Environment(\.colorScheme) private var scheme
     @ObservedObject var store: BrowserStore
@@ -43,6 +53,13 @@ struct SidebarView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     WindowDragArea().frame(maxWidth: .infinity, minHeight: 40)
+                        .overlay {
+                            GeometryReader { gap in
+                                PerformanceIndicator(store: store)
+                                    .position(x: PerformanceIndicatorPlacement.center(in: gap.size.width),
+                                        y: store.chromeControlsCenterY - (floating ? 3 : 0))
+                            }
+                        }
                     HStack(spacing: 0) {
                         NavigationHistoryButton(store: store, backward: true).frame(width: 26, height: 26)
                         NavigationHistoryButton(store: store, backward: false).frame(width: 26, height: 26)
@@ -76,7 +93,7 @@ struct SidebarView: View {
             }
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             .overlay(alignment: .bottom) {
-                tray(availableHeight: max(0, geometry.size.height - 40)).zIndex(3)
+                tray(availableHeight: max(0, geometry.size.height - 40), sidebarWidth: geometry.size.width).zIndex(3)
             }
         }
         .animation(nil, value: store.extensionsVisible)
@@ -132,6 +149,9 @@ struct SidebarView: View {
         }
         .onAppear { extensionProgress = store.extensionsVisible ? 1 : 0 }
         .onChange(of: store.extensionsVisible) { _, open in animateExtensions(open) }
+        .onChange(of: store.trayToggleID) { _, _ in
+            setTray(trayProgress > 0.5 ? nil : traySection ?? .downloads)
+        }
         .onDisappear {
             cancelRebound()
             extensionTask?.cancel()
@@ -314,8 +334,9 @@ struct SidebarView: View {
             }
         }
     }
-    private func tray(availableHeight: CGFloat) -> some View {
-        VStack(spacing: 0) {
+    private func tray(availableHeight: CGFloat, sidebarWidth: CGFloat) -> some View {
+        let layout = ExtensionStripLayout(sidebarWidth: sidebarWidth)
+        return VStack(spacing: 0) {
             ScrollView {
                 SidebarTrayContent(
                     store: store, section: Binding(get: { traySection ?? .downloads }, set: { traySection = $0 })
@@ -330,9 +351,9 @@ struct SidebarView: View {
             ).clipped()
             .allowsHitTesting(trayProgress > 0.95).accessibilityHidden(trayProgress < 0.95)
             VStack(spacing: 0) {
-                extensionStrip.opacity(extensionProgress)
+                extensionStrip(layout: layout).opacity(extensionProgress)
                     .offset(y: 6 * (1 - extensionProgress))
-                    .frame(height: extensionStripHeight * extensionProgress, alignment: .top).clipped()
+                    .frame(height: extensionStripHeight(layout: layout) * extensionProgress, alignment: .top).clipped()
                     .allowsHitTesting(store.extensionsVisible).accessibilityHidden(!store.extensionsVisible)
                 SoftwareUpdateReminder()
                 footer.zIndex(1)
@@ -380,22 +401,25 @@ struct SidebarView: View {
         let order = extensionOrder.isEmpty ? enabled.map(\.id) : extensionOrder
         return order.compactMap { records[$0] } + enabled.filter { !order.contains($0.id) }
     }
-    private var extensionStripHeight: CGFloat {
-        let overflow = max(0, orderedExtensions.count - 4)
+    private func extensionStripHeight(layout: ExtensionStripLayout) -> CGFloat {
+        let overflow = max(0, orderedExtensions.count - layout.pinnedCapacity)
         return 36 + (overflow > 0 ? 18 : 0)
-            + (extensionOverflow && overflow > 0 ? CGFloat(min(4, (overflow + 4) / 5)) * 32 + 8 : 0)
+            + (extensionOverflow && overflow > 0 ? CGFloat(layout.overflowRows(for: overflow)) * 32 + 8 : 0)
     }
-    private var extensionStrip: some View {
+    private func extensionStrip(layout: ExtensionStripLayout) -> some View {
         let enabled = orderedExtensions
-        let pinned = Array(enabled.prefix(4))
-        let overflow = Array(enabled.dropFirst(4))
+        let pinned = Array(enabled.prefix(layout.pinnedCapacity))
+        let overflow = Array(enabled.dropFirst(layout.pinnedCapacity))
         return VStack(spacing: 4) {
             if extensionOverflow, !overflow.isEmpty {
                 ScrollView {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 5), spacing: 4) {
+                    LazyVGrid(
+                        columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: layout.overflowColumns),
+                        spacing: 4
+                    ) {
                         ForEach(overflow) { extensionButton($0) }
                     }.padding(4)
-                }.scrollIndicators(.hidden).frame(height: CGFloat(min(4, (overflow.count + 4) / 5)) * 32 + 4)
+                }.scrollIndicators(.hidden).frame(height: CGFloat(layout.overflowRows(for: overflow.count)) * 32 + 4)
             }
             if !overflow.isEmpty {
                 Button {
@@ -415,7 +439,7 @@ struct SidebarView: View {
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 4)
                 } else {
                     ForEach(pinned) { extensionButton($0) }
-                    if pinned.count < 4 { Spacer(minLength: 0) }
+                    if pinned.count < layout.pinnedCapacity { Spacer(minLength: 0) }
                 }
                 Button {
                     store.showPage(.extensions)
@@ -423,7 +447,7 @@ struct SidebarView: View {
                     GolzheimIcon(icon: .settings, size: 14).frame(width: 24, height: 28)
                 }.buttonStyle(LoafButtonStyle()).help("manage extensions")
             }.padding(4)
-        }.frame(height: extensionStripHeight)
+        }.frame(height: extensionStripHeight(layout: layout))
             .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 6)).padding(.horizontal, 8)
             .animation(reduceMotion ? nil : .smooth(duration: 0.16), value: enabled.map(\.id))
             .accessibilityElement(children: .contain).accessibilityLabel("extension tray")
@@ -475,18 +499,9 @@ struct SidebarView: View {
     }
     private var footer: some View {
         HStack(spacing: 0) {
-            Button {
+            DownloadTrayButton(store: store, expansion: trayProgress) {
                 setTray(trayProgress > 0.5 ? nil : .downloads)
-            } label: {
-                GolzheimIcon(icon: .tray, size: 16, weight: 100).frame(width: 32, height: 32)
-                    .background(
-                        Color(nsColor: .textBackgroundColor).opacity(trayProgress * 0.12),
-                        in: RoundedRectangle(cornerRadius: 6)
-                    )
-                    .contentShape(Rectangle())
-            }.buttonStyle(.plain).help(trayProgress == 0 ? "open tray" : "close tray").accessibilityLabel(
-                trayProgress == 0 ? "open tray" : "close tray")
-            SidebarPerformanceControl(store: store)
+            }
             Spacer(minLength: 4)
             Button {
                 profilePicker.toggle()
@@ -537,7 +552,7 @@ struct SidebarView: View {
             }
             Spacer(minLength: 4)
             Button {
-                store.extensionsVisible.toggle()
+                store.toggleExtensions()
             } label: {
                 GolzheimIcon(icon: .extensionPuzzle, size: 20, weight: 100).frame(width: 26, height: 26)
                     .background(
@@ -546,7 +561,7 @@ struct SidebarView: View {
             }.buttonStyle(LoafButtonStyle()).accessibilityLabel("extensions").accessibilityValue(
                 store.extensionsVisible ? "expanded" : "collapsed"
             )
-            .help(store.extensionsVisible ? "hide extensions" : "show extensions")
+            .help(store.extensionsVisible ? "hide extensions (⌥⌘E)" : "show extensions (⌥⌘E)")
             .contextMenu { Button("manage extensions…") { store.showPage(.extensions) } }
         }.padding(.horizontal, 4).padding(.bottom, 4).padding(.top, 4)
     }
@@ -583,7 +598,8 @@ struct TabMediaPlayers: View {
     }
 }
 func profileTint(_ index: Int) -> Color {
-    [
+    if index == ProfileColor.systemAccentIndex { return Color(nsColor: .controlAccentColor) }
+    return [
         Color(red: 241 / 255, green: 214 / 255, blue: 145 / 255), Color(red: 0.92, green: 0.66, blue: 0.2),
         Color(red: 0.59, green: 0.69, blue: 0.91), Color(red: 0.87, green: 0.54, blue: 0.59),
         Color(red: 0.43, green: 0.75, blue: 0.62), Color(red: 0.66, green: 0.58, blue: 0.84),

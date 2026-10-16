@@ -524,10 +524,9 @@ import WebKit
             "This window also contains \(count) \(tabs) in \(profiles). Closing it closes \(count == 1 ? "that tab" : "those tabs") too."
         alert.icon = LoafAppIcon.image
         let close = alert.addButton(withTitle: "close window")
-        close.keyEquivalent = "\r"
         let cancel = alert.addButton(withTitle: "cancel")
         cancel.keyEquivalent = "\u{1b}"
-        alert.window.defaultButtonCell = close.cell as? NSButtonCell
+        DestructiveActionStyle.configure(alert, destructive: close)
         alert.showsSuppressionButton = true
         alert.suppressionButton?.title = "don’t ask again"
         let result = alert.runModal()
@@ -932,6 +931,18 @@ import WebKit
                 makeFirstResponder(view)
             }
         }
+    }
+    override func sendEvent(_ event: NSEvent) {
+        if [.leftMouseDown, .rightMouseDown].contains(event.type), attachedSheet == nil,
+            let web = WebCursorOwnership.webView(for: event, in: self) as? LoafWebView {
+            web.browserTab?.downloadClickOrigin = DownloadClickOrigin(
+                screenPoint: convertPoint(toScreen: event.locationInWindow))
+        }
+        if event.type == .keyDown, let tab = store?.selectedTab, let web = tab.existingWebView,
+            let responder = firstResponder as? NSView, responder === web || responder.isDescendant(of: web) {
+            tab.downloadClickOrigin = nil
+        }
+        super.sendEvent(event)
     }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if handlePointerEscape(event) { return true }

@@ -74,7 +74,7 @@ extension BrowserWindowState {
         alert.informativeText =
             address ? "the return button will open this address." : "this name appears in the sidebar."
         let field = NSTextField(string: address ? tab.pinnedAddress ?? tab.url?.absoluteString ?? "" : tab.sidebarTitle)
-        field.frame.size = NSSize(width: 284, height: 24)
+        field.frame.size = NSSize(width: AlertLayout.accessoryWidth, height: 24)
         alert.accessoryView = field
         alert.addButton(withTitle: "save")
         alert.addButton(withTitle: "cancel")

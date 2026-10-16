@@ -57,7 +57,7 @@ nonisolated enum ICloudSyncProjection {
     static let preferenceKeys: Set<String> = [
         "haptics", "showLinkPreview", "fahrenheit", "sidebarWidth", "alternateSearch", "capitalizeMenus",
         "userAgentMode", "restoreSession", "warnBeforeQuitting", "warnBeforeClosingOtherProfiles", "sleepIdleTabs",
-        "sidebarOnlyChrome",
+        "sidebarOnlyChrome", "performanceIndicatorVisibility",
         "insetCollapsedPage", "pinnedLayout", "resizeTransition", "tintWonderbar", "tabSleepMinutes",
         "customNewTabURL", "searchEngine", "customSearchTemplate", "suggestionProvider", "linkTabGroups",
     ]

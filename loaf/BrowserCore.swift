@@ -378,6 +378,8 @@ nonisolated struct BrowserPreferences: Codable, Sendable {
     var powerSaver: Bool?
     var powerSaverThreshold: Int?
     var gameMode: Bool?
+    var performanceIndicatorVisibility: PerformanceIndicatorVisibility?
+    var externalAppLinks: [String: ExternalAppLinkPreference]?
     var tracksScreenTime: Bool?
     var linkTabGroups: Bool?
     var webNotifications: Bool?
@@ -462,6 +464,7 @@ nonisolated struct SiteSettings: Codable, Sendable {
     var savePasswords: Bool?
     var downloads: Bool?
     var pointerLock: String?
+    var externalAppLinks: ExternalAppLinkPolicy?
     var automaticPopups: Bool?
     var javascript = true
     var autoplay = false

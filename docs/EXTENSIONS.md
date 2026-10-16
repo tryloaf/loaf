@@ -2,6 +2,8 @@
 
 Chrome extension support remains experimental. Install Tampermonkey from the Chrome Web Store through loaf's extension settings, then add scripts through its dashboard. Enabling a manager allows the scripts you add to run on its approved websites. Reload existing pages after adding a script.
 
+Press ⌥⌘E to show or hide the extension strip, or ⌥⌘T to open or close the sidebar tray. Both commands are in the View menu and reveal the sidebar when opening their controls. Widening the sidebar makes room for more pinned extension icons; the remaining extensions stay in the expandable overflow grid. Drag icons to change their order.
+
 Safari extensions purchased in the App Store do not load automatically in loaf. Install the extension's Chrome Web Store version where available, or choose an unpacked folder containing `manifest.json`. Selecting a Safari app or a folder without a manifest now reports the actual installation problem before checking its size.
 
 Extension packages can be up to 256 MB, with at most 1 GB extracted across 20,000 entries. These limits apply to downloads, local CRX packages, and unpacked folders. CRX3 developer signatures and Chrome Web Store publisher proofs remain required; archive path, link, duplicate, checksum, and streamed byte checks still apply.

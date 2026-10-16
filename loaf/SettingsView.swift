@@ -6,6 +6,7 @@ import WebKit
 
 struct SettingsView: View {
     @ObservedObject var store: BrowserStore
+    @ObservedObject private var resourceMonitor: ResourceMonitor
     @ObservedObject private var updates = SoftwareUpdateManager.shared
     @State private var section: String
     @State private var query = ""
@@ -37,6 +38,7 @@ struct SettingsView: View {
     private let sections = SettingsNavigation.sections
     init(store: BrowserStore, initialSection: String = "general") {
         self.store = store
+        _resourceMonitor = ObservedObject(wrappedValue: store.application.resources)
         _section = State(
             initialValue: SettingsNavigation.sections.contains(initialSection) ? initialSection : "general")
     }
@@ -262,8 +264,7 @@ struct SettingsView: View {
                 .background(Color(nsColor: .windowBackgroundColor).ignoresSafeArea(.container, edges: .top))
                 .background(
                     SettingsTitlebarState(
-                        title: headingPassed
-                            ? (query.isEmpty ? section : "search results") : "settings",
+                        title: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? section : "search results",
                         promoted: headingPassed))
         }
         .onChange(of: section) { _, _ in headingPassed = false }
@@ -314,7 +315,7 @@ struct SettingsView: View {
                 StartPage(store: store, editing: true).frame(width: 760, height: 560)
             }
         }
-        .confirmationDialog(
+        .destructiveConfirmationDialog(
             "delete browsing-time data?", isPresented: $confirmTrackingDeletion, titleVisibility: .visible
         ) {
             Button("delete browsing-time data", role: .destructive) {
@@ -324,7 +325,7 @@ struct SettingsView: View {
         } message: {
             Text("This deletes recorded browsing time for every profile on this Mac. It cannot be undone.")
         }
-        .confirmationDialog(
+        .destructiveConfirmationDialog(
             "remove \(extensionDeletion?.name ?? "extension")?",
             isPresented: Binding(get: { extensionDeletion != nil }, set: { if !$0 { extensionDeletion = nil } }),
             titleVisibility: .visible
@@ -350,7 +351,7 @@ struct SettingsView: View {
         SettingsSearch.results(
             for: query, websiteOrigins: savedWebsiteOrigins,
             hasInternalBattery: store.application.resources.hasInternalBattery,
-            applicationNames: (store.profile.externalAppLinks ?? [:]).values.map(\.name))
+            applicationNames: store.externalAppLinkPreferences.values.map(\.name))
     }
     private var sectionHeading: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -802,15 +803,18 @@ struct SettingsView: View {
                 Text("macOS permissions remain authoritative for camera and microphone access.").font(.caption)
                     .foregroundStyle(.secondary)
             }.id("websites")
-            Section("\(store.profile.name) · app links") {
-                if (store.profile.externalAppLinks ?? [:]).isEmpty {
+            Section(store.profile.privateMode ? "app links · private session" : "app links · all profiles") {
+                if store.externalAppLinkPreferences.isEmpty {
                     Text("apps appear here when a website asks to open them.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(externalAppIdentities, id: \.self) { identity in
                     ExternalAppLinkSettingsRow(store: store, identity: identity)
                 }
-                Text("choices apply to each app from any website in this profile, on this Mac. reset an app to ask again.")
+                Button("add app…") { addExternalApp() }
+                Text(store.profile.privateMode
+                    ? "new choices last for this private session. app-wide blocks and ask settings still apply."
+                    : "changing an app here applies to all profiles on this Mac. website and app blocks or explicit ask settings take priority over automatic opening.")
                     .font(.caption).foregroundStyle(.secondary)
             }.id("external-app-links")
             Section("website interaction · all profiles") {
@@ -855,9 +859,29 @@ struct SettingsView: View {
                 || $0.localizedStandardContains(query)
         }
     }
+    private func addExternalApp() {
+        let profileID = store.selectedProfileID
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.prompt = "add app"
+        let completion: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let url = panel.url,
+                store.application.profiles.contains(where: { $0.id == profileID }) else { return }
+            let identity = ExternalAppLinkPreference.identity(for: url)
+            guard store.externalAppLinkPreference(identity: identity, profileID: profileID) == nil else { return }
+            let name = FileManager.default.displayName(atPath: url.path)
+            store.setExternalAppLinkPreference(
+                .init(name: name.hasSuffix(".app") ? String(name.dropLast(4)) : name,
+                    applicationPath: url.path, policy: .inherit), identity: identity, profileID: profileID)
+        }
+        if let window = NSApp.keyWindow { panel.beginSheetModal(for: window, completionHandler: completion) }
+        else { panel.begin(completionHandler: completion) }
+    }
     private var externalAppIdentities: [String] {
-        (store.profile.externalAppLinks ?? [:]).keys.sorted {
-            let apps = store.profile.externalAppLinks ?? [:]
+        store.externalAppLinkPreferences.keys.sorted {
+            let apps = store.externalAppLinkPreferences
             let left = apps[$0]?.name ?? $0
             let right = apps[$1]?.name ?? $1
             let order = left.localizedStandardCompare(right)
@@ -1006,13 +1030,23 @@ struct SettingsView: View {
     private var advanced: some View {
         Group {
             Section("performance") {
+                Picker("performance indicator", selection: optional(\.performanceIndicatorVisibility, fallback: .whenActive)) {
+                    ForEach(PerformanceIndicatorVisibility.allCases, id: \.self) { visibility in
+                        Text(visibility.title).tag(visibility)
+                    }
+                }.id("performance-indicator")
                 if store.application.resources.hasInternalBattery {
-                    Toggle("battery saver", isOn: optional(\.powerSaver, fallback: false)).id("power-saver")
+                    Toggle("power saver", isOn: Binding(
+                        get: { store.preferences.gameMode != true && resourceMonitor.saverEnabled },
+                        set: { optional(\.powerSaver, fallback: false).wrappedValue = $0 }))
+                        .disabled(store.preferences.gameMode == true || resourceMonitor.automaticSaverRequested).id("power-saver")
                     Picker("enable on battery below", selection: optional(\.powerSaverThreshold, fallback: 0)) {
                         Text("never").tag(0)
                         ForEach([10, 20, 30, 50], id: \.self) { Text("\($0)%").tag($0) }
                     }
-                    Text("reduces background activity and sleeps eligible idle tabs after five minutes. also follows macOS Low Power Mode. game mode takes priority.")
+                    Text(store.preferences.gameMode == true
+                        ? "off while game mode is on. your power saver choice resumes afterward."
+                        : "reduces background activity and sleeps eligible idle tabs after five minutes. also follows macOS Low Power Mode.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Toggle("game mode", isOn: optional(\.gameMode, fallback: false)).id("game-mode")
@@ -1288,6 +1322,7 @@ private struct SavedWebsiteSettingsRow: View {
                     "allow downloads",
                     isOn: Binding(
                         get: { settings.downloads != false }, set: { update(\.downloads, $0) }))
+                ExternalAppLinkSitePicker(selection: binding(\.externalAppLinks))
                 SiteControlPicker("camera", selection: binding(\.camera)) { permissionChoices }
                 SiteControlPicker("microphone", selection: binding(\.microphone)) { permissionChoices }
                 SiteControlPicker("location", selection: optionalPermission(\.location, fallback: "deny")) {
@@ -1362,7 +1397,7 @@ private struct SavedWebsiteSettingsRow: View {
             }
         }
         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-        .confirmationDialog("clear website data?", isPresented: $confirmClear, titleVisibility: .visible) {
+        .destructiveConfirmationDialog("clear website data?", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("clear data", role: .destructive) {
                 guard let url = URL(string: origin), let profileID = actionProfileID,
                     store.profiles.contains(where: { $0.id == profileID })
@@ -1377,7 +1412,7 @@ private struct SavedWebsiteSettingsRow: View {
         } message: {
             Text("this can sign you out of this site and its subdomains in \(actionProfileName). It cannot be undone.")
         }
-        .confirmationDialog("reset website overrides?", isPresented: $confirmReset, titleVisibility: .visible) {
+        .destructiveConfirmationDialog("reset website overrides?", isPresented: $confirmReset, titleVisibility: .visible) {
             Button("reset overrides", role: .destructive) {
                 guard actionProfileID == store.selectedProfileID else { return }
                 reset()
@@ -1400,6 +1435,9 @@ private struct SavedWebsiteSettingsRow: View {
             details.append("notifications " + notifications)
         }
         if settings.pointerLock == "deny" { details.append("pointer blocked") }
+        if let policy = settings.externalAppLinks, policy != .inherit {
+            details.append(policy == .block ? "app links blocked" : policy == .ask ? "app links ask" : "app links automatic")
+        }
         if !settings.javascript { details.append("javascript off") }
         if settings.zoom != 1 { details.append("\(Int((settings.zoom * 100).rounded()))% zoom") }
         if settings.savePasswords == false { details.append("password saving off") }

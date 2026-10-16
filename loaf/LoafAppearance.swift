@@ -5,7 +5,9 @@ import SwiftUI
 @MainActor final class LoafAppearance: ObservableObject {
     static let shared = LoafAppearance()
     @Published private(set) var systemScheme: ColorScheme
+    @Published private(set) var accentRevision = 0
     private var observation: NSKeyValueObservation?
+    private var colorObservation: NSObjectProtocol?
 
     init(application: NSApplication? = nil) {
         let application = application ?? .shared
@@ -17,7 +19,13 @@ import SwiftUI
                 if next != self.systemScheme { self.systemScheme = next }
             }
         }
+        colorObservation = NotificationCenter.default.addObserver(
+            forName: NSColor.systemColorsDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.accentRevision += 1 }
+        }
     }
+    deinit { if let colorObservation { NotificationCenter.default.removeObserver(colorObservation) } }
 
     func colorScheme(for preference: String, privateMode: Bool = false) -> ColorScheme {
         if privateMode || preference == "dark" { return .dark }

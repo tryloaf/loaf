@@ -610,7 +610,7 @@ struct SideChatPanel: View {
         .popover(item: $shownCapture) { capture in
             PageCapturePreview(capture: capture).padding(16).frame(width: 380)
         }
-        .confirmationDialog(
+        .destructiveConfirmationDialog(
             "delete saved chat?",
             isPresented: Binding(get: { deletingChat != nil }, set: { if !$0 { deletingChat = nil } }),
             titleVisibility: .visible

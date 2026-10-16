@@ -40,6 +40,8 @@ struct DownloadRecord: Codable {
     var transfer: URL?
     var bookmark: Data?
     var transferComplete = false
+    var clickOrigin: DownloadClickOrigin?
+    var announced = false
     @Published var name = "preparing download…"
     @Published var destination: URL?
     @Published var finished = false
@@ -137,6 +139,7 @@ struct DownloadRecord: Codable {
 
 @MainActor final class DownloadManager: NSObject, ObservableObject, WKDownloadDelegate {
     @Published var items: [DownloadItem] = []
+    let progress = DownloadProgressState()
     private var dockView: DownloadDockProgress?
     private var dockTimer: Timer?
     private var cacheTimer: Timer?
@@ -229,6 +232,7 @@ struct DownloadRecord: Codable {
     func add(_ download: WKDownload, owner: BrowserWindowState, profileID: UUID, source: WKWebView? = nil) {
         let item = DownloadItem(download, owner: owner, profileID: profileID)
         item.sourceWebView = source
+        item.clickOrigin = (source as? LoafWebView)?.browserTab?.downloadClickOrigin?.recent
         items.insert(item, at: 0)
         observe(item, download)
         updateDockProgress()
@@ -355,6 +359,7 @@ struct DownloadRecord: Codable {
         }
         if request.item.destination != nil, let transfer = request.item.transfer, request.item.bookmark != nil {
             request.completion(transfer)
+            announce(request.item)
             finishSheet(id, request: request)
             return
         }
@@ -422,6 +427,7 @@ struct DownloadRecord: Codable {
                 : folder.appendingPathComponent(request.item.id.uuidString)
             request.item.transfer = transfer
             request.completion(transfer)
+            announce(request.item)
         } else {
             request.item.error = "cancelled"
             request.completion(nil)
@@ -436,6 +442,12 @@ struct DownloadRecord: Codable {
         queues[id]?.removeFirst()
         persist()
         DispatchQueue.main.async { [weak self] in self?.presentNext(id) }
+    }
+    private func announce(_ item: DownloadItem) {
+        guard !item.announced, let owner = item.owner, owner.selectedProfileID == item.profileID else { return }
+        item.announced = true
+        owner.downloadFeedback.launch(from: item.clickOrigin, name: item.name, profileID: item.profileID, owner: owner)
+        item.clickOrigin = nil
     }
     func downloadDidFinish(_ download: WKDownload) {
         guard let item = items.first(where: { $0.download === download }) else { return }
@@ -471,6 +483,7 @@ struct DownloadRecord: Codable {
             item.error = nil
             item.transfer = nil
             item.refreshFileAvailability()
+            if item.owner?.selectedProfileID == item.profileID { item.owner?.downloadFeedback.completed() }
             if item.openWhenFinished { NSWorkspace.shared.open(destination) }
         } catch { item.error = "transfer complete, save failed: " + error.localizedDescription }
         persist()
@@ -654,9 +667,9 @@ struct DownloadRecord: Codable {
         persist()
     }
     private func updateDockProgress() {
-
+        let active = items.filter(\.active)
+        progress.update(active)
         guard let dock = NSApp?.dockTile else { return }
-        let active = items.filter { $0.download != nil && $0.error == nil }
         guard !active.isEmpty else {
             dockTimer?.invalidate()
             dockTimer = nil
@@ -671,10 +684,9 @@ struct DownloadRecord: Codable {
         let view = dockView ?? DownloadDockProgress(frame: NSRect(origin: .zero, size: dock.size))
         dockView = view
         dock.contentView = view
-        view.indeterminate = active.contains { ($0.download?.progress.totalUnitCount ?? -1) <= 0 }
-        let total = active.reduce(0.0) { $0 + Double(max(0, $1.download?.progress.totalUnitCount ?? 0)) }
-        let completed = active.reduce(0.0) { $0 + Double(max(0, $1.download?.progress.completedUnitCount ?? 0)) }
-        view.fraction = total > 0 ? completed / total : active.map(\.fraction).reduce(0, +) / Double(active.count)
+        let summary = DownloadProgressSummary(items: active)
+        view.indeterminate = summary.indeterminate
+        view.fraction = summary.fraction
         view.needsDisplay = true
         dock.badgeLabel = active.count > 1 ? String(active.count) : nil
         dock.display()

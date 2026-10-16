@@ -149,6 +149,7 @@ extension NSMenuItem {
         case find, location, sidebar, sideChat, summarize, reload, reloadFromOrigin, reader, zoomIn, zoomOut, actualSize
         case back, forward, history, reopenTab, reopenWindow, bookmark, favorites
         case nextTab, previousTab, pin, duplicate, downloads, previousProfile, nextProfile, editProfile, addProfile
+        case gameMode, powerSaver, extensions, tray
         case inspector, inlineInspector, detachedInspector, source, report, help
     }
     private let coordinator: WindowCoordinator
@@ -290,7 +291,14 @@ extension NSMenuItem {
             flags: [.control, .command], target: NSApp, to: edit)
 
         let view = appendMenu("View", to: main)
+        add("Game Mode", .gameMode, key: "g", flags: [.command, .option], to: view)
+            .image = Golzheim.image(LoafIcon.gameMode.rawValue, size: 16)
+        add("Power Saver", .powerSaver, to: view)
+            .image = Golzheim.image(LoafIcon.powerSaver.rawValue, size: 16)
+        view.addItem(.separator())
         add("Toggle Sidebar", .sidebar, key: "s", to: view)
+        add("Toggle Extensions", .extensions, key: "e", flags: [.command, .option], to: view)
+        add("Toggle Tray", .tray, key: "t", flags: [.command, .option], to: view)
         add("Toggle Side Chat", .sideChat, key: "l", flags: [.command, .shift], to: view)
         add("Summarize Page", .summarize, to: view)
         add("Reload", .reload, key: "r", to: view)
@@ -353,6 +361,7 @@ extension NSMenuItem {
             }.store(in: &observations)
         for publisher in [
             coordinator.application.objectWillChange.eraseToAnyPublisher(),
+            coordinator.application.resources.objectWillChange.eraseToAnyPublisher(),
             coordinator.objectWillChange.eraseToAnyPublisher(),
         ] {
             publisher.sink { [weak self] in self?.scheduleRefresh() }.store(in: &observations)
@@ -669,6 +678,19 @@ extension NSMenuItem {
         }
         guard !coordinator.application.onboardingVisible else { return false }
         switch command {
+        case .gameMode:
+            item.state = coordinator.application.preferences.gameMode == true ? .on : .off
+            return true
+        case .powerSaver:
+            let application = coordinator.application
+            item.isHidden = !application.resources.hasInternalBattery
+            item.state = application.preferences.gameMode != true && application.resources.saverEnabled ? .on : .off
+            let automatic = application.resources.automaticSaverRequested && application.preferences.gameMode != true
+            item.title = automatic ? "power saver (automatic)" : "power saver"
+            item.toolTip = application.preferences.gameMode == true ? "off while game mode is on."
+                : automatic ? "controlled by macOS Low Power Mode or your battery threshold." : nil
+            LowercaseMenus.normalize(item)
+            return application.resources.hasInternalBattery && application.preferences.gameMode != true && !automatic
         case .save: return store?.selectedTab?.url != nil && store?.selectedTab?.loading == false
         case .sideChat: return store?.canShowSideChat == true
         case .summarize: return store?.canSummarizePage == true
@@ -726,10 +748,18 @@ extension NSMenuItem {
             store?.findFocusID = UUID()
         case .location: coordinator.activateBrowser()?.openOmnibar()
         case .sidebar: store?.sidebarVisible.toggle()
+        case .extensions: store?.toggleExtensions()
+        case .tray: store?.toggleTray()
         case .sideChat: store?.toggleSideChat()
         case .summarize: store?.summarizePage()
         case .reload: store?.selectedTab?.reload()
         case .reloadFromOrigin: store?.selectedTab?.reloadFromOrigin()
+        case .gameMode:
+            coordinator.application.preferences.gameMode = coordinator.application.preferences.gameMode != true
+            coordinator.application.persistSoon()
+        case .powerSaver:
+            coordinator.application.preferences.powerSaver = coordinator.application.preferences.powerSaver != true
+            coordinator.application.persistSoon()
         case .reader: if let tab = store?.selectedTab { Task { await tab.toggleReader() } }
         case .zoomIn: if let tab = store?.selectedTab { store?.setPageZoom(tab.webView.pageZoom + 0.1) }
         case .zoomOut: if let tab = store?.selectedTab { store?.setPageZoom(tab.webView.pageZoom - 0.1) }

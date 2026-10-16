@@ -352,10 +352,24 @@ struct OmnibarTextField: NSViewRepresentable {
             editor.isAutomaticDashSubstitutionEnabled = false
             editor.isAutomaticSpellingCorrectionEnabled = false
             editor.isAutomaticLinkDetectionEnabled = false
+            editor.isAutomaticDataDetectionEnabled = false
             editor.isContinuousSpellCheckingEnabled = false
+            editor.isGrammarCheckingEnabled = false
             editor.smartInsertDeleteEnabled = false
             editor.isAutomaticTextCompletionEnabled = false
+            editor.inlinePredictionType = .no
+            editor.mathExpressionCompletionType = .no
+            clearTextDecorations(editor)
             updateOverflowFade()
+        }
+        func clearTextDecorations(_ editor: NSTextView) {
+            guard !editor.hasMarkedText() else { return }
+            let range = NSRange(location: 0, length: editor.string.utf16.count)
+            for key in [NSAttributedString.Key.underlineStyle, .underlineColor, .spellingState, .link] {
+                editor.textStorage?.removeAttribute(key, range: range)
+                editor.layoutManager?.removeTemporaryAttribute(key, forCharacterRange: range)
+                editor.typingAttributes.removeValue(forKey: key)
+            }
         }
     }
     final class Coordinator: NSObject, NSTextFieldDelegate {
@@ -442,6 +456,7 @@ struct OmnibarTextField: NSViewRepresentable {
                 parent.focusSnapshot == nil || parent.focusSnapshot?() != nil
             else { return }
             field.showSuggestion(nil)
+            if let editor = field.currentEditor() as? NSTextView { field.clearTextDecorations(editor) }
             parent.text = field.stringValue
             field.revealCaretAfterEditing()
             reportPresentation(nil)

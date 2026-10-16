@@ -106,7 +106,7 @@ struct ICloudSyncSettingsView: View {
             Text(
                 "your local profiles, tabs and settings and the iCloud copy are kept. the old cache is saved as a private backup on this Mac. turn sync on again to reconnect."
             )
-        }.confirmationDialog("remove loaf data from iCloud?", isPresented: $confirmRemoval, titleVisibility: .visible) {
+        }.destructiveConfirmationDialog("remove loaf data from iCloud?", isPresented: $confirmRemoval, titleVisibility: .visible) {
             Button("remove iCloud data", role: .destructive) { Task { await sync.removeCloudData() } }
             Button("cancel", role: .cancel) {}
         } message: {

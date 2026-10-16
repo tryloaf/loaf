@@ -1,6 +1,7 @@
 import SwiftUI
 
 nonisolated struct ProfileColor: Codable, Equatable, Sendable {
+    static let systemAccentIndex = 6
     var hue: Double
     var richness: Double = 0.5
     var red: Double?
@@ -149,6 +150,7 @@ struct ProfileColorPicker: View {
 }
 
 struct ProfileThemeControls: View {
+    @ObservedObject private var systemAppearance = LoafAppearance.shared
     @Binding var tint: Int
     @Binding var customTint: ProfileColor?
     @Binding var strength: Double
@@ -177,7 +179,7 @@ struct ProfileThemeControls: View {
         self.previewSettings = previewSettings
         self.demonstration = demonstration
     }
-    private let names = ["loaf", "amber", "blue", "rose", "mint", "violet"]
+    private let names = ["loaf", "amber", "blue", "rose", "mint", "violet", "system accent"]
     private var color: Color { customTint?.color ?? profileTint(tint) }
     private var colorHex: String {
         let rgb = (ProfileColor.picked(color) ?? ProfileColor(hue: 0)).rgb
@@ -209,7 +211,7 @@ struct ProfileThemeControls: View {
                     height: compact ? 130 : 208)
                 HStack(alignment: .center, spacing: 10) {
                     HStack(spacing: 8) {
-                        ForEach(0..<6) { index in
+                        ForEach(0..<names.count, id: \.self) { index in
                             Button {
                                 tint = index
                                 customTint = nil
@@ -261,6 +263,7 @@ struct ProfileThemeControls: View {
     }
     private func applyHex() {
         let value = hex.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "#", with: "")
+        if tint == ProfileColor.systemAccentIndex && customTint == nil && value.uppercased() == colorHex { return }
         guard value.count == 6, value.allSatisfy({ $0.isHexDigit }), let number = UInt32(value, radix: 16) else {
             invalidHex = true
             return

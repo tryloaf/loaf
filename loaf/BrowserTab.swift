@@ -14,12 +14,13 @@ struct MediaSource: Identifiable {
     var volume: Double
     var position: Double
     var duration: Double
+    var artworkURL: URL?
     var supportsAirPlay = false
     var pictureInPicture = false
     var firstSeen = Date()
     var updated = Date()
     func samePresentation(as other: MediaSource) -> Bool {
-        id == other.id && title == other.title && artist == other.artist && paused == other.paused
+        id == other.id && title == other.title && artist == other.artist && artworkURL == other.artworkURL && paused == other.paused
             && muted == other.muted && volume == other.volume && position == other.position
             && duration == other.duration && pictureInPicture == other.pictureInPicture
             && supportsAirPlay == other.supportsAirPlay
@@ -46,6 +47,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     private var authenticationNavigationURL: URL?
     private var activeNavigation: WKNavigation?
     var contextMenuWindowURL: URL?
+    var downloadClickOrigin: DownloadClickOrigin?
     var externalAppLinks = ExternalAppLinks()
     var lastActivated = Date()
     var sleepState: Any?
@@ -183,6 +185,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     private var observations: [NSKeyValueObservation] = []
     private var chromeColorObservation: ChromeColorObservation?
     var closeRequested = false
+    private var reloadRequested = false
     var loaded = false
     var defaultUserAgent: String?
     private var appliedRules: [WKContentRuleList] = []
@@ -405,8 +408,9 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             load(url)
         }
     }
-    func load(_ url: URL) {
+    func load(_ url: URL, reloading: Bool = false) {
         guard !isDisposed, ["https", "http", "webkit-extension"].contains(url.scheme) else { return }
+        reloadRequested = reloading
         approvedOpenerRestore = nil
         confirmedOpenerCloseNavigationID = nil
         faviconRefreshNavigation = nil
@@ -445,17 +449,20 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     var canReload: Bool { !isDisposed && page == .web && url != nil }
     func reload() {
         guard canReload else { return }
+        reloadRequested = true
         if let requestedURL {
-            load(requestedURL)
+            load(requestedURL, reloading: true)
         } else if !loaded || navigationError != nil, let url {
-            load(url)
+            load(url, reloading: true)
         } else {
             existingWebView?.reload()
         }
     }
 
     func reloadFromOrigin() {
-        guard canReload, let navigation = webView.reloadFromOrigin() else { return }
+        guard canReload else { return }
+        reloadRequested = true
+        guard let navigation = webView.reloadFromOrigin() else { reloadRequested = false; return }
         activeNavigation = navigation
         faviconRefreshNavigation = navigation
     }
@@ -657,6 +664,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             return
         }
         if action.targetFrame?.isMainFrame == true {
+            if action.navigationType == .reload { reloadRequested = true }
+            else if action.navigationType != .other { reloadRequested = false }
             if !restoringOpenerHistory, action.navigationType != .backForward,
                 action.navigationType != .reload, target != webView.url, openerReturnTrail != nil {
                 openerReturnTrail = nil
@@ -698,7 +707,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             if (300..<400).contains(http.statusCode) || [204, 205].contains(http.statusCode) { return .allow }
             let disposition = http.value(forHTTPHeaderField: "Content-Disposition")?
                 .split(separator: ";", maxSplits: 1).first?.trimmingCharacters(in: .whitespaces).lowercased()
-            if disposition == "attachment" { return mainFrame ? .download : .cancel }
+            if disposition == "attachment" { return .download }
             if http.value(forHTTPHeaderField: "Content-Type") == nil { return .allow }
         }
         guard let mime = response.mimeType, !mime.isEmpty else { return .allow }
@@ -728,6 +737,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         guard existingWebView === webView, page == .web else { return }
         if requestedURL != nil, let activeNavigation, let navigation, activeNavigation !== navigation { return }
+        reloadRequested = false
         if faviconRefreshNavigation !== navigation { faviconRefreshNavigation = nil }
         webViewHost?.invalidatePreparedResizeSnapshot()
         activeNavigation = navigation
@@ -804,6 +814,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         guard existingWebView === webView, page == .web else { return }
         if let activeNavigation, let navigation, activeNavigation !== navigation { return }
+        reloadRequested = false
         authenticationNavigationURL = nil
         handle(error)
     }
@@ -855,7 +866,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         password.placeholderString = "Password"
         container.addArrangedSubview(username)
         container.addArrangedSubview(password)
-        container.frame = NSRect(x: 0, y: 0, width: 280, height: 60)
+        container.frame = NSRect(x: 0, y: 0, width: AlertLayout.accessoryWidth, height: 60)
         alert.accessoryView = container
         let token = navigationID
         presentDialog(alert) { [weak self] result in
@@ -908,12 +919,14 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             if expected == action.request.url, let coordinator = store.application.coordinator {
                 let window = coordinator.newWindow(profileID: profileID, configuration: configuration)
                 guard let tab = window.selectedTab else { return nil }
+                tab.downloadClickOrigin = downloadClickOrigin
                 window.joinBrowsingTrail(tab, source: self)
                 tab.loaded = true
                 return tab.webView
             }
         }
         let tab = store.newTab(profileID: profileID, showOmnibar: false, configuration: configuration)
+        tab.downloadClickOrigin = downloadClickOrigin
         store.joinBrowsingTrail(tab, source: self)
         tab.loaded = true
         return tab.webView
@@ -947,15 +960,15 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         let dialog = SiteJavaScriptDialog(
             kind: .confirm, message: "changes on this page may not be saved.", frame: frame,
             privateMode: store?.profileFor(profileID).privateMode == true)
-        dialog.alert.messageText = closeRequested ? "close this tab?" : "leave this page?"
-        dialog.alert.buttons[0].title = closeRequested ? "close tab" : "leave page"
+        dialog.alert.messageText = closeRequested ? "close this tab?" : reloadRequested ? "reload this page?" : "leave this page?"
+        dialog.alert.buttons[0].title = closeRequested ? "close tab" : reloadRequested ? "reload" : "leave page"
         dialog.alert.buttons[1].title = "keep page open"
-        dialog.alert.buttons[0].keyEquivalent = ""
-        dialog.alert.buttons[1].keyEquivalent = "\r"
-        dialog.alert.window.defaultButtonCell = dialog.alert.buttons[1].cell as? NSButtonCell
+        dialog.alert.buttons[1].keyEquivalent = "\u{1b}"
+        DestructiveActionStyle.configure(dialog.alert, destructive: dialog.alert.buttons[0])
         let token = navigationID
         presentSiteDialog(dialog, from: webView) { [weak self] response in
             let allow = response == .alertFirstButtonReturn
+            self?.reloadRequested = false
             if allow, let self, self.navigationID == token, self.closeRequested, self.pendingOpenerReturn != nil {
                 self.confirmedOpenerCloseNavigationID = token
             }
@@ -1179,6 +1192,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                     paused: item["paused"] as? Bool ?? true, muted: item["muted"] as? Bool ?? false,
                     volume: min(1, max(0, number("volume"))), position: max(0, number("position")),
                     duration: max(0, number("duration")))
+                source.artworkURL = MediaArtwork.url(item["artwork"] as? String)
                 source.supportsAirPlay = item["airplay"] as? Bool ?? false
                 source.pictureInPicture = item["pip"] as? Bool ?? false
                 source.firstSeen = media.first { $0.id == sourceID }?.firstSeen ?? Date()

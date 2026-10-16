@@ -44,8 +44,11 @@ enum SettingsSearch {
             id: "browsing-time", section: "advanced", title: "local browsing time",
             keywords: "tracking screen time private consent statistics widgets"),
         .init(
-            id: "power-saver", section: "advanced", title: "battery saver",
-            keywords: "battery low power energy percentage background"),
+            id: "power-saver", section: "advanced", title: "power saver",
+            keywords: "battery low power energy percentage background menu"),
+        .init(
+            id: "performance-indicator", section: "advanced", title: "performance indicator",
+            keywords: "game mode power saver battery icon traffic lights header show visibility when active always never hide"),
         .init(
             id: "game-mode", section: "advanced", title: "game mode",
             keywords: "gaming performance fps frame rate latency power"),
@@ -133,10 +136,10 @@ enum SettingsSearch {
             keywords: "name emoji icon tint color edit delete remove container private"),
         .init(
             id: "websites", section: "websites", title: "saved website decisions",
-            keywords: "site permissions camera microphone javascript autoplay zoom"),
+            keywords: "site permissions camera microphone javascript autoplay zoom open apps automatic ask deny block"),
         .init(
             id: "external-app-links", section: "websites", title: "app links",
-            keywords: "external local applications always open ask never block reset defaults handlers"),
+            keywords: "external local applications app-wide all profiles always automatic open ask never block reset defaults handlers"),
         .init(
             id: "pointerCapture", section: "websites", title: "allow websites to capture the pointer",
             keywords: "mouse cursor lock pointer capture games escape"),

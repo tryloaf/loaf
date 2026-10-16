@@ -216,7 +216,7 @@ struct ProfileEditor: View {
                     }
                 }
             }
-            .confirmationDialog(
+            .destructiveConfirmationDialog(
                 "delete \(store.profileFor(profileID).name)?", isPresented: $confirmDeletion, titleVisibility: .visible
             ) {
                 Button("delete profile", role: .destructive) {

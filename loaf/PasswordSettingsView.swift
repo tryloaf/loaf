@@ -69,7 +69,7 @@ struct PasswordSettingsView: View {
         .sheet(isPresented: Binding(get: { vault.review != nil }, set: { if !$0 { vault.review = nil } })) {
             PasswordImportView(vault: vault)
         }
-        .confirmationDialog(
+        .destructiveConfirmationDialog(
             "delete this saved login?",
             isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } }),
             titleVisibility: .visible
@@ -393,7 +393,7 @@ private struct PasswordImportView: View {
                 }
             }
         }.padding(26).frame(width: 490)
-            .confirmationDialog("replace saved passwords?", isPresented: $confirmReplacement, titleVisibility: .visible)
+            .destructiveConfirmationDialog("replace saved passwords?", isPresented: $confirmReplacement, titleVisibility: .visible)
         {
             Button("replace and import", role: .destructive) { vault.commitImport(replaceExisting: true) }
             Button("cancel", role: .cancel) {}

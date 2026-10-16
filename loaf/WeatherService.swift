@@ -107,6 +107,7 @@ nonisolated struct WeatherSnapshot: Codable {
             options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
     }
     func fetch(city query: String, fahrenheit: Bool, preferredProvider: String = "automatic") async {
+        if MarketingLaunch.isStudio { MarketingLaunch.prepareWeather(self); return }
         let token = UUID()
         requestID = token
         let query = Self.normalizedCity(query)
@@ -132,6 +133,7 @@ nonisolated struct WeatherSnapshot: Codable {
         }
     }
     func fetch(location: CLLocation, fahrenheit: Bool, preferredProvider: String = "automatic") async {
+        if MarketingLaunch.isStudio { MarketingLaunch.prepareWeather(self); return }
         let token = UUID()
         requestID = token
         let coordinate = location.coordinate

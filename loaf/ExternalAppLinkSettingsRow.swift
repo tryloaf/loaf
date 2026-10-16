@@ -4,7 +4,7 @@ struct ExternalAppLinkSettingsRow: View {
     @ObservedObject var store: BrowserStore
     let identity: String
 
-    private var preference: ExternalAppLinkPreference? { store.profile.externalAppLinks?[identity] }
+    private var preference: ExternalAppLinkPreference? { store.externalAppLinkPreference(identity: identity, profileID: store.selectedProfileID) }
 
     var body: some View {
         if let preference {
@@ -19,9 +19,10 @@ struct ExternalAppLinkSettingsRow: View {
                     selection: Binding(
                         get: { self.preference?.policy ?? .ask },
                         set: { policy in
-                            store.updateCurrent { profile in
-                                profile.externalAppLinks?[identity]?.policy = policy
-                            }
+                            guard var preference = self.preference else { return }
+                            preference.policy = policy
+                            store.setExternalAppLinkPreference(
+                                preference, identity: identity, profileID: store.selectedProfileID)
                         })
                 ) {
                     ForEach(ExternalAppLinkPolicy.allCases, id: \.self) { policy in
@@ -30,12 +31,24 @@ struct ExternalAppLinkSettingsRow: View {
                 }
                 .labelsHidden().pickerStyle(.menu).fixedSize()
                 Button("reset") {
-                    store.updateCurrent { $0.externalAppLinks?.removeValue(forKey: identity) }
+                    store.resetExternalAppLinkPreference(identity: identity)
                 }
                 .controlSize(.small)
                 .help("forget this app’s link preference and ask next time")
                 .accessibilityLabel("reset \(preference.name) link preference")
             }
         }
+    }
+}
+
+struct ExternalAppLinkSitePicker: View {
+    let selection: Binding<ExternalAppLinkPolicy?>
+    var body: some View {
+        SiteControlPicker("open apps", selection: selection) {
+            Text("follow app settings").tag(ExternalAppLinkPolicy?.none)
+            Text("automatically").tag(ExternalAppLinkPolicy?.some(.allow))
+            Text("ask every time").tag(ExternalAppLinkPolicy?.some(.ask))
+            Text("never").tag(ExternalAppLinkPolicy?.some(.block))
+        }.help("a block or an explicit ask setting for either this website or the app takes priority.")
     }
 }

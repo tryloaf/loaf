@@ -132,7 +132,7 @@ struct HistoryView: View {
             presentation.replaceCookies([], profile: store.selectedProfileID)
             await refreshCookies()
         }
-        .confirmationDialog(
+        .destructiveConfirmationDialog(
             "delete \(deletionIDs.count) visits?", isPresented: $confirmDeletion, titleVisibility: .visible
         ) {
             Button("delete visits", role: .destructive) {
@@ -319,7 +319,7 @@ struct FavoritesView: View {
                 }.frame(maxWidth: 600).padding(28).frame(maxWidth: .infinity)
             }
         }.onChange(of: store.selectedProfileID) { _, _ in folderID = nil }
-            .confirmationDialog(
+            .destructiveConfirmationDialog(
                 "delete bookmark?", isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } }),
                 titleVisibility: .visible
             ) {

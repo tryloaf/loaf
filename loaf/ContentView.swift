@@ -15,6 +15,7 @@ struct BrowserToolbar: View {
             sample: pageChrome ? tab?.chromeColor : nil, privateMode: store.profile.privateMode)
         HStack(spacing: 4) {
             Spacer().frame(width: 76)
+            PerformanceIndicator(store: store)
             IconButton(icon: .sidebar, label: "show sidebar") { store.sidebarVisible = true }
             HStack(spacing: 0) {
                 NavigationHistoryButton(store: store, backward: true).frame(width: 26, height: 26)
@@ -314,6 +315,10 @@ struct ContentView: View {
                             profileTint(store.profile), strength: store.profile.personalization?.tintStrength ?? 0.06,
                             dark: scheme == .dark))
             }.background(WindowChrome(store: store))
+            .overlay {
+                DownloadFlightOverlay(feedback: store.downloadFeedback)
+                    .allowsHitTesting(false).accessibilityHidden(true)
+            }
             .overlay(alignment: .bottomTrailing) {
                 if !store.sidebarPresented && !store.hoveredSidebar {
                     SoftwareUpdateReminder().frame(maxWidth: 280).padding(store.pageEdgeInset + 12)

@@ -21,7 +21,7 @@ extension BrowserWindowState {
         alert.messageText = id == nil ? "new bookmarks folder" : "rename folder"
         let field = NSTextField(string: profile.bookmarkFolders?.first { $0.id == id }?.name ?? "")
         field.placeholderString = "folder name"
-        field.frame.size = CGSize(width: 260, height: 24)
+        field.frame.size = CGSize(width: AlertLayout.accessoryWidth, height: 24)
         alert.accessoryView = field
         alert.addButton(withTitle: "save")
         alert.addButton(withTitle: "cancel")

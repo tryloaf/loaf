@@ -105,7 +105,7 @@ struct ClearingView: View {
                 }
             }
         }.interactiveDismissDisabled(clearing && onCancel != nil)
-            .confirmationDialog("clear data in \(scopeName)?", isPresented: $confirm, titleVisibility: .visible) {
+            .destructiveConfirmationDialog("clear data in \(scopeName)?", isPresented: $confirm, titleVisibility: .visible) {
                 Button("clear data", role: .destructive) {
                     guard let scope, store.application.profiles.contains(where: { $0.id == scope }),
                         !store.application.busyProfileIDs.contains(scope)
@@ -228,7 +228,7 @@ struct CookieManagerView: View {
                 }.frame(maxWidth: 600).padding(.horizontal, 28).padding(.bottom, 24).frame(maxWidth: .infinity)
             }.scrollIndicators(.hidden)
         }.background(LibraryDeleteKey(enabled: !deleting && !selectedCookies.isEmpty, delete: deleteSelectedCookies))
-            .confirmationDialog(
+            .destructiveConfirmationDialog(
                 "delete \(deletionCookies.count) cookies?", isPresented: $confirmDeletion, titleVisibility: .visible
             ) {
                 Button("delete cookies", role: .destructive) { performDeletion() }
@@ -372,6 +372,9 @@ struct SiteSettingsView: View {
                                     get: { session.settings.downloads != false },
                                     set: { session.set(\.downloads, $0) })
                             ).help("applies to this exact site. new sites ask first when download prompts are enabled.")
+                            ExternalAppLinkSitePicker(selection: Binding(
+                                get: { session.settings.externalAppLinks },
+                                set: { session.set(\.externalAppLinks, $0) }))
                             SiteControlPicker("camera", selection: binding(\.camera)) { permissionChoices }
                             SiteControlPicker("microphone", selection: binding(\.microphone)) { permissionChoices }
                             SiteControlPicker(
@@ -443,7 +446,7 @@ struct SiteSettingsView: View {
                         }
                     }.padding(.horizontal, 12).padding(.top, 4).padding(.bottom, 12)
                 }.scrollIndicators(.hidden).font(.system(size: 12)).controlSize(.small)
-                    .confirmationDialog("clear website data?", isPresented: $confirm, titleVisibility: .visible) {
+                    .destructiveConfirmationDialog("clear website data?", isPresented: $confirm, titleVisibility: .visible) {
                         Button("clear data", role: .destructive) {
                             guard session.valid else { return }
                             clearing = true
@@ -459,7 +462,7 @@ struct SiteSettingsView: View {
                             "this can sign you out of \(PublicSuffixList.shared.registrableDomain(host)) and its subdomains in \(session.profile?.name ?? "this profile")."
                         )
                     }
-                    .confirmationDialog(
+                    .destructiveConfirmationDialog(
                         "reset website overrides?", isPresented: $confirmReset, titleVisibility: .visible
                     ) {
                         Button("reset overrides", role: .destructive) { if session.valid { session.reset() } }

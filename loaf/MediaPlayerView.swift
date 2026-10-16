@@ -6,6 +6,7 @@ struct MediaMiniPlayer: View {
     let source: MediaSource
     @ObservedObject var store: BrowserStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var artwork: NSImage?
     @State private var expanded = false
     @State private var hovered = false
     @State private var seekPreview: Double?
@@ -35,21 +36,30 @@ struct MediaMiniPlayer: View {
                     if hovered { tab.dismissedMedia.insert(source.id) } else { store.select(tab) }
                 } label: {
                     ZStack {
-                        SiteIcon(tab: tab, size: 14).clipShape(RoundedRectangle(cornerRadius: 3)).opacity(
-                            hovered ? 0 : 1)
+                        Group {
+                            if let artwork {
+                                Image(nsImage: artwork).resizable().scaledToFill()
+                            } else {
+                                SiteIcon(tab: tab, size: expanded ? 24 : 14)
+                            }
+                        }.frame(width: expanded ? 32 : 14, height: expanded ? 32 : 14)
+                            .clipShape(RoundedRectangle(cornerRadius: expanded ? 5 : 3)).opacity(hovered ? 0 : 1)
                         GolzheimIcon(icon: .close, size: 12).opacity(hovered ? 1 : 0)
-                    }.frame(width: 18, height: 18).contentShape(Rectangle())
+                    }.frame(width: expanded ? 32 : 18, height: expanded ? 32 : 18).contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityLabel(hovered ? "close miniplayer" : "open " + source.title)
                     .accessibilityAction(named: Text("close miniplayer")) { tab.dismissedMedia.insert(source.id) }
                 Button {
                     store.select(tab)
                 } label: {
-                    HStack(spacing: 6) {
+                    VStack(alignment: .leading, spacing: 3) {
                         MarqueeTitle(
                             text: source.title, active: store.nativeWindow?.isKeyWindow == true && !source.paused,
                             trailingInset: !expanded && showsCompactPlayback ? 26 : 0
                         )
                         .frame(height: 18).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                        if expanded {
+                            FadingTitle(text: metadata, fontSize: 10).foregroundStyle(.secondary).frame(height: 10)
+                        }
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain).help(source.title).accessibilityLabel("open " + source.title)
                     .overlay(alignment: .trailing) {
@@ -70,10 +80,9 @@ struct MediaMiniPlayer: View {
                     toggleExpanded()
                     LoafHaptics.perform(enabled: store.preferences.haptics != false)
                 }
-            }.frame(height: 22)
+            }.frame(height: expanded ? 34 : 22)
             if expanded {
                 VStack(spacing: 4) {
-                    FadingTitle(text: metadata, fontSize: 10).foregroundStyle(.secondary).frame(height: 10)
                     if hasDuration {
                         VStack(spacing: 0) {
                             seekBar
@@ -123,6 +132,13 @@ struct MediaMiniPlayer: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.06)))
         .shadow(color: .black.opacity(0.04), radius: 3, y: 1)
+        .task(id: MediaArtwork.Identity(url: source.artworkURL, title: source.title, artist: source.artist)) {
+            artwork = nil
+            guard let url = source.artworkURL else { return }
+            let image = await MediaArtwork.image(for: url)
+            guard !Task.isCancelled else { return }
+            artwork = image
+        }
         .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: volumeOpen)
         .onHover { inside in
             hovered = inside

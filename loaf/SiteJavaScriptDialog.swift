@@ -1,6 +1,10 @@
 import AppKit
 import WebKit
 
+nonisolated enum AlertLayout {
+    static let accessoryWidth: CGFloat = 228
+}
+
 @MainActor final class SiteJavaScriptDialog {
     enum Kind { case alert, confirm, prompt }
     let alert = NSAlert()
@@ -42,6 +46,9 @@ import WebKit
         source.textColor = .secondaryLabelColor
         source.isSelectable = true
         source.setAccessibilityLabel("requesting website: " + origin)
+        let fieldWidth = AlertLayout.accessoryWidth - 12
+        source.preferredMaxLayoutWidth = fieldWidth
+        source.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
         content.addArrangedSubview(source)
         if let field {
             field.placeholderString = "your response"
@@ -49,11 +56,14 @@ import WebKit
             field.bezelStyle = .roundedBezel
             field.setAccessibilityLabel("your response to " + site)
             content.addArrangedSubview(field)
-            field.widthAnchor.constraint(equalToConstant: 284).isActive = true
+            field.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
             alert.window.initialFirstResponder = field
         }
-        content.frame = NSRect(x: 0, y: 0, width: 296, height: field == nil ? 34 : 68)
-        source.preferredMaxLayoutWidth = 284
+        let sourceHeight = (source.stringValue as NSString).boundingRect(
+            with: NSSize(width: fieldWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: source.font!]).height
+        content.frame = NSRect(x: 0, y: 0, width: AlertLayout.accessoryWidth,
+            height: max(34, ceil(sourceHeight) + 4) + (field == nil ? 0 : 34))
         alert.accessoryView = content
         alert.window.title = "website prompt"
         if privateMode {

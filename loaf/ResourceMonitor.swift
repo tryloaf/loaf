@@ -79,6 +79,11 @@ nonisolated struct BrowsingTimeRecord: Codable {
         systemLowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
         applyPowerPolicy()
     }
+    var automaticSaverRequested: Bool {
+        let threshold = application?.preferences.powerSaverThreshold ?? 0
+        return hasInternalBattery && (systemLowPower
+            || (!charging && threshold > 0 && batteryPercent.map { $0 <= threshold } == true))
+    }
     func applyPowerPolicy() {
         guard let application else { return }
         let policy = BrowsingPowerPolicy(
@@ -169,19 +174,29 @@ nonisolated struct BrowsingTimeRecord: Codable {
 
 struct BatteryWidget: View {
     @ObservedObject var monitor: ResourceMonitor
+    var showsHeader = true
+    private var percentage: Int? { MarketingLaunch.isStudio ? 100 : monitor.batteryPercent }
+    private var charging: Bool { MarketingLaunch.isStudio ? false : monitor.charging }
+    private var saving: Bool { MarketingLaunch.isStudio ? false : monitor.saverEnabled }
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("battery", systemImage: monitor.charging ? "battery.100percent.bolt" : "battery.75percent").font(
-                .system(size: 13))
-            Text(monitor.batteryPercent.map { "\($0)%" } ?? "plugged in").font(.system(size: 32, weight: .light))
-                .monospacedDigit()
+        StartWidgetSection(centered: true) {
+            if showsHeader {
+                Label(
+                    "battery",
+                    systemImage: charging ? "battery.100percent.bolt" : percentage == 100 ? "battery.100percent" : "battery.75percent"
+                ).font(.system(size: 13))
+            }
+        } content: {
+            Text(percentage.map { "\($0)%" } ?? "plugged in").font(.system(size: 32, weight: .light))
+                .monospacedDigit().lineLimit(1).minimumScaleFactor(0.1)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Text(
-                monitor.saverEnabled
+                saving
                     ? "battery saver is on"
-                    : monitor.charging
-                        ? "connected to power" : monitor.batteryPercent == nil ? "no battery in this Mac" : "on battery"
+                    : charging
+                        ? "connected to power" : percentage == nil ? "no battery in this Mac" : "on battery"
             ).font(.system(size: 11)).foregroundStyle(.secondary)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
     }
 }
 

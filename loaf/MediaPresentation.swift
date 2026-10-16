@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import ImageIO
 import SwiftUI
 
 @MainActor final class SidebarMediaCollection: ObservableObject {
@@ -155,5 +156,46 @@ struct MarqueeTitle: View {
                     trailingInset: trailingInset)
             }.onChange(of: active) { _, _ in started = Date() }.onChange(of: text) { _, _ in started = Date() }
         }.accessibilityLabel(text)
+    }
+}
+
+
+
+@MainActor enum MediaArtwork {
+    nonisolated static func url(_ value: String?) -> URL? {
+        guard let value, value.utf8.count <= 4096, let url = URL(string: value),
+            url.scheme == "https", let host = url.host, !host.isEmpty,
+            url.user == nil, url.password == nil
+        else { return nil }
+        return url
+    }
+    struct Identity: Hashable {
+        let url: URL?
+        let title: String
+        let artist: String
+    }
+    static func image(for url: URL) async -> NSImage? {
+        guard Self.url(url.absoluteString) != nil,
+            let data = try? await AssetRequest.data(url, limit: 1_000_000), !Task.isCancelled
+        else { return nil }
+        let prepared = await Task.detached(priority: .utility) { decode(data) }.value
+        guard !Task.isCancelled, let prepared else { return nil }
+        return NSImage(cgImage: prepared.image, size: NSSize(width: prepared.image.width, height: prepared.image.height))
+    }
+    nonisolated static func decode(_ data: Data) -> PreparedFavicon? {
+        guard !data.isEmpty, data.count <= 1_000_000,
+            let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let width = properties[kCGImagePropertyPixelWidth] as? Int,
+            let height = properties[kCGImagePropertyPixelHeight] as? Int,
+            width > 0, height > 0, width <= 16_384, height <= 16_384,
+            let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 128,
+                kCGImageSourceShouldCacheImmediately: true,
+            ] as CFDictionary)
+        else { return nil }
+        return PreparedFavicon(image: image)
     }
 }

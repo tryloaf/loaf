@@ -177,6 +177,7 @@ struct NavigationHistoryButton: NSViewRepresentable {
         view.toolTip = backward ? "back (⌘[) · hold for history" : "forward (⌘]) · hold for history"
         view.setAccessibilityLabel(backward ? "back" : "forward")
         view.setAccessibilityHelp("Hold or right-click to choose a page from this tab's history.")
+        view.refreshHover()
     }
     final class HistoryButton: NSButton {
         private final class Destination {
@@ -188,7 +189,7 @@ struct NavigationHistoryButton: NSViewRepresentable {
             override func hitTest(_ point: NSPoint) -> NSView? { nil }
         }
         let glyph = GlyphView()
-        private var hovered = false
+        private(set) var hovered = false
         private var hoverTracking: NSTrackingArea?
         weak var store: BrowserStore?
         var backward = true
@@ -215,11 +216,28 @@ struct NavigationHistoryButton: NSViewRepresentable {
             if let hoverTracking { removeTrackingArea(hoverTracking) }
             let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self)
             addTrackingArea(area); hoverTracking = area
+            refreshHover()
+        }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            refreshHover()
+        }
+        func refreshHover() {
+            let inside: Bool
+            if let window, NSApp.isActive, window.isVisible, !isHiddenOrHasHiddenAncestor {
+                inside = visibleRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+            } else {
+                inside = false
+            }
+            guard hovered != inside else { return }
+            hovered = inside
+            needsDisplay = true
         }
         override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
         override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
         override func draw(_ dirtyRect: NSRect) {
 
+            refreshHover()
             if hovered && isEnabled {
                 NSColor.labelColor.withAlphaComponent(0.055).setFill()
                 NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
@@ -438,6 +456,11 @@ nonisolated enum PageNavigationScrollEligibility {
             let tab = view.browserTab, !tab.isDisposed, tab.store?.selectedTab === tab,
             view.fullscreenState == .notInFullscreen, !tab.pointerCapturePosition.captured
         else { return false }
+        if view.magnification > 1.0001 {
+            finish()
+            gesture.reset()
+            return false
+        }
         if openedHistory || historyPicker?.isShown == true {
             guard let historyPicker, historyPicker.isShown else {
                 if event.phase.contains(.ended) || event.phase.contains(.cancelled) { finish() }
@@ -472,7 +495,8 @@ nonisolated enum PageNavigationScrollEligibility {
             let point = view.convert(event.locationInWindow, from: nil)
             let y = view.isFlipped ? point.y : view.bounds.height - point.y
             view.callAsyncJavaScript(PageNavigationScrollEligibility.script,
-                arguments: ["x": point.x, "y": y], in: nil, in: .defaultClient) { [weak self] result in
+                arguments: ["x": point.x / view.pageZoom, "y": y / view.pageZoom], in: nil, in: .defaultClient
+            ) { [weak self] result in
                 guard let self, self.token == current else { return }
                 if case .success(let scrollable) = result { self.mayNavigate = scrollable as? Bool == false }
             }

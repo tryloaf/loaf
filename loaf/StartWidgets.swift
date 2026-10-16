@@ -170,7 +170,8 @@ struct StartWidgetLayout {
     let columns: Int
     let columnWidth: CGFloat
     let height: CGFloat
-    private let firstRowReduction: CGFloat
+    private let rowOrigins: [CGFloat]
+    let positions: [String: StartWidgetPosition]
     var gridColumns: Int { columns * (columnWidth >= 16 ? 2 : 1) }
     var gridStride: CGSize {
         CGSize(
@@ -178,170 +179,92 @@ struct StartWidgetLayout {
             height: max(176, StartWidgetSize.squareSide(columnWidth: columnWidth)) + 16)
     }
     func rowOrigin(_ row: Int) -> CGFloat {
-        CGFloat(row) * gridStride.height - (row > 0 ? firstRowReduction : 0)
+        let row = max(0, row)
+        if row < rowOrigins.count { return rowOrigins[row] }
+        return (rowOrigins.last ?? 0) + CGFloat(row - max(0, rowOrigins.count - 1)) * gridStride.height
     }
+    var rowCount: Int { max(0, rowOrigins.count - 1) }
+    func rowHeight(_ row: Int) -> CGFloat { max(0, rowOrigin(row + 1) - rowOrigin(row) - 16) }
     func position(at point: CGPoint, size: StartWidgetSize) -> StartWidgetPosition {
         let span = size == .square ? 1 : min(columns, size.columns) * (columnWidth >= 16 ? 2 : 1)
+        let y = point.y.isFinite ? max(0, point.y) : 0
+
+        let row = (0...128).last { rowOrigin($0) <= y + 0.5 } ?? 0
         return StartWidgetPosition(
             column: Int(min(CGFloat(gridColumns - span), max(0, (point.x.isFinite ? point.x : 0) / gridStride.width))),
-            row: Int(
-                min(
-                    128,
-                    max(
-                        0,
-                        ((point.y.isFinite ? point.y : 0) + (point.y >= 72 ? firstRowReduction : 0)) / gridStride.height
-                    ))))
-    }
-    var positions: [String: StartWidgetPosition] {
-        Dictionary(
-            uniqueKeysWithValues: placements.map { placement in
-                let size: StartWidgetSize =
-                    placement.frame.width < columnWidth
-                    ? .square : placement.frame.width > columnWidth + 0.5 ? .wide : .small
-                return (
-                    placement.id,
-                    position(
-                        at: CGPoint(
-                            x: placement.frame.minX + gridStride.width / 2,
-                            y: placement.frame.minY + min(placement.frame.height / 2, gridStride.height / 2)),
-                        size: size)
-                )
-            })
+            row: row)
     }
     init(
         widgets: [String], sizes: [String: StartWidgetSize], positions: [String: StartWidgetPosition] = [:],
         width: CGFloat
     ) {
-
-        var sizes = sizes
-        sizes["search"] = .banner
         let width = width.isFinite ? max(0, width) : 0
         let columns = width >= 560 ? 2 : 1
         let columnWidth = max(0, (width - CGFloat(columns - 1) * 16) / CGFloat(columns))
-        let compactSearchRow =
-            widgets.contains("search") && sizes["search"] == .banner
-            && (positions["search"]?.row == 0 || (positions.isEmpty && widgets.first == "search"))
-        let searchRowReduction = max(176, StartWidgetSize.squareSide(columnWidth: columnWidth)) + 16 - 72
-        if !positions.isEmpty {
-            let subdivisions = columnWidth >= 16 ? 2 : 1
-            let gridColumns = columns * subdivisions
-            let side = StartWidgetSize.squareSide(columnWidth: columnWidth)
-            let rowStride = max(176, side) + 16
-            var seen = Set<String>()
-            var occupied = Set<Int>()
-            var placed: [String: Placement] = [:]
-            let ids = widgets.filter { StartWidgetKind(rawValue: $0) != nil && seen.insert($0).inserted }
-            let ordered = ids.enumerated().sorted {
-                let lhs = positions[$0.element]
-                let rhs = positions[$1.element]
-                if (lhs != nil) != (rhs != nil) { return lhs != nil }
-                if lhs?.priority != rhs?.priority { return (lhs?.priority ?? 0) > (rhs?.priority ?? 0) }
-                return $0.offset < $1.offset
-            }.map(\.element)
-            for id in ordered {
-                let size = sizes[id] ?? .small
-                let span = size == .square ? 1 : min(columns, size.columns) * subdivisions
-                let height = size.height(columnWidth: columnWidth)
-                let rows = max(1, Int(ceil((height + 16) / rowStride)))
-                var column = min(gridColumns - span, max(0, positions[id]?.column ?? 0))
-                var row = min(128, max(0, positions[id]?.row ?? 0))
-                while true {
-                    let cells = (0..<rows).flatMap { y in (0..<span).map { x in (row + y) * gridColumns + column + x } }
-                    if cells.allSatisfy({ !occupied.contains($0) }) {
-                        occupied.formUnion(cells)
-                        placed[id] = Placement(
-                            id: id,
-                            frame: CGRect(
-                                x: CGFloat(column) * (side + 16), y: CGFloat(row) * rowStride,
-                                width: size.width(columnWidth: columnWidth, columns: columns), height: height))
-                        break
-                    }
-                    if positions[id] != nil {
-                        row += 1
-                    } else {
-                        column += 1
-                        if column + span > gridColumns {
-                            column = 0
-                            row += 1
-                        }
-                    }
-                }
-            }
-            self.columns = columns
-            self.columnWidth = columnWidth
-
-            let reduction = placed["search"]?.frame.minY == 0 ? searchRowReduction : 0
-            firstRowReduction = reduction
-            placements = ids.compactMap { placed[$0] }.map { placement in
-                Placement(
-                    id: placement.id,
-                    frame: placement.frame.offsetBy(
-                        dx: 0, dy: placement.frame.minY > 0 ? -reduction : 0))
-            }
-            self.height = placements.map(\.frame.maxY).max() ?? 0
-            return
-        }
-        firstRowReduction = compactSearchRow ? searchRowReduction : 0
-        if widgets.contains(where: { sizes[$0] == .square || sizes[$0] == .banner }) {
-
-            let subdivisions = columnWidth >= 16 ? 2 : 1
-            let compactColumns = columns * subdivisions
-            let side = StartWidgetSize.squareSide(columnWidth: columnWidth)
-            var bottoms = Array(repeating: CGFloat.zero, count: compactColumns)
-            var seen = Set<String>()
-            var result: [Placement] = []
-            for id in widgets where StartWidgetKind(rawValue: id) != nil && seen.insert(id).inserted {
-                let size = sizes[id] ?? .small
-                let span = size == .square ? 1 : min(columns, size.columns) * subdivisions
-                let column =
-                    stride(from: 0, through: compactColumns - span, by: 1).min { left, right in
-                        bottoms[left..<left + span].max()! < bottoms[right..<right + span].max()!
-                    } ?? 0
-                let y = (column..<column + span).map { bottoms[$0] }.max() ?? 0
-                let frame = CGRect(
-                    x: CGFloat(column) * (side + 16), y: y,
-                    width: size.width(columnWidth: columnWidth, columns: columns),
-                    height: size.height(columnWidth: columnWidth))
-                result.append(Placement(id: id, frame: frame))
-
-                let occupiedHeight = size == .banner ? frame.height : max(frame.height, max(176, side))
-                for index in column..<column + span { bottoms[index] = frame.minY + occupiedHeight + 16 }
-            }
-            self.columns = columns
-            self.columnWidth = columnWidth
-            placements = result
-            height = result.map(\.frame.maxY).max() ?? 0
-            return
-        }
-        var occupied = Set<Int>()
-        var result: [Placement] = []
-        var cursor = 0
+        let subdivisions = columnWidth >= 16 ? 2 : 1
+        let gridColumns = columns * subdivisions
+        let side = StartWidgetSize.squareSide(columnWidth: columnWidth)
+        let rowHeight = max(176, side)
         var seen = Set<String>()
-        for id in widgets where StartWidgetKind(rawValue: id) != nil && seen.insert(id).inserted {
-            let size = sizes[id] ?? .small
-            let span = min(columns, size.columns)
+        let ids = widgets.filter { StartWidgetKind(rawValue: $0) != nil && seen.insert($0).inserted }
+        let ordered = ids.enumerated().sorted {
+            let lhs = positions[$0.element]
+            let rhs = positions[$1.element]
+            if (lhs != nil) != (rhs != nil) { return lhs != nil }
+            if lhs?.priority != rhs?.priority { return (lhs?.priority ?? 0) > (rhs?.priority ?? 0) }
+            return $0.offset < $1.offset
+        }.map(\.element)
+        var occupied = Set<Int>()
+        var resolved: [String: StartWidgetPosition] = [:]
+        var rowHeights: [Int: CGFloat] = [:]
+        var effectiveSizes: [String: StartWidgetSize] = [:]
+        for id in ordered {
+            let size: StartWidgetSize = id == "search" ? .banner : sizes[id] ?? .small
+            effectiveSizes[id] = size
+            let span = size == .square ? 1 : min(columns, size.columns) * subdivisions
+            let rows = size.rows
+            var column = min(gridColumns - span, max(0, positions[id]?.column ?? 0))
+            var row = min(128, max(0, positions[id]?.row ?? 0))
             while true {
-                let row = cursor / columns
-                let column = cursor % columns
-                let cells = (0..<size.rows).flatMap { y in (0..<span).map { x in (row + y) * columns + column + x } }
-                if column + span <= columns && cells.allSatisfy({ !occupied.contains($0) }) {
+                let cells = (0..<rows).flatMap { y in (0..<span).map { x in (row + y) * gridColumns + column + x } }
+                if cells.allSatisfy({ !occupied.contains($0) }) {
                     occupied.formUnion(cells)
-                    let frame = CGRect(
-                        x: CGFloat(column) * (columnWidth + 16),
-                        y: CGFloat(row) * 192 - (row > 0 ? firstRowReduction : 0),
-                        width: CGFloat(span) * columnWidth + CGFloat(span - 1) * 16,
-                        height: size.height(columnWidth: columnWidth))
-                    result.append(Placement(id: id, frame: frame))
-                    cursor += span
+                    resolved[id] = StartWidgetPosition(column: column, row: row, priority: positions[id]?.priority ?? 0)
+                    for y in row..<row + rows {
+                        let requiredHeight = size == .banner ? 56 : size == .square ? side : 176
+                        rowHeights[y] = max(rowHeights[y] ?? 0, requiredHeight)
+                    }
                     break
                 }
-                cursor += 1
+                if positions[id] != nil {
+                    row += 1
+                } else {
+                    column += 1
+                    if column + span > gridColumns {
+                        column = 0
+                        row += 1
+                    }
+                }
             }
+        }
+        var origins: [CGFloat] = [0]
+        for row in 0..<((rowHeights.keys.max() ?? -1) + 1) {
+            origins.append(origins.last! + (rowHeights[row] ?? rowHeight) + 16)
         }
         self.columns = columns
         self.columnWidth = columnWidth
-        placements = result
-        height = result.map(\.frame.maxY).max() ?? 0
+        self.rowOrigins = origins
+        self.positions = resolved
+        placements = ids.compactMap { id in
+            guard let position = resolved[id], let size = effectiveSizes[id] else { return nil }
+            return Placement(
+                id: id,
+                frame: CGRect(
+                    x: CGFloat(position.column) * (side + 16), y: origins[position.row],
+                    width: size.width(columnWidth: columnWidth, columns: columns),
+                    height: size.height(columnWidth: columnWidth)))
+        }
+        height = placements.map(\.frame.maxY).max() ?? 0
     }
 }
 

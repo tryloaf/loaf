@@ -7,6 +7,7 @@ import WebKit
 @MainActor final class BrowserWindowState: ObservableObject {
     let id: UUID
     let feedback = BrowserFeedback()
+    let downloadFeedback = DownloadFeedback()
     let tabHover = TabHoverController()
     let sidebarMedia = SidebarMediaCollection()
     var previewRefreshPending = false
@@ -91,7 +92,16 @@ import WebKit
     @Published var profileTransitionID = UUID()
     weak var trayGestureAnchor: NSView?
     @Published var traySwipeDistance: CGFloat = 0
+    @Published var trayToggleID = UUID()
     @Published var extensionsVisible = false
+    func toggleTray() {
+        sidebarVisible = true
+        trayToggleID = UUID()
+    }
+    func toggleExtensions() {
+        if !extensionsVisible { sidebarVisible = true }
+        extensionsVisible.toggle()
+    }
     @Published var translationText: String?
     @Published var sourceText: String?
     @Published var editingProfileID: UUID?
@@ -316,6 +326,7 @@ import WebKit
         adapters.removeValue(forKey: profileID)
     }
     func dispose() {
+        downloadFeedback.stop()
         cancelSideChatOpening()
         restoredInteractionStates.removeAll()
         sidebarEntryCache = nil

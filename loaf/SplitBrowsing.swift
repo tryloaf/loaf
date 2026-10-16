@@ -192,24 +192,68 @@ struct LinkPreviewToast: View {
     @ObservedObject var tab: BrowserTab
     let maximumWidth: CGFloat
     @State private var onRight = false
+    @State private var heldModifiers: NSEvent.ModifierFlags = []
+    @State private var modifierMonitor: Any?
+    nonisolated static func label(for address: String, modifiers: NSEvent.ModifierFlags) -> String {
+        guard let scheme = URLComponents(string: address)?.scheme?.lowercased(),
+            ["http", "https"].contains(scheme), let destination = LinkOpenDestination.from(modifiers)
+        else { return address }
+        switch destination {
+        case .backgroundTab: return "open \(address) in new tab"
+        case .foregroundTab: return "open \(address) in new tab (focus)"
+        case .window: return "open \(address) in new window"
+        }
+    }
     var body: some View {
         Group {
             if store.preferences.showLinkPreview != false, !store.omnibarVisible,
                 tab.fullscreenState == .notInFullscreen, let address = tab.hoveredLink
             {
-                Text(address).font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
+                let label = Self.label(for: address, modifiers: heldModifiers)
+                Text(label).font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
                     .padding(.horizontal, 9).padding(.vertical, 5)
                     .background(.regularMaterial, in: Capsule())
                     .overlay(Capsule().strokeBorder(.primary.opacity(0.12), lineWidth: 0.5))
                     .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
-                    .background(LinkPreviewAvoidance { onRight.toggle() })
                     .frame(maxWidth: maximumWidth, alignment: onRight ? .trailing : .leading)
-                    .accessibilityLabel("link destination: " + address)
+                    .accessibilityLabel("link destination: " + label)
+                    .onAppear {
+                        heldModifiers = store.nativeWindow?.isKeyWindow == true ? NSEvent.modifierFlags : []
+                        if modifierMonitor == nil {
+                            modifierMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .mouseMoved]) { event in
+                                if (event.window ?? NSApp.keyWindow) === store.nativeWindow, store.nativeWindow?.isKeyWindow == true {
+                                    heldModifiers = event.modifierFlags
+                                }
+                                return event
+                            }
+                        }
+                    }
+                    .onDisappear {
+                        if let modifierMonitor { NSEvent.removeMonitor(modifierMonitor) }
+                        modifierMonitor = nil
+                        heldModifiers = []
+                    }
             }
-        }.frame(maxWidth: .infinity, alignment: onRight ? .trailing : .leading).allowsHitTesting(false)
+        }.frame(maxWidth: .infinity, alignment: onRight ? .trailing : .leading)
+            .background {
+                if let address = tab.hoveredLink {
+                    let label = Self.label(for: address, modifiers: heldModifiers)
+                    let width = (label as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width + 18
+                    LinkPreviewAvoidance(previewWidth: min(maximumWidth, width)) { onRight = $0 }
+                }
+            }.allowsHitTesting(false)
             .onChange(of: tab.hoveredLink) { _, address in if address == nil { onRight = false } }
             .onChange(of: store.preferences.showLinkPreview) { _, enabled in
                 if enabled == false { tab.clearHoveredLink() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
+                if notification.object as? NSWindow === store.nativeWindow { heldModifiers = [] }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+                if notification.object as? NSWindow === store.nativeWindow { heldModifiers = NSEvent.modifierFlags }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+                heldModifiers = []
             }
     }
 }
@@ -351,20 +395,40 @@ private struct SplitTabSegment: View {
     }
 }
 
-private struct LinkPreviewAvoidance: NSViewRepresentable {
-    let move: () -> Void
+struct LinkPreviewAvoidance: NSViewRepresentable {
+    let previewWidth: CGFloat
+    let move: (Bool) -> Void
     func makeNSView(context: Context) -> Anchor {
         let view = Anchor()
         view.move = move
+        view.previewWidth = previewWidth
         view.identifier = .init("loaf.linkPreviewAvoidance")
         return view
     }
-    func updateNSView(_ view: Anchor, context: Context) { view.move = move }
+    func updateNSView(_ view: Anchor, context: Context) {
+        view.move = move
+        view.previewWidth = previewWidth
+        view.needsLayout = true
+    }
     final class Anchor: NSView {
-        var move: (() -> Void)?
+        var move: ((Bool) -> Void)?
+        var previewWidth: CGFloat = 0
+        private(set) var onRight = false
         private var monitor: Any?
         private var hoverArea: NSTrackingArea?
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        func updatePlacement(at point: NSPoint) {
+            let home = NSRect(x: bounds.minX, y: bounds.minY,
+                width: min(bounds.width, previewWidth), height: bounds.height)
+            let obscured = previewWidth > 0 && home.contains(point)
+            guard obscured != onRight else { return }
+            onRight = obscured
+            move?(obscured)
+        }
+        override func layout() {
+            super.layout()
+            if let window { updatePlacement(at: convert(window.mouseLocationOutsideOfEventStream, from: nil)) }
+        }
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
             if let hoverArea { removeTrackingArea(hoverArea) }
@@ -374,20 +438,25 @@ private struct LinkPreviewAvoidance: NSViewRepresentable {
             hoverArea = area
         }
         override func mouseEntered(with event: NSEvent) {
-            if bounds.contains(convert(event.locationInWindow, from: nil)) { move?() }
+            updatePlacement(at: convert(event.locationInWindow, from: nil))
+        }
+        override func mouseExited(with event: NSEvent) {
+            updatePlacement(at: convert(event.locationInWindow, from: nil))
         }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
             guard window != nil else { return }
+            needsLayout = true
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) {
                 [weak self] event in
                 MainActor.assumeIsolated {
-                    if let self, event.window === self.window,
-                        self.bounds.contains(self.convert(event.locationInWindow, from: nil))
-                    {
-                        self.move?()
+                    guard let self else { return }
+                    if event.window === self.window {
+                        self.updatePlacement(at: self.convert(event.locationInWindow, from: nil))
+                    } else if self.onRight {
+                        self.updatePlacement(at: NSPoint(x: -1, y: -1))
                     }
                 }
                 return event

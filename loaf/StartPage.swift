@@ -37,6 +37,7 @@ struct StartPage: View, Equatable {
     @State private var dragged: String?
     @State private var dropPosition: StartWidgetPosition?
     @State private var resizeSizes: [String: StartWidgetSize] = [:]
+    @State private var hiddenWidget: String?
     @State private var backgroundImage: (url: URL, image: NSImage)?
     @State private var snapshot: StartPageSnapshot
     init(store: BrowserStore, editing: Bool = false) {
@@ -81,50 +82,23 @@ struct StartPage: View, Equatable {
                 background.frame(width: geometry.size.width, height: geometry.size.height).clipped()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
-                        HStack(spacing: 8) {
-                            ProfileIcon(glyph: snapshot.emoji, customIconPNG: snapshot.customIconPNG, size: 16)
-                            Text(
-                                snapshot.privateMode && snapshot.name == "private"
-                                    ? "private browsing" : snapshot.name
-                            ).font(.system(size: 13))
-                            if snapshot.privateMode && snapshot.name != "private" {
-                                Text("private").foregroundStyle(.secondary)
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 8) {
+                                profileLabel
+                                Spacer(minLength: 12)
+                                editingControls.fixedSize()
+                                editButton.fixedSize()
                             }
-                            Spacer()
-                            if editing {
-                                Button {
-                                    gallery = true
-                                } label: {
-                                    Label {
-                                        Text("add widget")
-                                    } icon: {
-                                        GolzheimIcon(icon: .plus, size: 12)
-                                    }
+                            VStack(alignment: .leading, spacing: 12) {
+                                HStack {
+                                    profileLabel
+                                    Spacer(minLength: 8)
+                                    editButton
                                 }
-                                .popover(isPresented: $gallery) { StartWidgetGallery(store: store) }
-                                Button {
-                                    appearance = true
-                                } label: {
-                                    GolzheimIcon(icon: .settings, size: 16)
-                                }.help("start-page appearance")
-                                    .popover(isPresented: $appearance) { StartCustomizer(store: store) }
-                                Button("tidy widgets") { update { $0.widgetPositions = nil } }.disabled(
-                                    preferences.widgetPositions?.isEmpty != false)
+                                if editing {
+                                    HStack(spacing: 8) { editingControls; Spacer(minLength: 0) }
+                                }
                             }
-                            Button {
-                                withAnimation(reduceMotion ? nil : .spring(duration: 0.24, bounce: 0)) {
-                                    editing.toggle()
-                                    dragged = nil
-                                    dropPosition = nil
-                                    resizeSizes = [:]
-                                }
-                            } label: {
-                                HStack(spacing: 6) {
-                                    GolzheimIcon(icon: editing ? .check : .settings, size: 14)
-                                    Text(editing ? "done" : "edit")
-                                }.font(.system(size: 12))
-                            }.help(editing ? "finish editing widgets" : "customize start page").accessibilityLabel(
-                                editing ? "finish editing widgets" : "customize start page")
                         }.buttonStyle(.bordered).controlSize(.small)
                         if widgets.isEmpty {
                             VStack(spacing: 12) {
@@ -139,9 +113,10 @@ struct StartPage: View, Equatable {
                         StartWidgetGrid(layout: layout, width: width) { placement in
                             StartWidgetCard(
                                 store: store, id: placement.id, editing: editing, columns: layout.columns,
-                                columnWidth: layout.columnWidth, dragged: $dragged, resizeSizes: $resizeSizes
+                                columnWidth: layout.columnWidth, dragged: $dragged, resizeSizes: $resizeSizes,
+                                hide: hideWidget
                             ) {
-                                widgetView(placement.id)
+                                widgetView(placement.id, size: liveSizes[placement.id] ?? .small)
                             }.environment(\.startWidgetDropCleanup, { dropPosition = nil }).frame(
                                 width: placement.frame.width, height: placement.frame.height
                             )
@@ -173,7 +148,7 @@ struct StartPage: View, Equatable {
                             reduceMotion ? nil : .spring(duration: 0.18, bounce: 0),
                             value: livePositions ?? preferences.widgetPositions ?? [:])
                         if editing {
-                            Text("drag to move · drag a corner to resize · drag outside the grid to remove").font(
+                            Text("drag to move · drag a corner to resize · drag outside the grid to hide").font(
                                 .system(size: 11)
                             ).foregroundStyle(.secondary)
                         }
@@ -181,10 +156,27 @@ struct StartPage: View, Equatable {
                             Text("history stays off. cookies disappear when this private session ends.").font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                    }.frame(width: width).padding(.horizontal, 32).padding(.top, snapshot.sidebarPresented ? 40 : 24)
+                    }.background(ChromeScrollbarsHidden())
+                        .frame(width: width).padding(.horizontal, 32).padding(.top, snapshot.sidebarPresented ? 40 : 24)
                         .padding(.bottom, 32).frame(maxWidth: .infinity)
-                }
+                }.scrollIndicators(.hidden)
             }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading).clipped()
+        }.overlay(alignment: .bottom) {
+            if let hiddenWidget {
+                HStack(spacing: 12) {
+                    Text("\(StartWidgetKind(rawValue: hiddenWidget)?.title ?? hiddenWidget) hidden")
+                        .lineLimit(1)
+                    Button("undo") {
+                        update { $0.showWidget(hiddenWidget) }
+                        self.hiddenWidget = nil
+                    }.buttonStyle(.bordered)
+                    Button { self.hiddenWidget = nil } label: {
+                        Image(systemName: "xmark").font(.system(size: 10, weight: .medium))
+                    }.buttonStyle(.plain).accessibilityLabel("dismiss")
+                }.font(.system(size: 12)).padding(12)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .padding(16)
+            }
         }.environment(
             \.colorScheme,
             preferences.background == "profile" && !snapshot.privateMode
@@ -212,7 +204,62 @@ struct StartPage: View, Equatable {
             dragged = nil
             dropPosition = nil
             resizeSizes = [:]
+            hiddenWidget = nil
         }
+    }
+    private var profileLabel: some View {
+        HStack(spacing: 8) {
+            ProfileIcon(glyph: snapshot.emoji, customIconPNG: snapshot.customIconPNG, size: 16)
+            Text(
+                snapshot.privateMode && snapshot.name == "private"
+                    ? "private browsing" : snapshot.name
+            ).font(.system(size: 13))
+            if snapshot.privateMode && snapshot.name != "private" {
+                Text("private").foregroundStyle(.secondary)
+            }
+        }.lineLimit(1)
+    }
+    @ViewBuilder private var editingControls: some View {
+        if editing {
+            Button {
+                gallery = true
+            } label: {
+                Label {
+                    Text("add widget")
+                } icon: {
+                    GolzheimIcon(icon: .plus, size: 12)
+                }
+            }
+            .popover(isPresented: $gallery) { StartWidgetGallery(store: store) }
+            Button {
+                appearance = true
+            } label: {
+                GolzheimIcon(icon: .settings, size: 16)
+            }.help("start-page appearance")
+                .popover(isPresented: $appearance) { StartCustomizer(store: store) }
+            Button("tidy widgets") { update { $0.widgetPositions = nil } }.disabled(
+                preferences.widgetPositions?.isEmpty != false)
+        }
+    }
+    private var editButton: some View {
+        Button {
+            withAnimation(reduceMotion ? nil : .spring(duration: 0.24, bounce: 0)) {
+                editing.toggle()
+                dragged = nil
+                dropPosition = nil
+                resizeSizes = [:]
+            }
+        } label: {
+            HStack(spacing: 6) {
+                GolzheimIcon(icon: editing ? .check : .settings, size: 14)
+                Text(editing ? "done" : "edit")
+            }.font(.system(size: 12))
+        }.help(editing ? "finish editing widgets" : "customize start page").accessibilityLabel(
+            editing ? "finish editing widgets" : "customize start page")
+    }
+    private func hideWidget(_ id: String) {
+        update { if !$0.hiddenWidgets.contains(id) { $0.hiddenWidgets.append(id) } }
+        hiddenWidget = id
     }
     private func previewPositions(base: [String: StartWidgetPosition]) -> [String: StartWidgetPosition]? {
         guard let dragged, let dropPosition else { return nil }
@@ -223,9 +270,9 @@ struct StartPage: View, Equatable {
     private var background: some View {
         StartPageBackground(store: store, image: backgroundImage)
     }
-    @ViewBuilder private func widgetView(_ widget: String) -> some View {
+    @ViewBuilder private func widgetView(_ widget: String, size: StartWidgetSize) -> some View {
         let options = preferences.widgetOptions?[widget] ?? StartWidgetOptions()
-        let compact = preferences.widgetSizes?[widget] == .square
+        let compact = size == .square
         switch widget {
         case "search":
             Button {
@@ -233,25 +280,26 @@ struct StartPage: View, Equatable {
             } label: {
                 HStack(spacing: 12) {
                     GolzheimIcon(icon: .search, size: 16)
-                    Text("search or surf...").font(.system(size: 16))
+                    Text("search or surf...").font(.system(size: 16)).lineLimit(1).truncationMode(.tail)
                     Spacer()
-                    Text("⌘L").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("⌘L").font(.system(size: 12)).foregroundStyle(.secondary).fixedSize()
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
             }.buttonStyle(.plain)
         case "clock":
             TimelineView(.periodic(from: .now, by: options.clockSeconds == true ? 1 : 30)) { time in
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(clockText(time.date, options: options)).textCase(.lowercase).font(
+                    Text(clockText(MarketingLaunch.displayDate(time.date), options: options)).textCase(.lowercase).font(
                         .system(size: compact || options.clockSeconds == true ? 32 : 40, weight: .light)
-                    ).monospacedDigit().lineLimit(1).minimumScaleFactor(0.5)
-                    Text(time.date, format: .dateTime.weekday(.wide).month(.wide).day()).textCase(.lowercase).font(
+                    ).monospacedDigit().lineLimit(1).minimumScaleFactor(0.1).allowsTightening(true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(MarketingLaunch.displayDate(time.date), format: .dateTime.weekday(.wide).month(.wide).day()).textCase(.lowercase).font(
                         .system(size: 13)
-                    ).foregroundStyle(.secondary)
+                    ).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
-        case "battery": BatteryWidget(monitor: store.application.resources)
+        case "battery": BatteryWidget(monitor: store.application.resources, showsHeader: !editing)
         case "browsingTime": BrowsingTimeWidget(store: store, monitor: store.application.resources)
-        case "calendar": StartWeekView(compact: preferences.widgetSizes?["calendar"] == .square)
+        case "calendar": StartWeekView(compact: compact)
         case "checklist":
             StartChecklistWidget(store: store, options: options, showsHeader: !editing).id(store.selectedProfileID)
         case "worldClock": StartWorldClockWidget(options: options, showsHeader: !editing)
@@ -281,7 +329,7 @@ struct StartPage: View, Equatable {
                 }.font(.system(size: options.largerNotes == true ? 16 : 13))
             }.frame(maxHeight: .infinity)
         case "recent": StartRecentTabsWidget(store: store, limit: options.limit, showsHeader: !editing)
-        case "downloads": StartDownloadsWidget(store: store, limit: options.limit)
+        case "downloads": StartDownloadsWidget(store: store, limit: options.limit, showsHeader: !editing)
         default:
             StartFavoritesWidget(
                 store: store, style: preferences.pinStyle, limit: options.itemLimit == nil ? nil : options.limit,
@@ -328,7 +376,7 @@ private struct StartWeatherWidget: View {
                     .fixedSize(horizontal: false, vertical: true)
             }.frame(maxWidth: .infinity, alignment: .leading)
             if !compact && !weather.hours.isEmpty {
-                HStack(spacing: 14) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 36), spacing: 8)], spacing: 8) {
                     ForEach(weather.hours) { hour in
                         VStack(spacing: 3) {
                             Text(hour.date, format: .dateTime.hour())
@@ -362,13 +410,14 @@ private struct StartRecentTabsWidget: View {
     let showsHeader: Bool
     var body: some View {
         let tabs = store.tabs.filter { $0.url != nil }.sorted { $0.lastActivated > $1.lastActivated }
-        VStack(alignment: .leading, spacing: 12) {
+        StartWidgetSection {
             if showsHeader {
                 HStack(spacing: 8) {
                     GolzheimIcon(icon: .history, size: 16)
                     Text("recent tabs").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                 }
             }
+        } content: {
             ForEach(Array(tabs.prefix(limit))) { tab in
                 Button {
                     store.select(tab)
@@ -396,18 +445,19 @@ private struct StartFavoritesWidget: View {
     var body: some View {
         let all = store.profile.favorites.filter { $0.folderID == nil }
         let favorites = limit.map { Array(all.prefix($0)) } ?? all
-        VStack(alignment: .leading, spacing: 12) {
+        StartWidgetSection {
             if showsHeader {
                 HStack(spacing: 8) {
                     GolzheimIcon(icon: .favorite, size: 16)
                     Text("favorites").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                 }
             }
+        } content: {
             if all.isEmpty {
                 Text("save a favorite with ⌘D to keep it here").font(.system(size: 13)).foregroundStyle(.secondary)
             }
             if style == "tiles" {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 64))], spacing: 12) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 12)], spacing: 12) {
                     ForEach(favorites) { favorite in favoriteButton(favorite, style: "tiles") }
                 }
             } else if style == "chips" {
@@ -429,13 +479,13 @@ private struct StartFavoritesWidget: View {
                         FavoriteIcon(favorite: favorite, store: store).frame(width: 48, height: 48).background(
                             Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
                         Text(BrowserAddress.visible(favorite.title)).font(.system(size: 11)).lineLimit(1)
-                            .minimumScaleFactor(0.85).help(favorite.title)
-                    }.frame(maxWidth: .infinity)
+                            .truncationMode(.tail).help(favorite.title)
+                    }.frame(maxWidth: .infinity).clipped()
                 } else {
                     HStack(spacing: 8) {
                         FavoriteIcon(favorite: favorite, store: store).frame(width: 20, height: 20)
                         Text(BrowserAddress.visible(favorite.title)).font(.system(size: 12)).lineLimit(1)
-                            .minimumScaleFactor(0.85).help(favorite.title)
+                            .truncationMode(.tail).help(favorite.title)
                         Spacer(minLength: 0)
                     }.padding(style == "chips" ? 8 : 0).background(
                         Color.primary.opacity(style == "chips" ? 0.04 : 0), in: Capsule())
@@ -451,11 +501,12 @@ struct StartWidgetPlacementGrid: View {
     var body: some View {
         Canvas { context, _ in
             let side = StartWidgetSize.squareSide(columnWidth: layout.columnWidth)
-            for row in 0..<max(1, Int(ceil(height / layout.gridStride.height))) {
+            for row in 0..<max(1, layout.rowCount + Int(ceil(max(0, height - layout.height) / layout.gridStride.height)) + 1)
+                where layout.rowOrigin(row) < height {
                 for column in 0..<layout.gridColumns {
                     let rect = CGRect(
                         x: CGFloat(column) * layout.gridStride.width, y: layout.rowOrigin(row),
-                        width: side, height: max(176, side))
+                        width: side, height: layout.rowHeight(row))
                     context.stroke(
                         Path(roundedRect: rect, cornerRadius: 16), with: .color(.primary.opacity(0.08)),
                         style: StrokeStyle(lineWidth: 1, dash: [3, 5]))
@@ -518,17 +569,39 @@ struct StartWidgetDropDelegate: DropDelegate {
     }
 }
 
+
+struct StartWidgetSection<Header: View, Content: View>: View {
+    var centered = false
+    var spacing: CGFloat = 12
+    @ViewBuilder let header: () -> Header
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            header().lineLimit(1)
+            StartWidgetScrollContent(centered: centered, content: VStack(alignment: .leading, spacing: spacing) {
+                content()
+            })
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
 struct StartWidgetScrollContent<Content: View>: View {
+    var centered = false
     let content: Content
     @State private var contentHeight: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
     var body: some View {
-        ScrollView {
-            content.frame(maxWidth: .infinity, alignment: .topLeading)
-                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { contentHeight = $0 }
-        }.scrollIndicators(.hidden).scrollBounceBehavior(.basedOnSize, axes: .vertical)
-            .scrollDisabled(contentHeight <= viewportHeight + 1.5)
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { viewportHeight = $0 }
+        GeometryReader { geometry in
+            ScrollView {
+                content.frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background(ChromeScrollbarsHidden())
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { contentHeight = $0 }
+                    .frame(minHeight: centered ? geometry.size.height : 0, alignment: centered ? .leading : .topLeading)
+            }.scrollIndicators(.hidden).scrollBounceBehavior(.basedOnSize, axes: .vertical)
+                .scrollDisabled(contentHeight <= viewportHeight + 1.5)
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { viewportHeight = $0 }
+        }
     }
 }
 
@@ -588,6 +661,7 @@ struct StartWidgetCard<Content: View>: View {
     let columnWidth: CGFloat
     @Binding var dragged: String?
     @Binding var resizeSizes: [String: StartWidgetSize]
+    let hide: (String) -> Void
     @ViewBuilder let content: () -> Content
     @State private var resizePreview: StartWidgetSize?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -635,7 +709,7 @@ struct StartWidgetCard<Content: View>: View {
                     HStack(spacing: 8) {
                         GolzheimIcon(icon: .more, size: 14).rotationEffect(.degrees(90))
                         Text(StartWidgetKind(rawValue: id)?.title ?? id).font(.system(size: 12, weight: .medium))
-                            .lineLimit(1)
+                            .lineLimit(1).help(StartWidgetKind(rawValue: id)?.title ?? id)
                     }
                     .overlay {
                         StartWidgetDragHandle(
@@ -644,7 +718,7 @@ struct StartWidgetCard<Content: View>: View {
                             removed: {
                                 let profileID = store.selectedProfileID
                                 guard payloadProfileID == profileID else { return }
-                                update { if !$0.hiddenWidgets.contains(id) { $0.hiddenWidgets.append(id) } }
+                                hide(id)
                             })
                     }.help("drag to move \(id)")
                     Spacer(minLength: 4)
@@ -652,7 +726,7 @@ struct StartWidgetCard<Content: View>: View {
                         settings
                         Divider()
                         Button("hide widget") {
-                            update { if !$0.hiddenWidgets.contains(id) { $0.hiddenWidgets.append(id) } }
+                            hide(id)
                         }
                     } label: {
                         GolzheimIcon(icon: .settings, size: 14).frame(width: 24, height: 24)
@@ -660,23 +734,26 @@ struct StartWidgetCard<Content: View>: View {
                         .accessibilityLabel("\(id) widget settings")
                 }
             }
-            if id == "notes" || id == "search" {
+            if ["notes", "search", "pins", "recent", "downloads", "checklist", "worldClock", "timer", "stopwatch", "battery"].contains(id) {
                 content().frame(maxHeight: .infinity)
             } else {
-                StartWidgetScrollContent(content: content())
+                StartWidgetScrollContent(centered: true, content: content())
             }
         }.overlay {
             if editing && id == "search" {
                 StartWidgetDragHandle(
                     payload: StartWidgetDrag(window: store.id, profile: store.selectedProfileID, widget: id),
                     title: "search or surf…", dragged: $dragged, ended: dropCleanup,
-                    removed: { update { $0.hiddenWidgets.append(id) } })
+                    removed: {
+                        guard payloadProfileID == store.selectedProfileID else { return }
+                        hide(id)
+                    })
             }
         }.contextMenu {
             settings
             Divider()
             Button(id == "search" ? "hide search bar" : "hide widget") {
-                update { if !$0.hiddenWidgets.contains(id) { $0.hiddenWidgets.append(id) } }
+                hide(id)
             }
         }.padding(16).padding(.bottom, editing && id != "search" ? 12 : 0)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
@@ -753,7 +830,7 @@ struct StartWidgetCard<Content: View>: View {
                 Text("list").tag("list")
             }
         }
-        if id == "notes" || id == "search" {
+        if ["notes", "search", "pins", "recent", "downloads", "checklist", "worldClock", "timer", "stopwatch", "battery"].contains(id) {
             Toggle(
                 "larger text",
                 isOn: Binding(
@@ -826,7 +903,7 @@ struct StartWidgetGallery: View {
                         }.buttonStyle(.plain).disabled(added).accessibilityLabel(
                             added ? "\(kind.title), already added" : "add \(kind.title)")
                     }
-                }
+                }.background(ChromeScrollbarsHidden())
             }.scrollIndicators(.hidden)
         }.padding(20).frame(width: 360, height: 464)
     }
@@ -837,21 +914,22 @@ struct StartWeekView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let calendar = Calendar.current
-            let start = calendar.dateInterval(of: .weekOfYear, for: context.date)?.start ?? context.date
+            let date = MarketingLaunch.displayDate(context.date)
+            let start = calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? date
             VStack(alignment: .leading, spacing: 12) {
-                Text(context.date, format: .dateTime.month(.wide).day()).font(
+                Text(MarketingLaunch.displayDate(context.date), format: .dateTime.month(.wide).day()).font(
                     .system(size: compact ? 20 : 24, weight: .light)
-                ).lineLimit(1).minimumScaleFactor(0.8)
+                ).lineLimit(1).minimumScaleFactor(0.1)
                 HStack(spacing: compact ? 2 : 4) {
                     ForEach(0..<7, id: \.self) { offset in
                         let date = calendar.date(byAdding: .day, value: offset, to: start) ?? start
                         VStack(spacing: 8) {
                             Text(date, format: .dateTime.weekday(.narrow)).font(.system(size: 10)).foregroundStyle(
                                 .secondary)
-                            Text(date, format: .dateTime.day()).font(.system(size: compact ? 10 : 12)).frame(
-                                width: compact ? 16 : 24, height: compact ? 16 : 24
-                            ).background(
-                                calendar.isDateInToday(date) ? Color.accentColor.opacity(0.2) : .clear, in: Circle())
+                            Text(date, format: .dateTime.day()).font(.system(size: compact ? 10 : 12))
+                                .lineLimit(1).minimumScaleFactor(0.5)
+                                .frame(maxWidth: .infinity).frame(height: compact ? 16 : 24).background(
+                                calendar.isDate(date, inSameDayAs: MarketingLaunch.displayDate(context.date)) ? Color.accentColor.opacity(0.2) : .clear, in: Circle())
                         }.frame(maxWidth: .infinity)
                     }
                 }
@@ -862,10 +940,11 @@ struct StartWeekView: View {
 struct StartDownloadsWidget: View {
     @ObservedObject var store: BrowserStore
     let limit: Int
+    var showsHeader = true
     var body: some View {
         StartDownloadsContent(
             manager: store.downloads, store: store, profileID: store.selectedProfileID, limit: limit,
-            open: { store.showPage(.downloads) })
+            showsHeader: showsHeader, open: { store.showPage(.downloads) })
     }
 }
 private struct StartDownloadsContent: View {
@@ -873,17 +952,21 @@ private struct StartDownloadsContent: View {
     let store: BrowserStore
     let profileID: UUID
     let limit: Int
+    let showsHeader: Bool
     let open: () -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button(action: open) {
-                HStack {
-                    GolzheimIcon(icon: .download, size: 16)
-                    Text("downloads").font(.system(size: 12, weight: .medium))
-                    Spacer()
-                    GolzheimIcon(icon: .forward, size: 12)
-                }
-            }.buttonStyle(.plain)
+        StartWidgetSection {
+            if showsHeader {
+                Button(action: open) {
+                    HStack {
+                        GolzheimIcon(icon: .download, size: 16)
+                        Text("downloads").font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        GolzheimIcon(icon: .forward, size: 12)
+                    }
+                }.buttonStyle(.plain)
+            }
+        } content: {
             let items = Array(manager.items.filter { $0.profileID == profileID }.prefix(limit))
             if items.isEmpty {
                 Text("recent downloads will appear here").font(.system(size: 13)).foregroundStyle(.secondary)

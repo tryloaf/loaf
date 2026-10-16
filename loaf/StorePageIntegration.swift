@@ -130,6 +130,7 @@ extension BrowserTab {
             alert.messageText = "remove " + record.name + "?"
             alert.addButton(withTitle: "remove")
             alert.addButton(withTitle: "cancel")
+            DestructiveActionStyle.configure(alert, destructive: alert.buttons[0])
             guard let window = store.nativeWindow else {
                 refresh()
                 return

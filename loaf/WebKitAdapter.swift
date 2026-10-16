@@ -883,7 +883,7 @@ extension BrowserWindowState {
         let profileID = selectedProfileID
         let field = NSTextField(
             string: profile.siteSettings?[origin]?.customUserAgent ?? tab.webView.customUserAgent ?? "")
-        field.frame = NSRect(x: 0, y: 0, width: 420, height: 28)
+        field.frame = NSRect(x: 0, y: 0, width: AlertLayout.accessoryWidth, height: 28)
         field.placeholderString = "user agent"
         let alert = NSAlert()
         alert.messageText = "custom user agent"

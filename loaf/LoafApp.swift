@@ -36,7 +36,9 @@ import WebKit
         _ alert: NSAlert, for sender: NSApplication,
         completion: @escaping (NSApplication.ModalResponse) -> Void
     ) {
-
+        if let destructive = alert.buttons.first(where: \.hasDestructiveAction) {
+            DestructiveActionStyle.configure(alert, destructive: destructive)
+        }
         DispatchQueue.main.async { [weak self] in
             let window = sender.keyWindow ?? sender.mainWindow ?? self?.coordinator?.commandState?.nativeWindow
             sender.unhide(nil)

@@ -122,10 +122,23 @@ enum PageScripts {
           };
           let next = 0;
           let scheduled = false;
+          const artworkURL = metadata => {
+            const candidates = Array.from(metadata?.artwork || []).slice(0, 16).map(image => {
+              try {
+                const url = new URL(image.src, location.href);
+                if (url.protocol !== 'https:' || url.username || url.password || url.href.length > 4096) return null;
+                const sizes = String(image.sizes || '').split(/\s+/).map(size => Number(size.split('x')[0])).filter(Number.isFinite);
+                const pixels = Math.max(0, ...sizes);
+                return { url: url.href, score: pixels >= 96 ? Math.abs(pixels - 128) : 10000 - pixels };
+              } catch { return null; }
+            }).filter(Boolean).sort((a, b) => a.score - b.score);
+            return candidates[0]?.url || null;
+          };
           const send = () => {
             scheduled = false;
             const sources = [];
             const metadata = navigator.mediaSession?.metadata;
+            const artwork = artworkURL(metadata);
             const candidates = [...elements].sort((a, b) => Number(a[1].paused) - Number(b[1].paused));
             const resources = new Set();
             for (const [id, el] of candidates) {
@@ -143,7 +156,7 @@ enum PageScripts {
               if (resources.has(resource)) continue;
               resources.add(resource);
               sources.push({ id, title: (metadata?.title || el.getAttribute('aria-label') || document.title || 'Media').slice(0, 200),
-                artist: (metadata?.artist || location.hostname).slice(0, 120), paused: el.paused, muted: el.muted,
+                artist: (metadata?.artist || location.hostname).slice(0, 120), artwork, paused: el.paused, muted: el.muted,
                 pip: el.webkitPresentationMode === 'picture-in-picture', airplay: typeof el.webkitShowPlaybackTargetPicker === 'function', volume: el.volume, position: el.currentTime, duration: Number.isFinite(el.duration) ? el.duration : 0 });
               if (sources.length === 12) break;
             }

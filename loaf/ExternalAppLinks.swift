@@ -2,14 +2,22 @@ import AppKit
 import WebKit
 
 nonisolated enum ExternalAppLinkPolicy: String, Codable, CaseIterable, Sendable {
-    case ask, allow, block
+    case inherit, ask, allow, block
     var title: String {
         switch self {
+        case .inherit: "follow website setting"
         case .ask: "ask every time"
         case .allow: "always open"
         case .block: "never open"
         }
     }
+    static func effective(site: Self?, application: Self?) -> Self {
+        if site == .block || application == .block { return .block }
+        if site == .ask || application == .ask { return .ask }
+        if site == .allow || application == .allow { return .allow }
+        return .ask
+    }
+
 }
 
 nonisolated struct ExternalAppLinkPreference: Codable, Sendable {
@@ -95,10 +103,17 @@ nonisolated struct ExternalAppLinkPreference: Codable, Sendable {
             let name = FileManager.default.displayName(atPath: $0.path)
             return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
         }
-        let origin = (sourceURL.flatMap(BrowserAddress.websiteOrigin)
-            ?? pageURL.flatMap(BrowserAddress.websiteOrigin)) ?? "this page"
+        let siteOrigin = sourceURL.flatMap(BrowserAddress.websiteOrigin)
+            ?? (sourceURL == nil ? pageURL.flatMap(BrowserAddress.websiteOrigin) : nil)
+        let origin = siteOrigin ?? "this page"
         let identity = applicationURL.map(ExternalAppLinkPreference.identity)
-        let policy = identity.flatMap { store.profileFor(tab.profileID).externalAppLinks?[$0]?.policy } ?? .ask
+        let policy = store.externalAppLinkPolicy(identity: identity, origin: siteOrigin, profileID: tab.profileID)
+        if let identity, let applicationURL, let applicationName,
+            store.externalAppLinkPreference(identity: identity, profileID: tab.profileID) == nil {
+            store.setExternalAppLinkPreference(
+                .init(name: applicationName, applicationPath: applicationURL.path, policy: .inherit),
+                identity: identity, profileID: tab.profileID)
+        }
         if policy == .block { return }
         if policy == .allow, let applicationURL, let applicationName {
             launch(target, application: applicationURL, name: applicationName, store: store)
@@ -109,8 +124,8 @@ nonisolated struct ExternalAppLinkPreference: Codable, Sendable {
             let site = origin == "this page" ? origin : BrowserAddress.visible(origin)
             alert.messageText = "\(site) wants to open \(applicationName)"
             alert.informativeText = store.profileFor(tab.profileID).privateMode
-                ? "remember this app for this private session."
-                : "remember this app for all websites in \(store.profileFor(tab.profileID).name)."
+                ? "remember this app for this private session. app-wide blocks and ask settings still apply."
+                : "remember this app across profiles on this Mac. website settings can still require permission or block opening."
             alert.showsSuppressionButton = true
             alert.suppressionButton?.title = "always open \(applicationName)"
             alert.suppressionButton?.state = .off
@@ -131,33 +146,24 @@ nonisolated struct ExternalAppLinkPreference: Codable, Sendable {
                 && (store.selectedTab?.id == tab.id || store.visibleSplit?.contains(tab.id) == true)
         }
         coordinator.enqueueSheet(for: store, cancel: { [weak self] in self?.pending = false }) { [weak self, weak store] done in
-            guard let self, let store, valid(), let window = store.nativeWindow else {
+            guard let self, let store, valid(), let window = store.nativeWindow,
+                store.externalAppLinkPolicy(identity: identity, origin: siteOrigin, profileID: tab.profileID) != .block else {
                 self?.pending = false
                 done()
                 return
-            }
-            if let applicationURL, let applicationName, let identity,
-                store.profileFor(tab.profileID).externalAppLinks?[identity] == nil
-            {
-                store.updateProfile(tab.profileID) { profile in
-                    profile.externalAppLinks = profile.externalAppLinks ?? [:]
-                    profile.externalAppLinks?[identity] = ExternalAppLinkPreference(
-                        name: applicationName, applicationPath: applicationURL.path, policy: .ask)
-                }
             }
             alert.beginSheetModal(for: window) { [weak self, weak store] response in
                 self?.pending = false
                 done()
                 guard response == .alertFirstButtonReturn, valid(), let store,
                     let applicationURL, let applicationName, let identity,
-                    store.profileFor(tab.profileID).externalAppLinks?[identity]?.policy != .block
+                    store.externalAppLinkPolicy(identity: identity, origin: siteOrigin, profileID: tab.profileID) != .block
                 else { return }
                 let remembered = alert.suppressionButton?.state == .on
-                store.updateProfile(tab.profileID) { profile in
-                    profile.externalAppLinks = profile.externalAppLinks ?? [:]
-                    profile.externalAppLinks?[identity] = ExternalAppLinkPreference(
-                        name: applicationName, applicationPath: applicationURL.path,
-                        policy: remembered ? .allow : .ask)
+                if remembered {
+                    store.setExternalAppLinkPreference(
+                        .init(name: applicationName, applicationPath: applicationURL.path, policy: .allow),
+                        identity: identity, profileID: tab.profileID)
                 }
                 self?.launch(target, application: applicationURL, name: applicationName, store: store)
             }
@@ -170,6 +176,53 @@ nonisolated struct ExternalAppLinkPreference: Codable, Sendable {
             Task { @MainActor [weak store] in
                 store?.error = "couldn’t open \(name). open the app, then try the link again."
             }
+        }
+    }
+}
+
+extension BrowserWindowState {
+    func externalAppLinkPreference(identity: String, profileID: UUID) -> ExternalAppLinkPreference? {
+        let profile = profileFor(profileID)
+        if profile.privateMode, let preference = profile.externalAppLinks?[identity] { return preference }
+        return preferences.externalAppLinks?[identity] ?? profile.externalAppLinks?[identity]
+    }
+    func externalAppLinkPolicy(identity: String?, origin: String?, profileID: UUID) -> ExternalAppLinkPolicy {
+        let profile = profileFor(profileID)
+        let site = origin.flatMap { profile.siteSettings?[$0]?.externalAppLinks }
+        if let identity, preferences.externalAppLinks?[identity]?.policy == .block { return .block }
+        let applicationPolicy: ExternalAppLinkPolicy? = identity.flatMap {
+            if profile.privateMode, preferences.externalAppLinks?[$0]?.policy == .ask { return .ask }
+            return externalAppLinkPreference(identity: $0, profileID: profileID)?.policy
+        }
+        return .effective(site: site, application: applicationPolicy)
+    }
+    var externalAppLinkPreferences: [String: ExternalAppLinkPreference] {
+        if profile.privateMode {
+            return (preferences.externalAppLinks ?? [:]).merging(profile.externalAppLinks ?? [:]) { _, local in local }
+        }
+        return (profile.externalAppLinks ?? [:]).merging(preferences.externalAppLinks ?? [:]) { _, global in global }
+    }
+    func setExternalAppLinkPreference(_ preference: ExternalAppLinkPreference, identity: String, profileID: UUID) {
+        if profileFor(profileID).privateMode {
+            updateProfile(profileID) {
+                $0.externalAppLinks = $0.externalAppLinks ?? [:]
+                $0.externalAppLinks?[identity] = preference
+            }
+        } else {
+            preferences.externalAppLinks = preferences.externalAppLinks ?? [:]
+            preferences.externalAppLinks?[identity] = preference
+            persistSoon()
+        }
+    }
+    func resetExternalAppLinkPreference(identity: String) {
+        if profile.privateMode {
+            updateCurrent { $0.externalAppLinks?.removeValue(forKey: identity) }
+        } else {
+            preferences.externalAppLinks?.removeValue(forKey: identity)
+            for profile in application.profiles where !profile.privateMode && profile.externalAppLinks?[identity] != nil {
+                updateProfile(profile.id) { $0.externalAppLinks?.removeValue(forKey: identity) }
+            }
+            persistSoon()
         }
     }
 }
