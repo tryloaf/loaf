@@ -438,7 +438,7 @@ struct SiteSettingsView: View {
                                     Text("desktop Safari").tag(UserAgentMode.desktop)
                                     Text("automatic").tag(UserAgentMode.automatic)
                                 }
-                                Text("reload to apply javascript, autoplay and pop-up changes").font(.system(size: 10))
+                                Text("reload to apply javascript and autoplay changes").font(.system(size: 10))
                                     .foregroundStyle(.secondary)
                                 Button("reset website overrides…") { confirmReset = true }
                                     .padding(.top, 6)

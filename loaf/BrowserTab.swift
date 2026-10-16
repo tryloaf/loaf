@@ -257,7 +257,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         config.userContentController.add(WeakScriptHandler(self), contentWorld: .page, name: "loafBlockedPopup")
         config.upgradeKnownHostsToHTTPS = true
 
-        config.mediaTypesRequiringUserActionForPlayback = .all
+        config.mediaTypesRequiringUserActionForPlayback = .audio
         config.userContentController.addUserScript(
             WKUserScript(
                 source: PageScripts.layoutViewport, injectionTime: .atDocumentStart, forMainFrameOnly: true,

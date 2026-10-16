@@ -67,7 +67,7 @@ struct OmnibarTextField: NSViewRepresentable {
         field.configureSelection()
         let composing = (field.currentEditor() as? NSTextView)?.hasMarkedText() == true
         if !composing && field.stringValue != text {
-            field.stringValue = text
+            field.replaceDisplayedText(text)
         }
         context.coordinator.offerCompletion(field)
         field.updateOverflowFade()
@@ -142,6 +142,17 @@ struct OmnibarTextField: NSViewRepresentable {
         }
     }
     final class FocusField: NSTextField {
+        private let textUndoManager = UndoManager()
+        override var undoManager: UndoManager? { textUndoManager }
+        @objc(undoManagerForTextView:) func undoManager(for editor: NSTextView) -> UndoManager? {
+            textUndoManager
+        }
+        func replaceDisplayedText(_ text: String) {
+            guard stringValue != text else { return }
+            (currentEditor() as? NSTextView)?.breakUndoCoalescing()
+            textUndoManager.removeAllActions()
+            stringValue = text
+        }
         override var intrinsicContentSize: NSSize {
             NSSize(width: NSView.noIntrinsicMetric, height: super.intrinsicContentSize.height)
         }
@@ -211,6 +222,7 @@ struct OmnibarTextField: NSViewRepresentable {
             restoreSelection()
             showSuggestion(nil)
             super.textDidEndEditing(notification)
+            textUndoManager.removeAllActions()
         }
         private(set) var overflowFadeVisible = false
         private var fadeMask: CAGradientLayer?
@@ -301,12 +313,19 @@ struct OmnibarTextField: NSViewRepresentable {
             }
             return super.performKeyEquivalent(with: event)
         }
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if window != nil, newWindow !== window {
+                (currentEditor() as? NSTextView)?.breakUndoCoalescing()
+                textUndoManager.removeAllActions()
+            }
+            super.viewWillMove(toWindow: newWindow)
+        }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             guard let window, !didFocus else { return }
             if let focusSnapshot {
                 guard let snapshot = focusSnapshot() else { return }
-                stringValue = snapshot.text
+                replaceDisplayedText(snapshot.text)
                 selectOnFocus = snapshot.select
             }
             didFocus = true
@@ -484,10 +503,10 @@ struct OmnibarTextField: NSViewRepresentable {
                 if let full = parent.inlineCompletion, full.hasPrefix(parent.text),
                     full.count > parent.text.count
                 {
-                    parent.text = full
-                    (control as? NSTextField)?.stringValue = full
-                    textView.string = full
-                    textView.setSelectedRange(NSRange(location: full.utf16.count, length: 0))
+                    let suffix = String(full.dropFirst(parent.text.count))
+                    textView.breakUndoCoalescing()
+                    textView.insertText(suffix, replacementRange: range)
+                    textView.breakUndoCoalescing()
                 } else {
                     parent.complete()
                 }

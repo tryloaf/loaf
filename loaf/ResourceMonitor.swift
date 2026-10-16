@@ -181,10 +181,11 @@ struct BatteryWidget: View {
     var body: some View {
         StartWidgetSection(centered: true) {
             if showsHeader {
-                Label(
-                    "battery",
-                    systemImage: charging ? "battery.100percent.bolt" : percentage == 100 ? "battery.100percent" : "battery.75percent"
-                ).font(.system(size: 13))
+                Label {
+                    Text("battery")
+                } icon: {
+                    GolzheimIcon(icon: .powerSaver, size: 13)
+                }.font(.system(size: 13))
             }
         } content: {
             Text(percentage.map { "\($0)%" } ?? "plugged in").font(.system(size: 32, weight: .light))

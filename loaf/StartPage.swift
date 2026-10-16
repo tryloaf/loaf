@@ -890,8 +890,13 @@ struct StartWidgetGallery: View {
                             }
                         } label: {
                             HStack(spacing: 12) {
-                                Image(systemName: kind.symbol).font(.system(size: 20, weight: .regular))
-                                    .foregroundStyle(.secondary).frame(width: 36, height: 36)
+                                Group {
+                                    if kind == .battery {
+                                        GolzheimIcon(icon: .powerSaver, size: 20)
+                                    } else {
+                                        Image(systemName: kind.symbol).font(.system(size: 20, weight: .regular))
+                                    }
+                                }.foregroundStyle(.secondary).frame(width: 36, height: 36)
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(kind.title).font(.system(size: 13, weight: .medium))
                                     Text(kind.detail).font(.system(size: 11)).foregroundStyle(.secondary)

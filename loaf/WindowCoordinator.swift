@@ -513,9 +513,9 @@ import WebKit
         guard !terminating, !UpdateInstallationState.shared.isInstalling,
             application.preferences.warnBeforeClosingOtherProfiles != false, let state = state(for: sender)
         else { return true }
-        let others = state.workspaces.filter { $0.key != state.selectedProfileID && !$0.value.tabs.isEmpty }
+        let others = state.otherProfileTabCountsForClosing
         guard !others.isEmpty else { return true }
-        let count = others.values.reduce(0) { $0 + $1.tabs.count }
+        let count = others.values.reduce(0, +)
         let alert = NSAlert()
         let tabs = count == 1 ? "tab" : "tabs"
         let profiles = others.count == 1 ? "another profile" : "\(others.count) other profiles"

@@ -407,7 +407,7 @@ struct PointerCapturePosition {
             return false
         }
         typealias Setter = @convention(c) (AnyObject, Selector, Int) -> Void
-        unsafeBitCast(implementation, to: Setter.self)(preferences, selector, allowed ? 1 : 3)
+        unsafeBitCast(implementation, to: Setter.self)(preferences, selector, allowed ? 1 : 2)
         return true
     }
     @discardableResult static func setChromeInset(_ webView: WKWebView, height: CGFloat) -> Bool {

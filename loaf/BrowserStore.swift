@@ -230,6 +230,18 @@ import WebKit
         else { return nil }
         return tab
     }
+    var otherProfileTabCountsForClosing: [UUID: Int] {
+        workspaces.reduce(into: [:]) { counts, entry in
+            guard entry.key != selectedProfileID else { return }
+            let count = entry.value.tabs.filter { saved in
+                if let live = application.runtimes[entry.key]?.tabs[saved.id], !live.isDisposed {
+                    return !live.isEmptyNewTab
+                }
+                return saved.page != .web || saved.address != nil
+            }.count
+            if count > 0 { counts[entry.key] = count }
+        }
+    }
     func syncWindowTitle() {
         guard let window = nativeWindow else { return }
 
