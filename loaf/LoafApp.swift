@@ -185,6 +185,10 @@ import WebKit
         inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) {
             [weak self] event in
             let consumed = MainActor.assumeIsolated {
+                if let state = self?.coordinator?.state(for: event.window ?? NSApp.keyWindow),
+                    !state.application.onboardingVisible, state.nativeWindow?.isKeyWindow == true,
+                    state.nativeWindow?.attachedSheet == nil, !state.omnibarVisible,
+                    state.feedback.handleShortcut(event) { return true }
                 if event.type == .keyDown, event.isARepeat,
                     event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
                     event.charactersIgnoringModifiers?.lowercased() == "s"

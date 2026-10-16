@@ -463,6 +463,7 @@ import WebKit
     }
 
     func select(_ tab: BrowserTab) {
+        if selectedTab !== tab, feedback.notice?.kind == .popupBlocked { feedback.clear() }
         selectedTab?.clearHoveredLink()
         tab.clearHoveredLink()
         if workspaces[tab.profileID]?.tabs.contains(where: { $0.id == tab.id }) != true, tab.groupMemberID != nil {

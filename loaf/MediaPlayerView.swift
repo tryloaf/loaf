@@ -57,10 +57,10 @@ struct MediaMiniPlayer: View {
                             trailingInset: !expanded && showsCompactPlayback ? 26 : 0
                         )
                         .frame(height: 18).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                        if expanded {
-                            FadingTitle(text: metadata, fontSize: 10).foregroundStyle(.secondary).frame(height: 10)
-                        }
-                    }.contentShape(Rectangle())
+                        FadingTitle(text: metadata, fontSize: 10).foregroundStyle(.secondary).frame(height: 10)
+                            .opacity(expanded ? 1 : 0).accessibilityHidden(!expanded)
+                            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: expanded)
+                    }.frame(height: expanded ? 31 : 18, alignment: .top).clipped().contentShape(Rectangle())
                 }.buttonStyle(.plain).help(source.title).accessibilityLabel("open " + source.title)
                     .overlay(alignment: .trailing) {
                         if !expanded {

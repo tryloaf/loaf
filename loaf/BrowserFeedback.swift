@@ -4,11 +4,13 @@ import CoreImage
 import SwiftUI
 
 struct BrowserNotice: Identifiable {
-    enum Kind { case zoom, favorite, pointer, copied, info }
+    enum Kind { case zoom, favorite, pointer, copied, info, popupBlocked }
     let id: UUID
     let kind: Kind
     let icon: LoafIcon
     let text: String
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
     var numericValue: Double? {
         guard kind == .zoom else { return nil }
         return Double(text.filter { $0.isNumber || $0 == "." })
@@ -18,15 +20,28 @@ struct BrowserNotice: Identifiable {
 @MainActor final class BrowserFeedback: ObservableObject {
     @Published private(set) var notice: BrowserNotice?
     private var expiry: Task<Void, Never>?
-    func show(_ kind: BrowserNotice.Kind, icon: LoafIcon, text: String, duration: Duration = .seconds(2)) {
+    func show(_ kind: BrowserNotice.Kind, icon: LoafIcon, text: String, duration: Duration = .seconds(2),
+        actionTitle: String? = nil, action: (() -> Void)? = nil) {
         expiry?.cancel()
         let id = notice?.id ?? UUID()
-        notice = BrowserNotice(id: id, kind: kind, icon: icon, text: text)
+        notice = BrowserNotice(id: id, kind: kind, icon: icon, text: text, actionTitle: actionTitle, action: action)
         expiry = Task { [weak self] in
             do { try await Task.sleep(for: duration) } catch { return }
             guard !Task.isCancelled, self?.notice?.id == id else { return }
             self?.notice = nil
         }
+    }
+    func performAction() {
+        guard let action = notice?.action else { return }
+        clear()
+        action()
+    }
+    func handleShortcut(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown, !event.isARepeat, event.keyCode == 40,
+            event.modifierFlags.intersection([.command, .shift, .option, .control]) == [.command, .shift],
+            notice?.kind == .popupBlocked, notice?.action != nil else { return false }
+        performAction()
+        return true
     }
     func clear() {
         expiry?.cancel()
@@ -42,14 +57,15 @@ struct AddressFeedback<Content: View>: View {
     let activate: () -> Void
     var horizontalInset: CGFloat = 8
     @ViewBuilder let content: () -> Content
+    private var notice: BrowserNotice? { feedback.notice?.action == nil ? feedback.notice : nil }
     var body: some View {
-        content().opacity(feedback.notice == nil ? 1 : 0)
-            .blur(radius: reduceMotion || feedback.notice == nil ? 0 : 4)
-            .offset(y: reduceMotion || feedback.notice == nil ? 0 : 8)
-            .allowsHitTesting(feedback.notice == nil).accessibilityHidden(feedback.notice != nil)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: feedback.notice != nil)
+        content().opacity(notice == nil ? 1 : 0)
+            .blur(radius: reduceMotion || notice == nil ? 0 : 4)
+            .offset(y: reduceMotion || notice == nil ? 0 : 8)
+            .allowsHitTesting(notice == nil).accessibilityHidden(notice != nil)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: notice != nil)
             .overlay(alignment: .leading) {
-                if let notice = feedback.notice {
+                if let notice = notice {
                     Button(action: activate) {
                         HStack(spacing: 8) {
                             GolzheimIcon(icon: notice.icon, size: 12)
@@ -83,7 +99,7 @@ struct AddressFeedback<Content: View>: View {
                         .accessibilityLabel(notice.text + ", address bar").help("search or surf...")
                 }
             }.clipped().animation(
-                reduceMotion ? .easeOut(duration: 0.1) : .smooth(duration: 0.18), value: feedback.notice?.id)
+                reduceMotion ? .easeOut(duration: 0.1) : .smooth(duration: 0.18), value: notice?.id)
     }
 }
 
@@ -289,7 +305,9 @@ final class BrowserNotificationCardView: NSView {
     let fill = NSView()
     private let icon = NSImageView()
     let dismissButton = NSButton()
+    let actionButton = NSButton()
     private var dismiss: (() -> Void)?
+    private var action: (() -> Void)?
     private var measuredSize = NSSize.zero
     private var textWidth: CGFloat = 0
     private var textHeight: CGFloat = 0
@@ -339,6 +357,13 @@ final class BrowserNotificationCardView: NSView {
         addSubview(icon)
         addSubview(label)
         addSubview(dismissButton)
+        actionButton.isBordered = false
+        actionButton.font = .systemFont(ofSize: 12, weight: .medium)
+        actionButton.alignment = .left
+        actionButton.target = self
+        actionButton.action = #selector(performNoticeAction)
+        actionButton.isHidden = true
+        addSubview(actionButton)
         setAccessibilityElement(false)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -347,6 +372,12 @@ final class BrowserNotificationCardView: NSView {
         reduceTransparency: Bool = false, dismiss: @escaping () -> Void
     ) {
         self.dismiss = dismiss
+        action = notice.action
+        actionButton.isHidden = action == nil
+        actionButton.title = (notice.actionTitle ?? "open") + "  ⇧⌘K"
+        actionButton.setAccessibilityLabel(notice.actionTitle ?? "open")
+        actionButton.setAccessibilityHelp("Command-Shift-K")
+        actionButton.contentTintColor = .labelColor
         appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         icon.image =
             Golzheim.image(notice.icon.rawValue, size: 13)
@@ -363,7 +394,7 @@ final class BrowserNotificationCardView: NSView {
         label.setAccessibilityLabel(notice.text)
         label.attributedStringValue = text
 
-        textWidth = min(309, max(1, ceil(text.size().width) + 4))
+        textWidth = min(309, max(action == nil ? 1 : 180, ceil(text.size().width) + 4))
         let measured = text.boundingRect(
             with: NSSize(width: max(1, textWidth - 4), height: 100_000),
             options: [.usesLineFragmentOrigin, .usesFontLeading])
@@ -372,7 +403,7 @@ final class BrowserNotificationCardView: NSView {
                 forBounds: NSRect(x: 0, y: 0, width: textWidth, height: 100_000)
             ).height ?? 0
         textHeight = ceil(max(measured.height, cellHeight))
-        measuredSize = NSSize(width: 71 + textWidth, height: max(32, textHeight + 16))
+        measuredSize = NSSize(width: 71 + textWidth, height: max(32, textHeight + 16 + (action == nil ? 0 : 27)))
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let opacity = ProfileTransparency.opacity(max(0.65, transparency), reduceTransparency: reduceTransparency)
@@ -386,6 +417,8 @@ final class BrowserNotificationCardView: NSView {
     }
     func clear() {
         dismiss = nil
+        action = nil
+        actionButton.isHidden = true
         label.stringValue = ""
         measuredSize = .zero
     }
@@ -396,7 +429,13 @@ final class BrowserNotificationCardView: NSView {
         icon.frame = NSRect(x: 12, y: 9, width: 15, height: 15)
         label.frame = NSRect(x: 35, y: 8, width: textWidth, height: textHeight)
         dismissButton.frame = NSRect(x: bounds.width - 28, y: 8, width: 16, height: 16)
+        actionButton.frame = NSRect(x: 35, y: textHeight + 13, width: textWidth, height: 20)
         layer?.shadowPath = RoundedRectangle(cornerRadius: 12, style: .continuous).path(in: bounds).cgPath
     }
     @objc private func dismissNotice() { dismiss?() }
+    @objc private func performNoticeAction() {
+        let callback = action
+        dismiss?()
+        callback?()
+    }
 }

@@ -390,17 +390,15 @@ struct PointerCapturePosition {
         WKWebpagePreferences().responds(to: NSSelectorFromString("_setAutoplayPolicy:"))
     }
     static var supportsSitePopups: Bool {
-        WKWebpagePreferences().responds(to: NSSelectorFromString("_setPopUpPolicy:"))
+        true
     }
-    @discardableResult static func setSitePopups(_ preferences: WKWebpagePreferences, allowed: Bool) -> Bool {
-
-        let selector = NSSelectorFromString("_setPopUpPolicy:")
-        guard preferences.responds(to: selector), let implementation = preferences.method(for: selector) else {
-            return false
+    static func popupIsUserInitiated(_ action: WKNavigationAction) -> Bool {
+        let selector = NSSelectorFromString("_isUserInitiated")
+        guard action.responds(to: selector), let implementation = action.method(for: selector) else {
+            return action.navigationType == .linkActivated
         }
-        typealias Setter = @convention(c) (AnyObject, Selector, Int) -> Void
-        unsafeBitCast(implementation, to: Setter.self)(preferences, selector, allowed ? 1 : 0)
-        return true
+        typealias Getter = @convention(c) (AnyObject, Selector) -> Bool
+        return unsafeBitCast(implementation, to: Getter.self)(action, selector)
     }
     @discardableResult static func setSiteAutoplay(_ preferences: WKWebpagePreferences, allowed: Bool) -> Bool {
 

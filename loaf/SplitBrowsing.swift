@@ -199,9 +199,9 @@ struct LinkPreviewToast: View {
             ["http", "https"].contains(scheme), let destination = LinkOpenDestination.from(modifiers)
         else { return address }
         switch destination {
-        case .backgroundTab: return "open \(address) in new tab"
-        case .foregroundTab: return "open \(address) in new tab (focus)"
-        case .window: return "open \(address) in new window"
+        case .backgroundTab: return "open \(address) in a new tab"
+        case .foregroundTab: return "open \(address) in a new tab and focus it"
+        case .window: return "open \(address) in a new window"
         }
     }
     var body: some View {

@@ -47,6 +47,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     private var authenticationNavigationURL: URL?
     private var activeNavigation: WKNavigation?
     var contextMenuWindowURL: URL?
+    var blockedPopup: BlockedPopup?
     var downloadClickOrigin: DownloadClickOrigin?
     var externalAppLinks = ExternalAppLinks()
     var lastActivated = Date()
@@ -240,15 +241,20 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
 
     private func makeWebView() -> WKWebView {
         guard let store else { preconditionFailure("Cannot create a page for a disposed tab") }
+        let inheritsPopupPreferences = pendingConfiguration != nil
         let config = pendingConfiguration ?? WKWebViewConfiguration()
         pendingConfiguration = nil
         config.userContentController = WKUserContentController()
         config.websiteDataStore = store.runtime(for: profileID).dataStore
         config.webExtensionController = store.runtime(for: profileID).extensions.controller
+        config.preferences = (config.preferences.copy() as? WKPreferences) ?? WKPreferences()
         config.preferences.isFraudulentWebsiteWarningEnabled = true
         config.preferences.isElementFullscreenEnabled = true
         WebKitAdapter.enablePictureInPicture(config.preferences)
-        config.preferences.javaScriptCanOpenWindowsAutomatically = false
+        if !inheritsPopupPreferences { config.preferences.javaScriptCanOpenWindowsAutomatically = false }
+        config.userContentController.addUserScript(WKUserScript(
+            source: PopupBlocking.script, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
+        config.userContentController.add(WeakScriptHandler(self), contentWorld: .page, name: "loafBlockedPopup")
         config.upgradeKnownHostsToHTTPS = true
 
         config.mediaTypesRequiringUserActionForPlayback = .all
@@ -474,6 +480,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             ?? SiteSettings(
                 userAgent: store.preferences.userAgentMode ?? .automatic,
                 customUserAgent: store.preferences.customUserAgent)
+        webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically = settings.automaticPopups == true
         if webView.pageZoom != settings.zoom { webView.pageZoom = settings.zoom }
         let userAgent = DesktopIdentity.userAgent(
             mode: settings.userAgent,
@@ -491,7 +498,6 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         }
         preferences.allowsContentJavaScript = settings?.javascript ?? true
         WebKitAdapter.setSiteAutoplay(preferences, allowed: settings?.autoplay == true)
-        WebKitAdapter.setSitePopups(preferences, allowed: settings?.automaticPopups == true)
         self.webView(webView, decidePolicyFor: navigationAction) { decisionHandler($0, preferences) }
     }
     func updateBlocker() {
@@ -511,6 +517,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         guard let store, let webView = existingWebView else { return }
         let controller = webView.configuration.userContentController
         controller.removeAllUserScripts()
+        controller.addUserScript(WKUserScript(
+            source: PopupBlocking.script, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
         controller.addUserScript(
             WKUserScript(
                 source: SiteShortcutBridge.script, injectionTime: .atDocumentStart, forMainFrameOnly: false,
@@ -551,6 +559,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
 
     func dispose() {
         guard !isDisposed else { return }
+        clearBlockedPopup()
         isDisposed = true
         pendingOpenerReturn = nil
         confirmedOpenerCloseNavigationID = nil
@@ -614,6 +623,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         webView.configuration.userContentController.removeScriptMessageHandler(
             forName: "loafNotification", contentWorld: .page)
         webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: "loafBlockedPopup", contentWorld: .page)
+        webView.configuration.userContentController.removeScriptMessageHandler(
             forName: "loafPassword", contentWorld: PageScripts.passwordWorld)
         webView.setAllMediaPlaybackSuspended(true, completionHandler: nil)
         webView.closeAllMediaPresentations(completionHandler: nil)
@@ -633,10 +644,11 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             decisionHandler(.cancel)
             return
         }
-        guard let target = action.request.url else {
+        guard let requestedTarget = action.request.url else {
             decisionHandler(.cancel)
             return
         }
+        let target = requestedTarget.absoluteString.isEmpty ? URL(string: "about:blank")! : requestedTarget
         let scheme = target.scheme?.lowercased() ?? ""
         guard ["https", "http", "webkit-extension", "about", "blob"].contains(scheme) else {
             decisionHandler(.cancel)
@@ -736,6 +748,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         guard existingWebView === webView, page == .web else { return }
+        clearBlockedPopup()
         if requestedURL != nil, let activeNavigation, let navigation, activeNavigation !== navigation { return }
         reloadRequested = false
         if faviconRefreshNavigation !== navigation { faviconRefreshNavigation = nil }
@@ -908,7 +921,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
         guard action.targetFrame == nil, let store else { return nil }
-        if let target = action.request.url,
+        if let target = action.request.url, !target.absoluteString.isEmpty,
             !["https", "http", "webkit-extension", "about", "blob"].contains(target.scheme?.lowercased() ?? "")
         {
             externalAppLinks.request(target, from: self, action: action)
@@ -922,13 +935,18 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 tab.downloadClickOrigin = downloadClickOrigin
                 window.joinBrowsingTrail(tab, source: self)
                 tab.loaded = true
+                tab.url = action.request.url.flatMap { $0.absoluteString.isEmpty ? nil : $0 } ?? URL(string: "about:blank")
                 return tab.webView
             }
+        }
+        guard WebKitAdapter.popupIsUserInitiated(action) || allowsAutomaticPopups(in: action.sourceFrame) else {
+            return nil
         }
         let tab = store.newTab(profileID: profileID, showOmnibar: false, configuration: configuration)
         tab.downloadClickOrigin = downloadClickOrigin
         store.joinBrowsingTrail(tab, source: self)
         tab.loaded = true
+        tab.url = action.request.url.flatMap { $0.absoluteString.isEmpty ? nil : $0 } ?? URL(string: "about:blank")
         return tab.webView
     }
     func webViewDidClose(_ webView: WKWebView) {
@@ -1125,6 +1143,10 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let liveView = existingWebView, message.webView === liveView, page == .web else { return }
         guard let body = message.body as? [String: Any] else { return }
+        if message.name == "loafBlockedPopup" {
+            reportBlockedPopup(message)
+            return
+        }
         if message.name == "loafPageRevision", body["edited"] as? Bool == true {
             pageRevision = UUID()
             return
