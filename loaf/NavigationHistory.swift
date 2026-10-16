@@ -196,6 +196,7 @@ struct NavigationHistoryButton: NSViewRepresentable {
         private var openedHistory = false
         override init(frame: NSRect) {
             super.init(frame: frame)
+            clipsToBounds = true
             isBordered = false
             imagePosition = .imageOnly
             setButtonType(.momentaryChange)
@@ -225,7 +226,7 @@ struct NavigationHistoryButton: NSViewRepresentable {
         func refreshHover() {
             let inside: Bool
             if let window, NSApp.isActive, window.isVisible, !isHiddenOrHasHiddenAncestor {
-                inside = visibleRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+                inside = bounds.intersection(visibleRect).contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
             } else {
                 inside = false
             }
@@ -233,7 +234,7 @@ struct NavigationHistoryButton: NSViewRepresentable {
             hovered = inside
             needsDisplay = true
         }
-        override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+        override func mouseEntered(with event: NSEvent) { refreshHover() }
         override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
         override func draw(_ dirtyRect: NSRect) {
 

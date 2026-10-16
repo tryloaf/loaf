@@ -422,6 +422,10 @@ extension BrowserWindowState {
                 return [tab]
             }
     }
+    func clearSidebarSelection() {
+        if !selectedSidebarTabIDs.isEmpty { selectedSidebarTabIDs = [] }
+        sidebarSelectionAnchor = nil
+    }
     func selectSidebarTab(_ tab: BrowserTab, modifiers: NSEvent.ModifierFlags = []) {
         guard !tab.isDisposed, tab.store === self, tab.profileID == selectedProfileID else { return }
         let visible = sidebarSelectableTabs

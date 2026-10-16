@@ -219,6 +219,10 @@ struct SidebarInteractions: NSViewRepresentable {
         var trayProgress: CGFloat = 0
         private var swipingTray = false
         private var profileReset: DispatchWorkItem?
+        override func mouseDown(with event: NSEvent) {
+            store?.clearSidebarSelection()
+            super.mouseDown(with: event)
+        }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if let monitor {

@@ -730,6 +730,11 @@ struct TabListContent: View {
         }
         .padding(.horizontal, 8).padding(.bottom, SidebarTabMetrics.bottomPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background {
+            Color.clear.contentShape(Rectangle())
+                .onTapGesture { store.clearSidebarSelection() }
+                .accessibilityHidden(true)
+        }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: slot)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: entries.map(\.id))
     }
