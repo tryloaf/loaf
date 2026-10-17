@@ -50,7 +50,7 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
         return combined
     }
 
-    static func search(_ query: String, publicSnippetsOnly: Bool = false, reading: (([WebSearchResult]) -> Void)? = nil)
+    static func search(_ query: String, publicSnippetsOnly: Bool = false, engine: SearchEngine = .google, reading: (([WebSearchResult]) -> Void)? = nil)
         async throws -> [WebSearchResult]
     {
         let official = !publicSnippetsOnly && isLoafQuestion(query)
@@ -64,15 +64,15 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
         var results = seeds
         if !official {
             if publicSnippetsOnly {
-                results = try await searchResults(query, publicOnly: true)
+                results = try await searchResults(query, engine: engine, publicOnly: true)
             } else {
-                async let primary = try? searchResults(query, publicOnly: publicSnippetsOnly)
+                async let primary = try? searchResults(query, engine: engine, publicOnly: publicSnippetsOnly)
                 let technical =
                     query.range(
                         of: #"\b(api|sdk|swiftui|webkit|javascript|python|typescript|programming|framework|library)\b"#,
                         options: [.regularExpression, .caseInsensitive]) != nil
                 async let focused = try? searchResults(
-                    query + (technical ? " official documentation" : " official"), publicOnly: publicSnippetsOnly)
+                    query + (technical ? " official documentation" : " official"), engine: engine, publicOnly: publicSnippetsOnly)
                 let (main, additional) = await (primary ?? [], focused ?? [])
                 results =
                     Array(main.prefix(3)) + Array(additional.prefix(3)) + Array(main.dropFirst(3))
@@ -157,10 +157,11 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
         return 0
     }
 
-    private static func searchResults(_ query: String, publicOnly: Bool = false) async throws -> [WebSearchResult] {
+    private static func searchResults(_ query: String, engine: SearchEngine = .google, publicOnly: Bool = false) async throws -> [WebSearchResult] {
         var fallback = URLComponents(string: "https://html.duckduckgo.com/html/")!
         fallback.queryItems = [URLQueryItem(name: "q", value: query)]
-        let urls = [SearchEngine.google.url(for: query), fallback.url].compactMap { $0 }
+        // Respect the chosen engine, including failures; never send a query to another provider silently.
+        let urls = (engine == .duckduckgo ? [fallback.url] : [engine.url(for: query)]).compactMap { $0 }
         let webView = makeWebView(publicOnly: publicOnly)
         let publicNavigation = publicOnly ? PublicSearchNavigation() : nil
         if let publicNavigation {
@@ -257,24 +258,28 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
 
     nonisolated static let resultsScript = #"""
         const seen = new Set(), results = [];
-        for (const heading of document.querySelectorAll('h3, a.result__a')) {
-          const anchor = heading.matches('a') ? heading : heading.closest('a');
+        for (const heading of document.querySelectorAll('h3, .b_algo h2, a.result__a')) {
+          const anchor = heading.matches('a') ? heading : heading.closest('a') || heading.querySelector('a');
           if (!anchor || anchor.closest('[data-text-ad], [data-ad-client], .result--ad')) continue;
           let url;
           try {
             url = new URL(anchor.href);
+            if (/(^|\.)bing\.com$/.test(url.hostname) && url.pathname.startsWith('/ck/')) {
+              const encoded = url.searchParams.get('u');
+              if (encoded?.startsWith('a1')) url = new URL(atob(encoded.slice(2).replace(/-/g, '+').replace(/_/g, '/')));
+            }
             if (url.pathname === '/url' && /(^|\.)google\.com$/.test(url.hostname))
               url = new URL(url.searchParams.get('q') || url.searchParams.get('url'));
             if (/(^|\.)duckduckgo\.com$/.test(url.hostname) && url.searchParams.has('uddg'))
               url = new URL(url.searchParams.get('uddg'));
           } catch { continue; }
           if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password ||
-              /(^|\.)(google|duckduckgo)\.com$/.test(url.hostname) || seen.has(url.href)) continue;
+              /(^|\.)(google|duckduckgo|bing)\.com$/.test(url.hostname) || seen.has(url.href)) continue;
           seen.add(url.href);
           let container = anchor.parentElement;
           for (let depth = 0; depth < 7 && container?.parentElement; depth++) {
             const parent = container.parentElement;
-            if (parent.querySelectorAll('h3, a.result__a').length > 1) break;
+            if (parent.querySelectorAll('h3, .b_algo h2, a.result__a').length > 1) break;
             container = parent;
             if (container.innerText.length > heading.innerText.length + 180) break;
           }

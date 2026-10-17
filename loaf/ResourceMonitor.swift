@@ -34,12 +34,13 @@ nonisolated struct BrowsingTimeRecord: Codable {
             records = Array(saved.suffix(5_000))
         }
         refreshBattery()
-        powerSource = IOPSNotificationCreateRunLoopSource({ context in
-            guard let context else { return }
-            MainActor.assumeIsolated {
-                Unmanaged<ResourceMonitor>.fromOpaque(context).takeUnretainedValue().refreshBattery()
-            }
-        }, Unmanaged.passUnretained(self).toOpaque())?.takeRetainedValue()
+        powerSource = IOPSNotificationCreateRunLoopSource(
+            { context in
+                guard let context else { return }
+                MainActor.assumeIsolated {
+                    Unmanaged<ResourceMonitor>.fromOpaque(context).takeUnretainedValue().refreshBattery()
+                }
+            }, Unmanaged.passUnretained(self).toOpaque())?.takeRetainedValue()
         if let powerSource { CFRunLoopAddSource(CFRunLoopGetMain(), powerSource, .commonModes) }
         for name in [
             Notification.Name.NSProcessInfoPowerStateDidChange,
@@ -81,8 +82,9 @@ nonisolated struct BrowsingTimeRecord: Codable {
     }
     var automaticSaverRequested: Bool {
         let threshold = application?.preferences.powerSaverThreshold ?? 0
-        return hasInternalBattery && (systemLowPower
-            || (!charging && threshold > 0 && batteryPercent.map { $0 <= threshold } == true))
+        return hasInternalBattery
+            && (systemLowPower
+                || (!charging && threshold > 0 && batteryPercent.map { $0 <= threshold } == true))
     }
     func applyPowerPolicy() {
         guard let application else { return }
@@ -90,13 +92,16 @@ nonisolated struct BrowsingTimeRecord: Codable {
             preferences: application.preferences, hasInternalBattery: hasInternalBattery,
             onACPower: charging, batteryPercent: batteryPercent, systemLowPower: systemLowPower)
         if saverEnabled != policy.batterySaver { saverEnabled = policy.batterySaver }
-        let foreground = NSApp.isActive ? application.windows.first {
-            $0.nativeWindow?.isKeyWindow == true && $0.nativeWindow?.isMiniaturized == false
-        } : nil
-        let foregroundTabs = Set(foreground?.tabs.filter {
-            !$0.isDisposed && $0.page == .web
-                && (foreground?.selectedTab?.id == $0.id || foreground?.visibleSplit?.contains($0.id) == true)
-        }.map(\.id) ?? [])
+        let foreground =
+            NSApp.isActive
+            ? application.windows.first {
+                $0.nativeWindow?.isKeyWindow == true && $0.nativeWindow?.isMiniaturized == false
+            } : nil
+        let foregroundTabs = Set(
+            foreground?.tabs.filter {
+                !$0.isDisposed && $0.page == .web
+                    && (foreground?.selectedTab?.id == $0.id || foreground?.visibleSplit?.contains($0.id) == true)
+            }.map(\.id) ?? [])
         let wantsActivity = policy.gameMode && !foregroundTabs.isEmpty
         if wantsActivity && gameActivity == nil {
             gameActivity = ProcessInfo.processInfo.beginActivity(
@@ -110,7 +115,9 @@ nonisolated struct BrowsingTimeRecord: Codable {
             for tab in runtime.tabs.values {
                 guard let preferences = tab.existingWebView?.configuration.preferences else { continue }
                 let scheduling = policy.schedulingPolicy(foreground: foregroundTabs.contains(tab.id))
-                if preferences.inactiveSchedulingPolicy != scheduling { preferences.inactiveSchedulingPolicy = scheduling }
+                if preferences.inactiveSchedulingPolicy != scheduling {
+                    preferences.inactiveSchedulingPolicy = scheduling
+                }
             }
         }
     }
@@ -151,6 +158,16 @@ nonisolated struct BrowsingTimeRecord: Codable {
         let day = Self.localDay()
         return Int(records.filter { $0.day == day && $0.profileID == profileID }.reduce(0) { $0 + $1.seconds } / 60)
     }
+    func topSitesToday(profileID: UUID, limit: Int = 3) -> [(host: String, seconds: Double)] {
+        let day = Self.localDay()
+        let today = records.filter { $0.day == day && $0.profileID == profileID }
+        var totals: [String: Double] = [:]
+        for record in today { totals[record.host, default: 0] += record.seconds }
+        let sorted = totals.sorted { left, right in
+            left.value == right.value ? left.key < right.key : left.value > right.value
+        }
+        return sorted.prefix(max(0, min(8, limit))).map { (host: $0.key, seconds: $0.value) }
+    }
     func save() {
         guard let application, let data = try? JSONEncoder().encode(records) else { return }
         try? data.write(
@@ -184,24 +201,49 @@ struct BatteryWidget: View {
         return percentage <= 25 ? .batteryLow : percentage <= 65 ? .batteryHalf : .batteryFull
     }
     var body: some View {
-        StartWidgetSection(centered: true) {
-            if showsHeader {
-                Label {
-                    Text("battery")
-                } icon: {
-                    GolzheimIcon(icon: Self.icon(percentage: percentage, charging: charging), size: 18)
-                }.font(.system(size: 13))
-            }
-        } content: {
-            Text(percentage.map { "\($0)%" } ?? "plugged in").font(.system(size: 32, weight: .light))
-                .monospacedDigit().lineLimit(1).minimumScaleFactor(0.1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text(
-                saving
-                    ? "battery saver is on"
-                    : charging
-                        ? "connected to power" : percentage == nil ? "no battery in this Mac" : "on battery"
-            ).font(.system(size: 11)).foregroundStyle(.secondary)
+        GeometryReader { geometry in
+            let metrics = StartWidgetMetrics(size: geometry.size)
+            VStack(alignment: .leading, spacing: 12) {
+                if showsHeader && !metrics.tiny {
+                    Label {
+                        Text("battery")
+                    } icon: {
+                        GolzheimIcon(icon: Self.icon(percentage: percentage, charging: charging), size: 18)
+                    }.font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: metrics.expanded ? 14 : 8) {
+                    HStack(spacing: 8) {
+                        Text(percentage.map { "\($0)%" } ?? "plugged in")
+                            .font(
+                                .system(
+                                    size: metrics.numberSize(maximum: 84, characters: percentage == nil ? 9 : 3.4),
+                                    weight: .light)
+                            )
+                            .monospacedDigit().lineLimit(1).minimumScaleFactor(0.6)
+                        if metrics.tiny {
+                            GolzheimIcon(icon: Self.icon(percentage: percentage, charging: charging), size: 16)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if let percentage, geometry.size.height >= 220 || geometry.size.width >= 280 {
+                        GeometryReader { track in
+                            Capsule().fill(Color.primary.opacity(0.06))
+                            Capsule().fill(Color.primary.opacity(0.28)).frame(
+                                width: track.size.width * Double(min(100, max(0, percentage))) / 100)
+                        }.frame(maxWidth: 240).frame(height: 5).accessibilityLabel("\(percentage) percent charge")
+                    }
+                    if geometry.size.height >= 70 {
+                        Text(
+                            saving
+                                ? "battery saver is on"
+                                : charging
+                                    ? "connected to power" : percentage == nil ? "no battery in this Mac" : "on battery"
+                        )
+                        .font(.system(size: metrics.expanded ? 13 : 11)).foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }
@@ -210,21 +252,40 @@ struct BrowsingTimeWidget: View {
     @ObservedObject var store: BrowserStore
     @ObservedObject var monitor: ResourceMonitor
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if store.preferences.tracksScreenTime == true {
-                Text("\(monitor.minutesToday(profileID: store.selectedProfileID)) min").font(
-                    .system(size: 32, weight: .light)
-                ).monospacedDigit()
-                Text("today in this profile").font(.system(size: 11)).foregroundStyle(.secondary)
-            } else {
-                Text(
-                    "save time spent on focused pages and playing media. site totals stay on this Mac; private browsing is excluded."
-                ).font(.system(size: 11)).foregroundStyle(.secondary)
-                Button("enable local time tracking") {
-                    store.preferences.tracksScreenTime = true
-                    store.persistSoon()
-                }.controlSize(.small)
-            }
-        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        GeometryReader { geometry in
+            let metrics = StartWidgetMetrics(size: geometry.size)
+            VStack(alignment: .leading, spacing: 12) {
+                if store.preferences.tracksScreenTime == true {
+                    Text("\(monitor.minutesToday(profileID: store.selectedProfileID)) min")
+                        .font(.system(size: metrics.numberSize(maximum: 76, characters: 5), weight: .light))
+                        .monospacedDigit().lineLimit(1).minimumScaleFactor(0.6)
+                    Text("today in this profile").font(.system(size: 11)).foregroundStyle(.secondary)
+                    if metrics.tall {
+                        let sites = monitor.topSitesToday(profileID: store.selectedProfileID)
+                        if !sites.isEmpty {
+                            VStack(spacing: 12) {
+                                ForEach(sites, id: \.host) { site in
+                                    HStack {
+                                        Text(site.host).lineLimit(1).truncationMode(.middle)
+                                        Spacer(minLength: 8)
+                                        Text(site.seconds < 60 ? "<1 min" : "\(Int(site.seconds / 60)) min")
+                                            .monospacedDigit()
+                                    }.font(.system(size: 11)).foregroundStyle(.secondary)
+                                }
+                            }.padding(.top, 10)
+                        }
+                    }
+                } else {
+                    Text(
+                        "save time spent on focused pages and playing media. site totals stay on this Mac; private browsing is excluded."
+                    )
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    Button("enable local time tracking") {
+                        store.preferences.tracksScreenTime = true
+                        store.persistSoon()
+                    }.controlSize(.small)
+                }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
     }
 }

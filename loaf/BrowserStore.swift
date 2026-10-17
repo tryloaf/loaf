@@ -752,7 +752,7 @@ import WebKit
     func performAlternateSearch(_ query: String) {
         let redirect = preferences.alternateSearch ?? SearchRedirect()
         guard redirect.enabled else { return }
-        if [.chatgpt, .claude, .appleIntelligence].contains(redirect.provider) {
+        if [.automatic, .chatgpt, .claude, .appleIntelligence].contains(redirect.provider) {
             guard preferences.aiFeaturesEnabled != false else {
                 navigate(query)
                 return
@@ -766,7 +766,7 @@ import WebKit
             openInternal(.ask, inNewTab: createsTab)
             selectedTab?.chatGPTSearch.open(
                 query: input,
-                provider: redirect.provider == .chatgpt
+                provider: redirect.provider == .automatic ? nil : redirect.provider == .chatgpt
                     ? .chatgpt
                     : redirect.provider == .claude
                         ? .claude : preferences.aiProvider == .privateCloud ? .privateCloud : .onDevice)

@@ -168,9 +168,13 @@ struct StartWorldClockWidget: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             GeometryReader { geometry in
                 let zones = StartWorldClock.zones(options.timeZones)
-                let compact = geometry.size.height < CGFloat(zones.count * 32 + (showsHeader ? 28 : 0))
-                VStack(alignment: .leading, spacing: compact ? 6 : 10) {
-                    if showsHeader && geometry.size.height >= 100 {
+                let header = showsHeader && geometry.size.height >= 125
+                let rowHeight = (geometry.size.height - (header ? 28 : 0)) / CGFloat(max(1, zones.count))
+                let compact = rowHeight < 36 || geometry.size.width < 150
+                let timeSize = min(32, max(8, min(rowHeight * 0.45, geometry.size.width * 0.10)))
+                let date = MarketingLaunch.displayDate(context.date)
+                VStack(alignment: .leading, spacing: 10) {
+                    if header {
                         HStack(spacing: 6) {
                             GolzheimIcon(icon: .globe, size: 13)
                             Text("world clock").font(.system(size: 12, weight: .medium))
@@ -179,29 +183,67 @@ struct StartWorldClockWidget: View {
                     if zones.isEmpty {
                         Text("choose places in widget settings").font(.system(size: 12)).foregroundStyle(.secondary)
                     } else {
-                        VStack(spacing: compact ? 6 : 10) {
+                        VStack(spacing: compact ? (rowHeight < 25 ? 1 : 4) : 10) {
                             ForEach(zones, id: \.identifier) { zone in
-                                HStack(alignment: .center, spacing: 6) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(StartWorldClock.city(zone)).font(.system(size: compact ? 11 : 12))
+                                if geometry.size.width < 230 && rowHeight >= 72 {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(StartWorldClock.city(zone)).font(.system(size: 12))
+                                            .foregroundStyle(.secondary).lineLimit(1).help(StartWorldClock.city(zone))
+                                        Text(
+                                            StartWorldClock.time(date, zone: zone, hour24: options.clock24Hour == true)
+                                        )
+                                        .font(.system(size: min(32, geometry.size.width / 5.2), weight: .light))
+                                        .monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                                        Text(
+                                            StartWorldClock.day(date, zone: zone) + " · "
+                                                + (zone.abbreviation(for: date) ?? "")
+                                        )
+                                        .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                                    }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                                        .accessibilityElement(children: .combine)
+                                } else {
+                                    HStack(spacing: compact ? 5 : 12) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(
+                                                geometry.size.width < 115
+                                                    ? Self.shortCity(zone) : StartWorldClock.city(zone)
+                                            ).font(
+                                                .system(size: compact ? 10 : min(16, timeSize * 0.56))
+                                            )
                                             .lineLimit(1).truncationMode(.tail).help(StartWorldClock.city(zone))
-                                        if !compact {
-                                            Text(StartWorldClock.day(MarketingLaunch.displayDate(context.date), zone: zone))
-                                                .font(.system(size: 10)).foregroundStyle(.secondary)
+                                            if !compact {
+                                                Text(
+                                                    StartWorldClock.day(date, zone: zone)
+                                                        + (geometry.size.width >= 280
+                                                            ? " · " + (zone.abbreviation(for: date) ?? "") : "")
+                                                )
+                                                .font(.system(size: timeSize >= 26 ? 11 : 10)).foregroundStyle(
+                                                    .secondary)
+                                            }
+                                        }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                                        if geometry.size.width >= 300 && rowHeight >= 65 {
+                                            StartClockDial(date: date, zone: zone).frame(width: 38, height: 38)
                                         }
-                                    }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                                    Text(StartWorldClock.time(MarketingLaunch.displayDate(context.date), zone: zone,
-                                        hour24: options.clock24Hour == true))
-                                        .font(.system(size: compact ? 12 : 14)).monospacedDigit()
-                                        .lineLimit(1).fixedSize().layoutPriority(1)
-                                }.accessibilityElement(children: .combine)
+                                        Text(
+                                            StartWorldClock.time(date, zone: zone, hour24: options.clock24Hour == true)
+                                        )
+                                        .font(.system(size: timeSize, weight: .regular)).monospacedDigit()
+                                        .lineLimit(1).minimumScaleFactor(0.75).layoutPriority(1)
+                                    }.frame(maxHeight: .infinity).accessibilityElement(children: .combine)
+                                }
                             }
-                        }.frame(maxHeight: .infinity, alignment: .center)
+                        }.frame(maxHeight: .infinity)
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
     }
+    private static func shortCity(_ zone: TimeZone) -> String {
+        let city = StartWorldClock.city(zone)
+        return ["Los Angeles": "LA", "New York": "NYC", "London": "LDN", "Tokyo": "TYO"][city]
+            ?? String(city.prefix(3)).uppercased()
+    }
+
 }
 
 struct StartWorldClockSettings: View {

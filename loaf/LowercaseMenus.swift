@@ -73,6 +73,12 @@ import WebKit
                 + item.title.dropFirst(prefix.count)
             return
         }
+        if item.identifier?.rawValue == "loaf.applicationMenu" {
+            if item.title != "loaf" { item.title = "loaf" }
+            if item.submenu?.title != "loaf" { item.submenu?.title = "loaf" }
+            if let submenu = item.submenu { normalize(submenu) }
+            return
+        }
         let lastDisplayed = objc_getAssociatedObject(item, &displayedTitleKey) as? String
         let original =
             lastDisplayed == item.title
@@ -173,7 +179,8 @@ extension NSMenuItem {
 @MainActor final class LoafMainMenus: NSObject, NSMenuDelegate, NSMenuItemValidation {
     private enum Command: String {
         case about, updates, settings, defaultBrowser, newWindow, newTab, newPrivateWindow, closeTab, save, printPage
-        case find, location, copyURL, wonderbarCommands, sidebar, sideChat, summarize, reload, reloadFromOrigin, reader, zoomIn,
+        case find, location, copyURL, wonderbarCommands, sidebar, sideChat, summarize, reload, reloadFromOrigin, reader,
+            zoomIn,
             zoomOut, actualSize
         case back, forward, history, reopenTab, reopenWindow, bookmark, favorites
         case nextTab, previousTab, pin, duplicate, downloads, previousProfile, nextProfile, editProfile, addProfile
@@ -190,6 +197,7 @@ extension NSMenuItem {
     private var editingMenu: NSMenu?
     private var refreshPending = false
     private var mainMenu: NSMenu?
+    private var applicationMenu: NSMenu?
     private var baseItems: [NSMenuItem] = []
     private var mainMenuObservation: NSKeyValueObservation?
     private var restoringMainMenu = false
@@ -246,6 +254,8 @@ extension NSMenuItem {
         }
         let main = NSMenu(title: "loaf")
         let app = appendMenu("loaf", to: main)
+        applicationMenu = app
+        main.items.first?.identifier = .init("loaf.applicationMenu")
         add("About loaf", .about, to: app)
         add("Check for Updates…", .updates, to: app)
         app.addItem(.separator())
@@ -680,6 +690,11 @@ extension NSMenuItem {
             }
             while main.numberOfItems > expected.count { main.removeItem(at: main.numberOfItems - 1) }
         }
+        if let app = baseItems.first {
+            if app.submenu !== applicationMenu { app.submenu = applicationMenu }
+            if app.title != "loaf" { app.title = "loaf" }
+            if app.submenu?.title != "loaf" { app.submenu?.title = "loaf" }
+        }
         if NSApp.mainMenu !== main { NSApp.mainMenu = main }
         if let services = baseItems.first?.submenu?.items.first(where: { $0.title.lowercased() == "services" })?
             .submenu,
@@ -732,7 +747,9 @@ extension NSMenuItem {
             item.state = application.preferences.gameMode != true && application.resources.saverEnabled ? .on : .off
             let automatic = application.resources.automaticSaverRequested && application.preferences.gameMode != true
             item.title = automatic ? "power saver (automatic)" : "power saver"
-            item.toolTip = application.preferences.gameMode == true ? "off while game mode is on."
+            item.toolTip =
+                application.preferences.gameMode == true
+                ? "off while game mode is on."
                 : automatic ? "controlled by macOS Low Power Mode or your battery threshold." : nil
             LowercaseMenus.normalize(item)
             return application.resources.hasInternalBattery && application.preferences.gameMode != true && !automatic

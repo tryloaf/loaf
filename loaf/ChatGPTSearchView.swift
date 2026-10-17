@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ChatGPTConnectionView: View {
     @ObservedObject var account: ChatGPTAccount
+    var showModel = true
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if account.connected {
@@ -16,7 +17,7 @@ struct ChatGPTConnectionView: View {
                         account.disconnect()
                     }
                 }
-                ChatModelPicker(account: account).controlSize(.small)
+                if showModel { ChatModelPicker(account: account).controlSize(.small) }
                 HStack(spacing: 12) {
                     Link("manage usage", destination: ChatGPTProtocol.usageURL)
                     SettingsActionButton(
@@ -46,10 +47,12 @@ struct ChatGPTConnectionView: View {
                 Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 if !account.connected { Link("manage usage", destination: ChatGPTProtocol.usageURL).font(.caption) }
             }
-            Text(
-                "queries, follow-ups, and any page context you allow go to OpenAI when submitted. if built-in web search is unavailable, loaf fetches web results from Google, or DuckDuckGo if Google is unavailable, and sends those excerpts to OpenAI. Plus usage is shared with Codex and other connected apps. saved chats are encrypted on this Mac; optional iCloud sync omits image attachments."
-            )
-            .font(.caption).foregroundStyle(.secondary)
+            if showModel {
+                Text(
+                    "questions, follow-ups, and approved attachments go to OpenAI when you send. approved web tools use the AI search engine selected in intelligence settings. saved chats are encrypted on this Mac; optional iCloud sync omits image attachments."
+                )
+                .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .alert("you’re using your ChatGPT plan", isPresented: $account.showPlanWelcome) {
             Button("got it") { account.dismissWelcome() }
@@ -452,15 +455,27 @@ struct ChatGPTSearchView: View {
                         .background(Color.primary.opacity(0.045), in: Capsule())
                         Spacer(minLength: 8)
                         ChatModelMenu(
-                            account: account, claude: store.application.claudeAccount, provider: search.provider,
-                            modelID: search.modelID
-                        ) { value in
-                            if value != search.provider {
-                                store.preferences.aiProvider = value
+                            account: search.account, claude: store.application.claudeAccount, provider: search.provider,
+                            modelID: search.modelID,
+                            changeProvider: { value in
+                                store.preferences.quickSearchProvider = value
+                                store.preferences.quickSearchModelID = nil
                                 store.persistSoon()
+                                search.use(provider: value)
+                            }, automatic: search.automatic,
+                            selectAutomatic: {
+                                store.preferences.quickSearchProvider = nil
+                                store.preferences.quickSearchModelID = nil
+                                store.persistSoon()
+                                search.useAutomatic()
+                            },
+                            changeModel: { provider, id in
+                                store.preferences.quickSearchProvider = provider
+                                store.preferences.quickSearchModelID = id
+                                store.persistSoon()
+                                search.use(provider: provider, model: id)
                             }
-                            search.use(provider: value)
-                        }.frame(maxWidth: 240).disabled(search.searching)
+                        ).frame(maxWidth: 240, alignment: .trailing).disabled(search.searching)
                         ChatSendButton(busy: search.searching, canSend: canSubmit) {
                             if search.searching {
                                 search.stop()

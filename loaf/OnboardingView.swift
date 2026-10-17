@@ -186,10 +186,11 @@ struct OnboardingView: View {
                             get: { store.preferences.aiProvider },
                             set: {
                                 store.preferences.aiProvider = $0
+                                store.preferences.quickSearchProvider = $0
                                 store.persistSoon()
                             })
                     ) {
-                        Text("none").tag(Optional<AIProvider>.none)
+                        Text("automatic").tag(Optional<AIProvider>.none)
                         ForEach(AppleIntelligence.visibleProviders, id: \.self) { Text($0.title).tag(Optional($0)) }
                     }.frame(width: 200)
                 }
@@ -198,7 +199,7 @@ struct OnboardingView: View {
                     store.preferences.aiFeaturesEnabled == false
                         ? "intelligence features are off. your regular search engine still works."
                         : store.preferences.aiProvider == nil
-                            ? "no answer provider selected. alternate search will stay off."
+                            ? "automatic uses Apple Intelligence on this Mac when available, otherwise your ChatGPT connection."
                             : AppleIntelligence.unavailableReason(for: store.preferences.aiProvider ?? .chatgpt)
                                 ?? "intelligence is optional and only runs when you ask. connect ChatGPT or Claude later in intelligence settings."
                 ).font(.system(size: 11)).foregroundStyle(ink.opacity(0.6)).fixedSize(horizontal: false, vertical: true)

@@ -8,6 +8,8 @@ import WeatherKit
 nonisolated struct WeatherHour: Identifiable {
     let date: Date
     let temperature: Int
+    var icon: LoafIcon? = nil
+    var precipitationChance: Double? = nil
     var id: Date { date }
 }
 nonisolated struct WeatherPlace: Codable {
@@ -23,6 +25,8 @@ nonisolated struct WeatherSnapshot: Codable {
     struct Hour: Codable {
         let date: Date
         let celsius: Double
+        var icon: String? = nil
+        var precipitationChance: Double? = nil
     }
     enum Source: String, Codable { case apple, openMeteo }
     var updated: Date
@@ -36,7 +40,10 @@ nonisolated struct WeatherSnapshot: Codable {
     var darkMark: Data? = nil
     var valid: Bool {
         (-120...80).contains(celsius)
-            && hours.allSatisfy { (-120...80).contains($0.celsius) && $0.date.timeIntervalSince1970.isFinite }
+            && hours.allSatisfy {
+                (-120...80).contains($0.celsius) && $0.date.timeIntervalSince1970.isFinite
+                    && ($0.precipitationChance.map { $0.isFinite && (0...1).contains($0) } ?? true)
+            }
             && attributionURL.scheme == "https"
     }
 }
@@ -107,7 +114,10 @@ nonisolated struct WeatherSnapshot: Codable {
             options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
     }
     func fetch(city query: String, fahrenheit: Bool, preferredProvider: String = "automatic") async {
-        if MarketingLaunch.isStudio { MarketingLaunch.prepareWeather(self); return }
+        if MarketingLaunch.isStudio {
+            MarketingLaunch.prepareWeather(self)
+            return
+        }
         let token = UUID()
         requestID = token
         let query = Self.normalizedCity(query)
@@ -133,7 +143,10 @@ nonisolated struct WeatherSnapshot: Codable {
         }
     }
     func fetch(location: CLLocation, fahrenheit: Bool, preferredProvider: String = "automatic") async {
-        if MarketingLaunch.isStudio { MarketingLaunch.prepareWeather(self); return }
+        if MarketingLaunch.isStudio {
+            MarketingLaunch.prepareWeather(self)
+            return
+        }
         let token = UUID()
         requestID = token
         let coordinate = location.coordinate
@@ -237,8 +250,10 @@ nonisolated struct WeatherSnapshot: Codable {
         temperature = degrees(value.celsius)
         city = place.name
         condition = value.condition
-        hours = value.hours.filter { $0.date > now() }.prefix(3).map {
-            WeatherHour(date: $0.date, temperature: degrees($0.celsius))
+        hours = value.hours.filter { $0.date > now() }.prefix(24).map {
+            WeatherHour(
+                date: $0.date, temperature: degrees($0.celsius),
+                icon: $0.icon.flatMap(LoafIcon.init(rawValue:)), precipitationChance: $0.precipitationChance)
         }
         icon = LoafIcon(rawValue: value.icon) ?? .sun
         updated = value.updated
@@ -305,20 +320,13 @@ nonisolated struct WeatherSnapshot: Codable {
             for: CLLocation(latitude: place.latitude, longitude: place.longitude), including: .current, .hourly)
         let mark = try await marks()
         let current = result.0
-        let symbol = current.symbolName
-        let icon: LoafIcon =
-            symbol.contains("snow")
-            ? .snow
-            : symbol.contains("rain")
-                ? .rain
-                : symbol.contains("bolt")
-                    ? .storm
-                    : symbol.contains("fog")
-                        ? .fog : symbol.contains("cloud.sun") ? .partlyCloudy : symbol.contains("cloud") ? .cloud : .sun
+        let icon = Self.symbolIcon(current.symbolName)
         return WeatherSnapshot(
             updated: Date(), celsius: current.temperature.converted(to: .celsius).value,
             hours: result.1.forecast.prefix(48).map {
-                .init(date: $0.date, celsius: $0.temperature.converted(to: .celsius).value)
+                .init(
+                    date: $0.date, celsius: $0.temperature.converted(to: .celsius).value,
+                    icon: Self.symbolIcon($0.symbolName).rawValue, precipitationChance: $0.precipitationChance)
             },
             condition: current.condition.description, icon: icon.rawValue, source: .apple, attributionURL: mark.legal,
             lightMark: mark.light, darkMark: mark.dark)
@@ -329,7 +337,8 @@ nonisolated struct WeatherSnapshot: Codable {
             .init(name: "latitude", value: String(place.latitude)),
             .init(name: "longitude", value: String(place.longitude)),
             .init(name: "current", value: "temperature_2m,weather_code"),
-            .init(name: "hourly", value: "temperature_2m"), .init(name: "timeformat", value: "unixtime"),
+            .init(name: "hourly", value: "temperature_2m,weather_code,precipitation_probability"),
+            .init(name: "timeformat", value: "unixtime"),
             .init(name: "forecast_days", value: "2"),
         ]
         struct Forecast: Decodable {
@@ -340,45 +349,48 @@ nonisolated struct WeatherSnapshot: Codable {
             struct Hourly: Decodable {
                 let time: [Double]
                 let temperature_2m: [Double]
+                let weather_code: [Int]?
+                let precipitation_probability: [Double]?
             }
             let current: Current
             let hourly: Hourly?
         }
         let value = try JSONDecoder().decode(Forecast.self, from: await AssetRequest.data(url.url!, limit: 512 * 1024))
         let current = value.current
-        let icon: LoafIcon
-        let condition: String
-        switch current.weather_code {
-        case 0:
-            icon = .sun
-            condition = "clear skies"
-        case 1, 2:
-            icon = .partlyCloudy
-            condition = "partly cloudy"
-        case 3:
-            icon = .cloud
-            condition = "overcast"
-        case 45, 48:
-            icon = .fog
-            condition = "foggy"
-        case 71...77, 85, 86:
-            icon = .snow
-            condition = "snow"
-        case 95...99:
-            icon = .storm
-            condition = "thunderstorms"
-        default:
-            icon = .rain
-            condition = "rain"
-        }
+        let (icon, condition) = Self.appearance(code: current.weather_code)
         return WeatherSnapshot(
             updated: Date(), celsius: current.temperature_2m,
-            hours: zip(value.hourly?.time ?? [], value.hourly?.temperature_2m ?? []).map {
-                .init(date: Date(timeIntervalSince1970: $0.0), celsius: $0.1)
+            hours: zip(value.hourly?.time ?? [], value.hourly?.temperature_2m ?? []).enumerated().map { index, hour in
+                let codes = value.hourly?.weather_code ?? []
+                let chances = value.hourly?.precipitation_probability ?? []
+                return .init(
+                    date: Date(timeIntervalSince1970: hour.0), celsius: hour.1,
+                    icon: codes.indices.contains(index) ? Self.appearance(code: codes[index]).0.rawValue : nil,
+                    precipitationChance: chances.indices.contains(index) ? chances[index] / 100 : nil)
             },
             condition: condition, icon: icon.rawValue, source: .openMeteo,
             attributionURL: URL(string: "https://open-meteo.com/")!)
     }
+    private static func symbolIcon(_ symbol: String) -> LoafIcon {
+        if symbol.contains("bolt") { return .storm }
+        if symbol.contains("snow") || symbol.contains("sleet") { return .snow }
+        if symbol.contains("rain") || symbol.contains("drizzle") { return .rain }
+        if symbol.contains("fog") || symbol.contains("haze") { return .fog }
+        if symbol.contains("cloud.sun") || symbol.contains("cloud.moon") { return .partlyCloudy }
+        return symbol.contains("cloud") ? .cloud : .sun
+    }
+    private static func appearance(code: Int) -> (LoafIcon, String) {
+        switch code {
+        case 0: (.sun, "clear skies")
+        case 1, 2: (.partlyCloudy, "partly cloudy")
+        case 3: (.cloud, "overcast")
+        case 45, 48: (.fog, "foggy")
+        case 71...77, 85, 86: (.snow, "snow")
+        case 95...99: (.storm, "thunderstorms")
+        default: (.rain, "rain")
+        }
+    }
+
 }
 
 extension BrowserPreferences {

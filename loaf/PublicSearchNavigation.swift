@@ -7,7 +7,7 @@ import WebKit
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
         guard let url = navigationAction.request.url, url.scheme == "https", url.user == nil, url.password == nil,
-            let host = url.host?.lowercased(), ["www.google.com", "google.com", "html.duckduckgo.com"].contains(host)
+            let host = url.host?.lowercased(), ["www.google.com", "google.com", "html.duckduckgo.com", "www.bing.com", "bing.com"].contains(host)
         else {
             decisionHandler(.cancel)
             return

@@ -24,6 +24,13 @@ struct AISettingsView: View {
     @ObservedObject var store: BrowserStore
     @ObservedObject var account: ChatGPTAccount
     @ObservedObject var claude: ClaudeAccount
+    @ObservedObject private var accounts: ChatGPTAccounts
+    init(store: BrowserStore, account: ChatGPTAccount, claude: ClaudeAccount) {
+        self.store = store
+        self.account = account
+        self.claude = claude
+        self.accounts = store.application.chatGPTAccounts
+    }
     private func preference<Value>(_ key: WritableKeyPath<BrowserPreferences, Value?>, fallback: Value) -> Binding<
         Value
     > {
@@ -44,14 +51,23 @@ struct AISettingsView: View {
                     set: { store.application.setAIFeaturesEnabled($0) }
                 )
             ).id("ai-features")
-            Picker("answer provider", selection: preference(\.aiProvider, fallback: .chatgpt)) {
-                ForEach(AppleIntelligence.visibleProviders, id: \.self) { Text($0.title).tag($0) }
-            }.disabled(store.preferences.aiFeaturesEnabled == false)
-            if let reason = AppleIntelligence.unavailableReason(for: store.preferences.aiProvider ?? .chatgpt) {
-                Text(reason).font(.caption).foregroundStyle(.secondary)
-            }
+            AIRouteSettings(
+                store: store, accounts: accounts, claude: claude, quickSearch: true
+            )
+            .id("quick-search-model").disabled(store.preferences.aiFeaturesEnabled == false)
+            AIRouteSettings(
+                store: store, accounts: accounts, claude: claude, quickSearch: false
+            )
+            .id("side-chat-model").disabled(store.preferences.aiFeaturesEnabled == false)
             Text(
-                "choose the provider for chat and answers inside loaf. the alternate search shortcut has its own provider in search settings."
+                "automatic uses Apple Intelligence on this Mac when available, otherwise your ChatGPT connection. quick search and side chat keep separate model choices."
+            )
+            .font(.caption).foregroundStyle(.secondary)
+            Picker("AI web search engine", selection: preference(\.aiSearchEngine, fallback: .google)) {
+                ForEach([SearchEngine.google, .duckduckgo, .bing], id: \.self) { Text($0.title).tag($0) }
+            }.id("ai-search-engine").disabled(store.preferences.aiFeaturesEnabled == false)
+            Text(
+                "web tools send public search queries to this engine after your approval. site reading remains separate."
             )
             .font(.caption).foregroundStyle(.secondary)
         }
@@ -70,7 +86,10 @@ struct AISettingsView: View {
                 ForEach([AIProvider.onDevice, .chatgpt, .claude], id: \.self) { Text($0.title).tag(Optional($0)) }
             }.id("summaries")
             if summaryProvider == .chatgpt || summaryProvider == .claude {
-                let models = summaryProvider == .chatgpt ? account.models : claude.models
+                let models =
+                    summaryProvider == .chatgpt
+                    ? accounts.account(id: store.preferences.summaryAccountID).models
+                    : claude.models
                 Picker(
                     "summary model",
                     selection: Binding<String?>(
@@ -98,19 +117,24 @@ struct AISettingsView: View {
         }.disabled(store.preferences.aiFeaturesEnabled == false)
         if store.preferences.aiFeaturesEnabled != false {
             Section("ChatGPT connection") {
-                ChatGPTConnectionView(account: account).id("chatgpt-connection")
-                    .onAppear { if account.models.isEmpty { account.refreshCatalog() } }
+                ChatGPTAccountSettings(store: store, accounts: accounts).id(
+                    "chatgpt-connection")
             }
             Section("Claude connection") {
                 ClaudeConnectionView(account: claude).id("claude-connection")
             }
             Section("saved chats") {
-                Toggle("require password to use side chat", isOn: Binding(
-                    get: { store.preferences.requireSideChatPassword == true },
-                    set: { store.application.setSideChatPasswordRequired($0) }
-                )).id("side-chat-password")
-                Text("unlock once with Touch ID or your Mac password. side chat locks again when loaf quits, your Mac sleeps, or you switch users.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Toggle(
+                    "require password to use side chat",
+                    isOn: Binding(
+                        get: { store.preferences.requireSideChatPassword == true },
+                        set: { store.application.setSideChatPasswordRequired($0) }
+                    )
+                ).id("side-chat-password")
+                Text(
+                    "unlock once with Touch ID or your Mac password. side chat locks again when loaf quits, your Mac sleeps, or you switch users."
+                )
+                .font(.caption).foregroundStyle(.secondary)
                 Toggle("sync chat transcripts with iCloud", isOn: preference(\.syncSideChats, fallback: false)).id(
                     "saved-chats")
                 Text(

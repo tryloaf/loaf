@@ -2,6 +2,9 @@ import Foundation
 import FoundationModels
 
 @MainActor enum AppleIntelligence {
+    static func resolve(_ preferred: AIProvider?) -> AIProvider {
+        preferred ?? (unavailableReason(for: .onDevice) == nil ? .onDevice : .chatgpt)
+    }
     static var visibleProviders: [AIProvider] {
         unavailableReason(for: .onDevice) == nil ? [.chatgpt, .claude, .onDevice] : [.chatgpt, .claude]
     }

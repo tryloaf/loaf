@@ -1,6 +1,16 @@
 import AppKit
 import SwiftUI
 
+nonisolated enum ChromeControlLayout {
+    static func sidebarFrame(_ native: NSRect, centerY: CGFloat, floatingInset: CGFloat) -> NSRect {
+        // Compensate for the floating card's outer gutter so the controls
+        // stay at the same window coordinates as the docked sidebar.
+        NSRect(
+            x: native.minX - floatingInset, y: centerY - floatingInset - native.height / 2,
+            width: native.width, height: native.height)
+    }
+}
+
 struct WindowChrome: NSViewRepresentable {
     @ObservedObject var store: BrowserStore
     func makeNSView(context: Context) -> MetricsView {
@@ -98,6 +108,7 @@ struct FullscreenWindowControls: NSViewRepresentable {
             }
         }
         var fullscreenOnly = true { didSet { if fullscreenOnly != oldValue { updateAvailability() } } }
+        var headerCenterY: CGFloat = 16 { didSet { if headerCenterY != oldValue { placeButtons() } } }
         var floatingInset: CGFloat = 0 { didSet { if floatingInset != oldValue { placeButtons() } } }
         var dotTint: NSColor = .systemGray {
             didSet { if dotTint != oldValue { for dot in dots { dot.backgroundColor = dotTint.cgColor } } }
@@ -186,10 +197,15 @@ struct FullscreenWindowControls: NSViewRepresentable {
             windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
             windowObservers = []
             if let window {
-                for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification,
-                    NSWindow.didBecomeKeyNotification, NSWindow.didResizeNotification] {
-                    windowObservers.append(NotificationCenter.default.addObserver(forName: name,
-                        object: window, queue: .main) { [weak self] _ in
+                for name in [
+                    NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification,
+                    NSWindow.didBecomeKeyNotification, NSWindow.didResizeNotification,
+                ] {
+                    windowObservers.append(
+                        NotificationCenter.default.addObserver(
+                            forName: name,
+                            object: window, queue: .main
+                        ) { [weak self] _ in
                             DispatchQueue.main.async { [weak self] in self?.refreshWindowControls() }
                         })
                 }
@@ -217,7 +233,6 @@ struct FullscreenWindowControls: NSViewRepresentable {
         private func placeButtons() {
             updateAvailability()
 
-
             for button in subviews {
                 button.isHidden = false
                 button.alphaValue = 1
@@ -225,7 +240,11 @@ struct FullscreenWindowControls: NSViewRepresentable {
             }
             guard let window = window as? LoafBrowserWindow else { return }
             for (button, frame) in zip(subviews, window.trafficLightFrames) {
-                let target = frame.offsetBy(dx: -floatingInset, dy: -floatingInset)
+                let target =
+                    fullscreenOnly
+                    ? frame
+                    : ChromeControlLayout.sidebarFrame(
+                        frame, centerY: headerCenterY, floatingInset: floatingInset)
                 if button.frame != target { button.frame = target }
             }
             if !fullscreenOnly {
@@ -253,6 +272,7 @@ struct FullscreenWindowControls: NSViewRepresentable {
 
 struct SidebarWindowControls: NSViewRepresentable {
     var floating: Bool
+    var centerY: CGFloat = 16
     var tint: NSColor = .systemGray
     func makeNSView(context: Context) -> FullscreenWindowControls.ControlsView {
         let view = FullscreenWindowControls.ControlsView(frame: .zero)
@@ -261,6 +281,7 @@ struct SidebarWindowControls: NSViewRepresentable {
         return view
     }
     func updateNSView(_ view: FullscreenWindowControls.ControlsView, context: Context) {
+        view.headerCenterY = centerY
         view.floatingInset = floating ? 3 : 0
         let base = context.environment.colorScheme == .dark ? NSColor.white : NSColor.black
         view.dotTint = (base.blended(withFraction: 0.08, of: tint) ?? base).withAlphaComponent(

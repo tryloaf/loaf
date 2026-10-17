@@ -2,7 +2,7 @@ import AppKit
 
 nonisolated struct SearchRedirect: Codable, Sendable {
     enum Provider: String, Codable, CaseIterable, Sendable {
-        case perplexity, chatgpt, claude, appleIntelligence, duckduckgo, google, googleAIOverview, bing, ecosia, yahoo,
+        case automatic, perplexity, chatgpt, claude, appleIntelligence, duckduckgo, google, googleAIOverview, bing, ecosia, yahoo,
             startpage, kagi, wikipedia, custom
     }
     static var availableProviders: [Provider] { Provider.allCases.filter { $0 != .googleAIOverview } }
@@ -28,7 +28,7 @@ nonisolated struct SearchRedirect: Codable, Sendable {
     var template: String {
         switch provider {
         case .perplexity: "https://www.perplexity.ai/search?s=o&q={query}"
-        case .chatgpt, .claude, .appleIntelligence: ""
+        case .automatic, .chatgpt, .claude, .appleIntelligence: ""
         case .ecosia: SearchEngine.ecosia.template
         case .yahoo: SearchEngine.yahoo.template
         case .startpage: SearchEngine.startpage.template
@@ -42,7 +42,7 @@ nonisolated struct SearchRedirect: Codable, Sendable {
         }
     }
     var title: String {
-        provider == .appleIntelligence
+        provider == .automatic ? "automatic" : provider == .appleIntelligence
             ? "Apple Intelligence"
             : provider == .chatgpt
                 ? "ChatGPT"
@@ -55,7 +55,7 @@ nonisolated struct SearchRedirect: Codable, Sendable {
                         .ecosia: "Ecosia", .yahoo: "Yahoo", .startpage: "Startpage",
                     ][provider] ?? provider.rawValue
     }
-    var valid: Bool { [.chatgpt, .claude, .appleIntelligence].contains(provider) || url(for: "loaf") != nil }
+    var valid: Bool { [.automatic, .chatgpt, .claude, .appleIntelligence].contains(provider) || url(for: "loaf") != nil }
     func url(for input: String) -> URL? {
         let query = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, template.components(separatedBy: "{query}").count == 2,

@@ -805,7 +805,7 @@ import WebKit
             (firstResponder as? NSView).map { responder in
                 view.map { responder === $0 || responder.isDescendant(of: $0) } ?? false
             } ?? false
-        pageKeyboard.observe(event, webView: focused && attachedSheet == nil ? view : nil)
+        if pageKeyboard.observe(event, webView: focused && attachedSheet == nil ? view : nil) { return true }
         guard focused, attachedSheet == nil, store?.omnibarVisible != true, store?.findVisible != true,
             event.type == .keyDown, event.modifierFlags.contains(.command), let view
         else { return false }
@@ -931,6 +931,17 @@ import WebKit
                 makeFirstResponder(view)
             }
         }
+    }
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        let accepted = super.makeFirstResponder(responder)
+        if accepted {
+            let web = store?.selectedTab?.existingWebView
+            let focused = (firstResponder as? NSView).map { focus in
+                web.map { focus === $0 || focus.isDescendant(of: $0) } ?? false
+            } ?? false
+            pageKeyboard.updateFocus(focused && attachedSheet == nil ? web : nil)
+        }
+        return accepted
     }
     override func sendEvent(_ event: NSEvent) {
         if [.leftMouseDown, .rightMouseDown].contains(event.type), attachedSheet == nil,

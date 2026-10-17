@@ -153,7 +153,8 @@ struct ContentView: View {
                     leading: store.pageLeadingInset, edge: store.pageEdgeInset,
                     cornerRadius: store.pageCornerRadius, sidebarPresented: store.sidebarPresented,
                     reduceMotion: reduceMotion, trailing: store.sideChatReservedWidth(in: geometry.size.width),
-                    resizeTransition: store.preferences.resizeTransition != false
+                    resizeTransition: store.preferences.resizeTransition != false,
+                    contentID: store.selectedProfileID.uuidString + ":" + (store.selectedTab?.id.uuidString ?? "")
                 ) {
                     ZStack(alignment: .top) {
                         Color(
@@ -179,7 +180,7 @@ struct ContentView: View {
                                         if store.preferences.aiFeaturesEnabled != false {
                                             ChatGPTSearchView(
                                                 store: store, search: tab.chatGPTSearch,
-                                                account: store.application.chatGPTAccount
+                                                account: tab.chatGPTSearch.account
                                             ).id(tab.id)
                                         } else {
                                             StartPage(store: store).equatable()

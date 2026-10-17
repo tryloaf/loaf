@@ -189,14 +189,21 @@ struct ChatModelMenu: View {
     let provider: AIProvider
     var modelID: String?
     let changeProvider: (AIProvider) -> Void
+    var automatic = false
+    var selectAutomatic: (() -> Void)?
+    var changeModel: ((AIProvider, String) -> Void)?
 
     var body: some View {
         Menu {
+            if let selectAutomatic {
+                Button("automatic · prefer Apple Intelligence", action: selectAutomatic)
+                Divider()
+            }
             if account.connected {
                 ForEach(account.models) { model in
                     Button {
                         changeProvider(.chatgpt)
-                        account.selectModel(model.id)
+                        if let changeModel { changeModel(.chatgpt, model.id) } else { account.selectModel(model.id) }
                     } label: {
                         if provider == .chatgpt && (modelID ?? account.selectedModelID) == model.id {
                             Label {
@@ -218,7 +225,7 @@ struct ChatModelMenu: View {
                 ForEach(claude.models) { model in
                     Button {
                         changeProvider(.claude)
-                        claude.selectModel(model.id)
+                        if let changeModel { changeModel(.claude, model.id) } else { claude.selectModel(model.id) }
                     } label: {
                         if provider == .claude && (modelID ?? claude.selectedModelID) == model.id {
                             Label {
@@ -235,7 +242,10 @@ struct ChatModelMenu: View {
             } else {
                 Button("Claude") { changeProvider(.claude) }
             }
-            if provider == .chatgpt, let model = account.selectedModel, !model.reasoningEfforts.isEmpty {
+            if provider == .chatgpt,
+                let model = account.models.first(where: { $0.id == modelID }) ?? account.selectedModel,
+                !model.reasoningEfforts.isEmpty
+            {
                 Divider()
                 Menu("thinking effort") {
                     Button("automatic") { account.reasoningEffort = nil }
@@ -259,17 +269,20 @@ struct ChatModelMenu: View {
         } label: {
             HStack(spacing: 5) {
                 Text(
-                    provider == .chatgpt
-                        ? modelID.flatMap { id in account.models.first { $0.id == id }?.name } ?? account.modelName
-                        : provider == .claude
-                            ? modelID.flatMap { id in claude.models.first { $0.id == id }?.name } ?? claude.modelName
-                            : provider.title
+                    automatic
+                        ? "automatic"
+                        : provider == .chatgpt
+                            ? modelID.flatMap { id in account.models.first { $0.id == id }?.name } ?? account.modelName
+                            : provider == .claude
+                                ? modelID.flatMap { id in claude.models.first { $0.id == id }?.name }
+                                    ?? claude.modelName
+                                : provider.title
                 )
                 .lineLimit(1).truncationMode(.middle)
                 GolzheimIcon(icon: .disclosureDown, size: 10, weight: 220)
             }
             .font(.system(size: 11)).foregroundStyle(.secondary)
-            .padding(.horizontal, 7).frame(height: 32)
+            .padding(.horizontal, 7).frame(height: 32).frame(maxWidth: .infinity, alignment: .trailing)
         }
         .menuStyle(.button).buttonStyle(ChatControlStyle()).menuIndicator(.hidden)
         .fixedSize(horizontal: false, vertical: true)

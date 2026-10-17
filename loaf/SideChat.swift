@@ -17,8 +17,11 @@ extension BrowserWindowState {
         sideChatOpeningTask = Task { [weak self, weak tab] in
             guard let self, let tab else { return }
             defer { if !Task.isCancelled { self.sideChatOpeningTask = nil } }
-            guard await self.application.sideChatAccess.unlock(requiresPassword: self.preferences.requireSideChatPassword == true),
-                !Task.isCancelled, self.selectedTab === tab, self.canSummarizePage else { return }
+            guard
+                await self.application.sideChatAccess.unlock(
+                    requiresPassword: self.preferences.requireSideChatPassword == true),
+                !Task.isCancelled, self.selectedTab === tab, self.canSummarizePage
+            else { return }
             self.sideChatVisible = true
             self.sideChatFocusID = UUID()
             tab.sideChat.summarize()
@@ -39,8 +42,11 @@ extension BrowserWindowState {
         guard canShowSideChat, let tab = selectedTab else { return }
         sideChatOpeningTask = Task { [weak self, weak tab] in
             guard let self, let tab else { return }
-            guard await self.application.sideChatAccess.unlock(requiresPassword: self.preferences.requireSideChatPassword == true),
-                !Task.isCancelled, self.selectedTab === tab, self.canShowSideChat else {
+            guard
+                await self.application.sideChatAccess.unlock(
+                    requiresPassword: self.preferences.requireSideChatPassword == true),
+                !Task.isCancelled, self.selectedTab === tab, self.canShowSideChat
+            else {
                 if !Task.isCancelled { self.sideChatOpeningTask = nil }
                 return
             }
@@ -123,7 +129,7 @@ struct SideChatResizeHandle: View {
         }
     }
     func attachImage() {
-        guard session.provider == .chatgpt, session.account.selectedModel?.acceptsImages == true else { return }
+        guard session.acceptsImages else { return }
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = true
@@ -179,12 +185,17 @@ struct SideChatResizeHandle: View {
         includePage = tab.page == .web && tab.url != nil
         session = ChatSession(
             account: account,
-            provider: { [weak tab] in tab?.store?.preferences.aiProvider ?? .chatgpt },
+            provider: { [weak tab] in tab?.store?.preferences.aiProvider },
+            accounts: tab.store?.application.chatGPTAccounts,
+            accountID: { [weak tab] in tab?.store?.preferences.sideChatAccountID },
+            selectedModelID: { [weak tab] in tab?.store?.preferences.sideChatModelID },
+            searchEngine: { [weak tab] in tab?.store?.preferences.aiSearchEngine ?? .google },
             claudeAccount: tab.store?.application.claudeAccount,
             enabled: { [weak tab] in
                 guard let tab, !tab.isDisposed, let store = tab.store else { return false }
-                return store.preferences.aiFeaturesEnabled != false && store.application.sideChatAccess.allowsAccess(
-                    requiresPassword: store.preferences.requireSideChatPassword == true)
+                return store.preferences.aiFeaturesEnabled != false
+                    && store.application.sideChatAccess.allowsAccess(
+                        requiresPassword: store.preferences.requireSideChatPassword == true)
             },
             isSideChat: true,
             capturePage: { [weak tab] target in
@@ -192,13 +203,23 @@ struct SideChatResizeHandle: View {
                 return try await TabChatCaptureService.capture(tab, target: target)
             })
         account.$disconnecting.dropFirst().sink { [weak self] value in
-            if value { self?.providerDisconnected(.chatgpt) }
+            if self?.session.account === account && value { self?.providerDisconnected(.chatgpt) }
         }.store(
             in: &observations)
         account.$connected.dropFirst().sink { [weak self] value in
-            if !value { self?.providerDisconnected(.chatgpt) } else { self?.providerReconnected(.chatgpt) }
+            if self?.session.account === account {
+                if !value { self?.providerDisconnected(.chatgpt) } else { self?.providerReconnected(.chatgpt) }
+            }
         }.store(
             in: &observations)
+        tab.store?.application.chatGPTAccounts.didChange.sink { [weak self] in
+            guard let self, self.session.provider == .chatgpt else { return }
+            if !self.session.account.connected || self.session.account.disconnecting {
+                self.providerDisconnected(.chatgpt)
+            } else {
+                self.providerReconnected(.chatgpt)
+            }
+        }.store(in: &observations)
         session.claudeAccount?.$connected.dropFirst().sink { [weak self] value in
             if !value { self?.providerDisconnected(.claude) } else { self?.providerReconnected(.claude) }
         }.store(in: &observations)
@@ -238,7 +259,7 @@ struct SideChatResizeHandle: View {
                 || (!session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     && session.draft.utf8.count <= 8_000
                     && (images.isEmpty
-                        || (session.provider == .chatgpt && session.account.selectedModel?.acceptsImages == true))))
+                        || session.acceptsImages)))
     }
     func captureSelection() async {
         guard let tab else { return }
@@ -260,10 +281,16 @@ struct SideChatResizeHandle: View {
         removeSelection()
     }
     func showPreview() { capture(send: false) }
+    func useAutomatic() {
+        guard !capturing, !session.searching else { return }
+        cloudSharingAllowed = false
+        session.useAutomatic()
+    }
     func useProvider(_ provider: AIProvider) {
         guard !capturing, !session.searching else { return }
-        if session.provider != provider {
+        if tab?.store?.preferences.aiProvider != provider {
             cloudSharingAllowed = false
+            tab?.store?.preferences.sideChatModelID = nil
             tab?.store?.preferences.aiProvider = provider
             tab?.store?.persistSoon()
         }
@@ -272,7 +299,8 @@ struct SideChatResizeHandle: View {
     func summarize() {
         guard !capturing, !session.searching, let tab, let store = tab.store,
             tab.page == .web, tab.url != nil, store.preferences.aiFeaturesEnabled != false,
-            store.application.sideChatAccess.allowsAccess(requiresPassword: store.preferences.requireSideChatPassword == true)
+            store.application.sideChatAccess.allowsAccess(
+                requiresPassword: store.preferences.requireSideChatPassword == true)
         else { return }
         guard saveChat() else { return }
         let draft = session.draft
@@ -283,7 +311,9 @@ struct SideChatResizeHandle: View {
         error = nil
         cloudSharingAllowed = false
         let provider = PageSummary.provider(preferences: store.preferences)
-        session.use(provider: provider, model: PageSummary.model(preferences: store.preferences, provider: provider))
+        session.use(
+            provider: provider, model: PageSummary.model(preferences: store.preferences, provider: provider),
+            accountID: store.preferences.summaryAccountID, accountRule: true)
         summaryPending = true
         if canSubmit { submit() }
     }
@@ -298,12 +328,15 @@ struct SideChatResizeHandle: View {
 
     private func capture(send: Bool) {
         guard !capturing, let tab, !tab.isDisposed, let store = tab.store,
-            store.application.sideChatAccess.allowsAccess(requiresPassword: store.preferences.requireSideChatPassword == true)
+            store.application.sideChatAccess.allowsAccess(
+                requiresPassword: store.preferences.requireSideChatPassword == true)
         else { return }
         error = nil
         let summary = summaryPending
         let question = summary ? "summarize this page" : session.draft
         let provider = session.provider
+        let connectionID = session.account.connectionID
+        let modelID = session.modelID
         let sharesPage = summary || includePage
         let extraTabs = summary ? [] : attachedTabs
         let attachedImages = summary ? [] : images
@@ -330,7 +363,9 @@ struct SideChatResizeHandle: View {
                 guard generation == current, !tab.isDisposed else { return }
                 preview = context
                 if send {
-                    guard session.provider == provider, summary || includePage == sharesPage,
+                    guard session.provider == provider, session.modelID == modelID,
+                        provider != .chatgpt || session.account.connectionID == connectionID,
+                        summary || includePage == sharesPage,
                         session.available, !needsCloudPermission,
                         tab.store?.preferences.aiFeaturesEnabled != false
                     else { throw ChatGPTFailure.message("chat settings changed while reading the page. send again.") }
@@ -404,7 +439,7 @@ struct SideChatPanel: View {
         let chat = tab.sideChat
         state = chat
         session = chat.session
-        account = store.application.chatGPTAccount
+        account = chat.session.account
         claude = store.application.claudeAccount
         archive = store.application.chatArchive
     }
@@ -421,17 +456,26 @@ struct SideChatPanel: View {
                 .font(.system(size: 12)).help("summarize this page").accessibilityLabel("summarize page")
                 .disabled(!store.canSummarizePage)
                 if !store.profile.privateMode {
-                    Button { historyVisible.toggle() } label: {
+                    Button {
+                        historyVisible.toggle()
+                    } label: {
                         GolzheimIcon(icon: .history, size: 16, weight: 220).frame(width: 28, height: 28)
                     }
                     .popover(isPresented: $historyVisible, arrowEdge: .top) {
-                        SavedChatHistory(archive: archive, profileID: tab.profileID, selectedID: state.savedChatID,
+                        SavedChatHistory(
+                            archive: archive, profileID: tab.profileID, selectedID: state.savedChatID,
                             open: { chat in
-                                guard !tab.isDisposed, store.selectedTab === tab, chat.profileID == tab.profileID else { return }
+                                guard !tab.isDisposed, store.selectedTab === tab, chat.profileID == tab.profileID else {
+                                    return
+                                }
                                 state.restoreChat(chat)
                                 historyVisible = false
                                 focused = true
-                            }, delete: { chat in historyVisible = false; deletingChat = chat })
+                            },
+                            delete: { chat in
+                                historyVisible = false
+                                deletingChat = chat
+                            })
                     }
                     .accessibilityLabel("saved chats").help("saved chats")
                     .disabled(session.searching || state.capturing)
@@ -729,7 +773,7 @@ struct SideChatPanel: View {
                             }.disabled(state.attachedTabIDs.count >= 5)
                             Button("attach images…") { state.attachImage() }
                                 .disabled(
-                                    session.provider != .chatgpt || account.selectedModel?.acceptsImages != true
+                                    !session.acceptsImages
                                         || state.images.count >= 4)
                             Button("reset web permissions") { session.revokeWebTools() }
                             if session.allowsAllPageReads {
@@ -800,7 +844,19 @@ struct SideChatPanel: View {
     private var modelSelector: some View {
         ChatModelMenu(
             account: account, claude: claude, provider: session.provider, modelID: session.modelID,
-            changeProvider: changeProvider
+            changeProvider: changeProvider, automatic: session.automatic,
+            selectAutomatic: {
+                store.preferences.aiProvider = nil
+                store.preferences.sideChatModelID = nil
+                store.persistSoon()
+                state.useAutomatic()
+            },
+            changeModel: { provider, id in
+                state.useProvider(provider)
+                store.preferences.sideChatModelID = id
+                store.persistSoon()
+                session.use(provider: provider, model: id)
+            }
         )
         .frame(maxWidth: 170, alignment: .trailing).layoutPriority(-1).disabled(state.capturing || session.searching)
     }

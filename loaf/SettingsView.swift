@@ -692,7 +692,7 @@ struct SettingsView: View {
                     SearchRedirect.availableProviders.filter {
                         ($0 != .appleIntelligence || AppleIntelligence.visibleProviders.contains(.onDevice))
                             && (store.preferences.aiFeaturesEnabled != false
-                                || ![.chatgpt, .claude, .appleIntelligence, .perplexity, .googleAIOverview].contains($0))
+                                || ![.automatic, .chatgpt, .claude, .appleIntelligence, .perplexity, .googleAIOverview].contains($0))
                     }, id: \.self
                 ) {
                     Text(
@@ -719,6 +719,10 @@ struct SettingsView: View {
                     Text("use an https url with one {query} placeholder in its path or query").font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+            if store.preferences.alternateSearch?.provider == .automatic {
+                Text("automatic uses the quick search provider and model in intelligence settings.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if store.preferences.alternateSearch?.provider == .chatgpt {
                 Text("this shortcut uses ChatGPT, regardless of the answer provider in intelligence settings.").font(

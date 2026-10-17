@@ -129,17 +129,8 @@ struct SidebarDockHost: NSViewRepresentable {
 
     final class ContainerView: NSView {
         let hostedSidebar: NSHostingView<SidebarDockPane>
-        private var link: CADisplayLink?
-        private var startX: CGFloat = 0
-        private var started: CFTimeInterval = 0
+        private var motionEnd: DispatchWorkItem?
         private(set) var motionDuration: CFTimeInterval = SidebarMotion.duration
-        private final class TickTarget: NSObject {
-            weak var view: ContainerView?
-            init(_ view: ContainerView) { self.view = view }
-            @objc func update(_ sender: CADisplayLink) {
-                if let view { view.tick(sender) } else { sender.invalidate() }
-            }
-        }
         private var sidebarWidth: CGFloat = 0
         private var scheme: ColorScheme
         private(set) var shown = true
@@ -228,10 +219,13 @@ struct SidebarDockHost: NSViewRepresentable {
             hostedSidebar.setAccessibilityHidden(!shown)
             guard changed || reduceMotion && moving else { return }
             initialized = true
+            let displayedPosition = hostedSidebar.layer?.presentation()?.position ?? hostedSidebar.layer?.position
             stopMotion()
             targetX = destination
             guard !hostedSidebar.isHidden || shown, laidOut, window != nil, !reduceMotion,
-                abs(hostedSidebar.frame.minX - destination) > 0.01
+                abs((displayedPosition?.x ?? hostedSidebar.frame.minX)
+                    - (hostedSidebar.layer?.anchorPoint.x ?? 0) * hostedSidebar.frame.width - destination)
+                    > 0.01
             else {
                 position(destination)
                 hostedSidebar.isHidden = !shown
@@ -239,13 +233,27 @@ struct SidebarDockHost: NSViewRepresentable {
                 return
             }
             hostedSidebar.isHidden = false
-            startX = hostedSidebar.frame.minX
-            started = CACurrentMediaTime()
             motionDuration = duration
             moving = true
-            let link = displayLink(target: TickTarget(self), selector: #selector(TickTarget.update(_:)))
-            self.link = link
-            link.add(to: .main, forMode: .common)
+            position(destination)
+            let animation = CABasicAnimation(keyPath: "position")
+            animation.fromValue = displayedPosition.map(NSValue.init(point:))
+            animation.toValue = hostedSidebar.layer.map { NSValue(point: $0.position) }
+            animation.duration = duration
+            animation.timingFunction = SidebarMotion.pageTiming
+            hostedSidebar.layer?.add(animation, forKey: "sidebar.slide")
+            let end = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.moving = false
+                self.motionEnd = nil
+                self.hostedSidebar.isHidden = !self.shown
+                if let window = self.window {
+                    self.dismissFloatingSidebarIfOutside(
+                        at: self.convert(window.mouseLocationOutsideOfEventStream, from: nil))
+                }
+            }
+            motionEnd = end
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: end)
         }
         private func position(_ x: CGFloat) {
             CATransaction.begin()
@@ -253,31 +261,22 @@ struct SidebarDockHost: NSViewRepresentable {
             hostedSidebar.setFrameOrigin(.init(x: x, y: 0))
             CATransaction.commit()
         }
-        private func tick(_ sender: CADisplayLink) {
-            let progress = min(1, max(0, (CACurrentMediaTime() - started) / motionDuration))
-            let eased = progress * progress * (3 - 2 * progress)
-            position(startX + (targetX - startX) * eased)
-            if progress >= 1 {
-                stopMotion()
-                hostedSidebar.isHidden = !shown
-            }
-            // Tracking can be installed after the pointer has already crossed onto the page.
-            // Use the destination bounds while the card moves under the pointer.
-            if let window {
-                dismissFloatingSidebarIfOutside(at: convert(window.mouseLocationOutsideOfEventStream, from: nil))
-            }
-        }
         func stopMotion() {
-            link?.invalidate()
-            link = nil
+            motionEnd?.cancel()
+            motionEnd = nil
+            hostedSidebar.layer?.removeAnimation(forKey: "sidebar.slide")
             moving = false
         }
-        deinit { link?.invalidate(); presentationTask?.cancel() }
+        deinit {
+            motionEnd?.cancel()
+            presentationTask?.cancel()
+        }
         override func layout() {
             super.layout()
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            hostedSidebar.setFrameSize(.init(width: sidebarWidth, height: bounds.height))
+            let size = NSSize(width: sidebarWidth, height: bounds.height)
+            if hostedSidebar.frame.size != size { hostedSidebar.setFrameSize(size) }
             CATransaction.commit()
             if !laidOut {
                 position(targetX)
@@ -285,6 +284,7 @@ struct SidebarDockHost: NSViewRepresentable {
             }
         }
         override func setFrameSize(_ newSize: NSSize) {
+            guard frame.size != newSize else { return }
             super.setFrameSize(newSize)
             needsLayout = true
         }

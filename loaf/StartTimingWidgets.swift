@@ -14,40 +14,81 @@ struct StartTimingWidget: View {
         service.edit(profileID, privateMode: privateMode, change)
     }
     var body: some View {
-        let record = service.record(for: profileID)
-        let running = stopwatch ? record.stopwatch.started != nil : record.countdown.deadline != nil
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let seconds =
-                stopwatch ? record.stopwatch.seconds(at: context.date) : record.countdown.seconds(at: context.date)
-            StartWidgetSection(centered: true, spacing: 6) {
-                HStack(spacing: 6) {
-                    if showsHeader {
-                        Image(systemName: stopwatch ? "stopwatch" : "timer").font(.system(size: 13))
-                        Text(stopwatch ? "stopwatch" : "timer").font(.system(size: 12, weight: .medium))
+        GeometryReader { geometry in
+            let metrics = StartWidgetMetrics(size: geometry.size)
+            let record = service.record(for: profileID)
+            let running = stopwatch ? record.stopwatch.started != nil : record.countdown.deadline != nil
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let seconds =
+                    stopwatch ? record.stopwatch.seconds(at: context.date) : record.countdown.seconds(at: context.date)
+                if metrics.tiny {
+                    VStack(alignment: .leading, spacing: 5) {
+                        if geometry.size.height >= 70 {
+                            HStack {
+                                Image(systemName: stopwatch ? "stopwatch" : "timer").font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                Spacer(minLength: 0)
+                                if !stopwatch { durationMenu(record.countdown) }
+                            }.frame(height: 12)
+                        }
+                        Text(StartTimeDisplay.string(seconds, roundingUp: !stopwatch))
+                            .font(.system(size: 24, weight: .light, design: .rounded)).monospacedDigit()
+                            .lineLimit(1).minimumScaleFactor(0.6)
+                            .accessibilityLabel(stopwatch ? "elapsed time" : "time remaining")
+                        if geometry.size.height >= 70 { controls(running: running, seconds: seconds, iconOnly: true) }
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                } else {
+                    StartWidgetSection(centered: true, spacing: 6) {
+                        HStack(spacing: 6) {
+                            if showsHeader {
+                                Image(systemName: stopwatch ? "stopwatch" : "timer").font(.system(size: 13))
+                                Text(stopwatch ? "stopwatch" : "timer").font(.system(size: 12, weight: .medium))
+                            }
+                            Spacer(minLength: 0)
+                            if !stopwatch { durationMenu(record.countdown) }
+                        }.foregroundStyle(.secondary)
+                    } content: {
+                        Text(StartTimeDisplay.string(seconds, roundingUp: !stopwatch))
+                            .font(
+                                .system(
+                                    size: metrics.numberSize(
+                                        maximum: 84,
+                                        characters: CGFloat(
+                                            StartTimeDisplay.string(seconds, roundingUp: !stopwatch).count)
+                                            * 0.6), weight: .light, design: .rounded)
+                            )
+                            .monospacedDigit().lineLimit(1).minimumScaleFactor(0.1).allowsTightening(true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .foregroundStyle(
+                                record.countdown.finished && !stopwatch ? Color.accentColor : Color.primary
+                            )
+                            .accessibilityLabel(stopwatch ? "elapsed time" : "time remaining")
+                        if metrics.tall, let finish = stopwatch ? record.stopwatch.started : record.countdown.deadline {
+                            Text(
+                                (stopwatch ? "running since " : "ends at ")
+                                    + finish.formatted(date: .omitted, time: .shortened)
+                            )
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                        if !stopwatch && !compact {
+                            ProgressView(value: min(1, max(0, 1 - seconds / record.countdown.duration)))
+                                .progressViewStyle(.linear).tint(.accentColor)
+                                .frame(height: 4).accessibilityLabel("timer progress")
+                        }
+                        ViewThatFits(in: .horizontal) {
+                            controls(running: running, seconds: seconds, iconOnly: false).fixedSize(
+                                horizontal: true, vertical: false)
+                            controls(running: running, seconds: seconds, iconOnly: true)
+                        }
+                        if !stopwatch && record.countdown.finished && compact {
+                            Text("time’s up").font(.system(size: 11)).foregroundStyle(Color.accentColor)
+                        }
+                        if let error = service.saveError {
+                            Text(error).font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
                     }
-                    Spacer(minLength: 0)
-                    if !stopwatch { durationMenu(record.countdown) }
-                }.foregroundStyle(.secondary)
-            } content: {
-                Text(StartTimeDisplay.string(seconds, roundingUp: !stopwatch))
-                    .font(.system(size: compact ? 30 : 40, weight: .light, design: .rounded))
-                    .monospacedDigit().lineLimit(1).minimumScaleFactor(0.1).allowsTightening(true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .foregroundStyle(record.countdown.finished && !stopwatch ? Color.accentColor : Color.primary)
-                    .accessibilityLabel(stopwatch ? "elapsed time" : "time remaining")
-                if !stopwatch && !compact {
-                    ProgressView(value: min(1, max(0, 1 - seconds / record.countdown.duration)))
-                        .progressViewStyle(.linear).tint(.accentColor)
-                        .frame(height: 4).accessibilityLabel("timer progress")
                 }
-                ViewThatFits(in: .horizontal) {
-                    controls(running: running, seconds: seconds, iconOnly: false).fixedSize(horizontal: true, vertical: false)
-                    controls(running: running, seconds: seconds, iconOnly: true)
-                }
-                if !stopwatch && record.countdown.finished && compact {
-                    Text("time’s up").font(.system(size: 11)).foregroundStyle(Color.accentColor)
-                }
-                if let error = service.saveError { Text(error).font(.system(size: 10)).foregroundStyle(.secondary) }
+
             }
         }
     }

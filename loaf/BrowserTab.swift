@@ -92,7 +92,11 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         guard let store, !isDisposed else { preconditionFailure("Cannot create a search for a closed tab") }
         let search = ChatGPTSearch(
             account: store.application.chatGPTAccount,
-            provider: { [weak store] in store?.preferences.aiProvider ?? .chatgpt },
+            provider: { [weak store] in store?.preferences.quickSearchProvider },
+            accounts: store.application.chatGPTAccounts,
+            accountID: { [weak store] in store?.preferences.quickSearchAccountID },
+            selectedModelID: { [weak store] in store?.preferences.quickSearchModelID },
+            searchEngine: { [weak store] in store?.preferences.aiSearchEngine ?? .google },
             claudeAccount: store.application.claudeAccount,
             enabled: { [weak store] in store.map { $0.preferences.aiFeaturesEnabled != false } ?? false })
         existingChatGPTSearch = search

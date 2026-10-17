@@ -142,7 +142,7 @@ import Foundation
                 else {
                     throw ChatGPTFailure.interrupted
                 }
-                var result: Any = "Capture unavailable. Continue from text; do not claim to have seen a screenshot."
+                var result: Any = "Invalid or unavailable tool call. Check the tool name and required arguments; continue from existing evidence if unavailable."
                 if !usedCapture, let capturePage, let reason = Self.captureReason(call) {
                     usedCapture = true
                     if let capture = try await capturePage(reason) {

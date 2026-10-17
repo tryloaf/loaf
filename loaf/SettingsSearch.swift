@@ -48,7 +48,9 @@ enum SettingsSearch {
             keywords: "battery low power energy percentage background menu"),
         .init(
             id: "performance-indicator", section: "advanced", title: "performance indicator",
-            keywords: "game mode power saver battery icon traffic lights header show visibility when active always never hide"),
+            keywords:
+                "game mode power saver battery icon traffic lights header show visibility when active always never hide"
+        ),
         .init(
             id: "game-mode", section: "advanced", title: "game mode",
             keywords: "gaming performance fps frame rate latency power"),
@@ -114,11 +116,23 @@ enum SettingsSearch {
             keywords:
                 "ai artificial intelligence apple intelligence chatgpt claude local on device ask loaf disable models"),
         .init(
+            id: "quick-search-model", section: "intelligence", title: "quick search provider and model",
+            keywords: "automatic apple intelligence chatgpt claude fast thinking ai"),
+        .init(
+            id: "side-chat-model", section: "intelligence", title: "side chat provider and model",
+            keywords: "automatic apple intelligence chatgpt claude thinking ai"),
+        .init(
+            id: "ai-search-engine", section: "intelligence", title: "AI web search engine",
+            keywords: "google duckduckgo bing tools sources provider"),
+        .init(
+            id: "chatgpt-account-rules", section: "intelligence", title: "ChatGPT account rules",
+            keywords: "multiple accounts routing quick search side chat summaries connections"),
+        .init(
             id: "summaries", section: "intelligence", title: "page summaries",
             keywords: "tl dr tldr summarize summary model luna apple intelligence claude"),
         .init(
-            id: "chatgpt-connection", section: "intelligence", title: "ChatGPT connection",
-            keywords: "connect account sign in model luna usage"),
+            id: "chatgpt-connection", section: "intelligence", title: "ChatGPT accounts",
+            keywords: "connect multiple accounts sign in model luna usage rules routing"),
         .init(
             id: "claude-connection", section: "intelligence", title: "Claude connection",
             keywords: "anthropic api key billing model connect"),
@@ -139,7 +153,9 @@ enum SettingsSearch {
             keywords: "site permissions camera microphone javascript autoplay zoom open apps automatic ask deny block"),
         .init(
             id: "external-app-links", section: "websites", title: "app links",
-            keywords: "external local applications app-wide all profiles always automatic open ask never block reset defaults handlers"),
+            keywords:
+                "external local applications app-wide all profiles always automatic open ask never block reset defaults handlers"
+        ),
         .init(
             id: "pointerCapture", section: "websites", title: "allow websites to capture the pointer",
             keywords: "mouse cursor lock pointer capture games escape"),

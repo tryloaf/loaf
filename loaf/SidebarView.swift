@@ -56,7 +56,8 @@ struct SidebarView: View {
                         .overlay {
                             GeometryReader { gap in
                                 PerformanceIndicator(store: store)
-                                    .position(x: PerformanceIndicatorPlacement.center(in: gap.size.width),
+                                    .position(
+                                        x: PerformanceIndicatorPlacement.center(in: gap.size.width),
                                         y: store.chromeControlsCenterY - (floating ? 3 : 0))
                             }
                         }
@@ -74,17 +75,18 @@ struct SidebarView: View {
                 }.padding(.trailing, 8).frame(height: 40).fixedSize(horizontal: false, vertical: true)
                     .overlay(alignment: .topLeading) {
                         if store.usesSidebarOnlyChrome {
-                            SidebarWindowControls(floating: floating, tint: NSColor(profileTint(store.profile))).frame(
+                            SidebarWindowControls(
+                                floating: floating, centerY: store.chromeControlsCenterY,
+                                tint: NSColor(profileTint(store.profile))
+                            ).frame(
                                 width: 76, height: 32)
                         }
                     }
-                    .padding(.top, floating ? 8 : 0)
                 address.padding(.horizontal, 8)
                 profileStrip
                 VStack(spacing: 8) {
                     SidebarMediaPlayers(store: store, collection: store.sidebarMedia)
-                    if store.preferences.hasWeatherLocation && store.profile.personalization?.sidebarWeather != false
-                    {
+                    if store.preferences.hasWeatherLocation && store.profile.personalization?.sidebarWeather != false {
                         weather
                     }
 
@@ -95,7 +97,7 @@ struct SidebarView: View {
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             .overlay(alignment: .bottom) {
                 tray(
-                    availableHeight: max(0, geometry.size.height - 40 - (floating ? 8 : 0)),
+                    availableHeight: max(0, geometry.size.height - 40),
                     sidebarWidth: geometry.size.width
                 ).zIndex(3)
             }
@@ -143,7 +145,8 @@ struct SidebarView: View {
             }
             await Task.yield()
             guard !Task.isCancelled, store.profileTransitionID == token,
-                store.profileTransitionOrigin != nil else { return }
+                store.profileTransitionOrigin != nil
+            else { return }
             withAnimation(reduceMotion ? nil : .spring(duration: 0.24, bounce: 0)) {
                 profileMotionOffset = 0
             }
@@ -188,7 +191,9 @@ struct SidebarView: View {
     }
     private var profileStrip: some View {
         let width = store.preferences.sidebarWidth
-        let arrival = reduceMotion || store.profileTransitionOrigin == nil ? 0
+        let arrival =
+            reduceMotion || store.profileTransitionOrigin == nil
+            ? 0
             : profileMotionID == store.profileTransitionID ? profileMotionOffset : store.profileTransitionStart
         let drag = reduceMotion ? 0 : store.profileSwipeDistance
         let offset = arrival - drag + store.profileResistance
@@ -209,7 +214,8 @@ struct SidebarView: View {
                 }
                 .offset(x: offset)
             if !reduceMotion, let target = store.profileSwipeTarget,
-                target.id != store.profileTransitionOrigin?.id {
+                target.id != store.profileTransitionOrigin?.id
+            {
                 ProfileSidebarPreview(store: store, profile: target)
                     .environment(\.colorScheme, previewScheme(target))
                     .offset(x: offset + (drag > 0 ? width : -width)).allowsHitTesting(false)
@@ -218,8 +224,11 @@ struct SidebarView: View {
     }
     private func previewScheme(_ profile: Profile) -> ColorScheme {
         let base = LoafAppearance.shared.colorScheme(for: appearance, privateMode: profile.privateMode)
-        return profile.privateMode ? .dark : ProfileColor.surfaceScheme(profileTint(profile),
-            strength: profile.personalization?.tintStrength ?? 0.06, dark: base == .dark)
+        return profile.privateMode
+            ? .dark
+            : ProfileColor.surfaceScheme(
+                profileTint(profile),
+                strength: profile.personalization?.tintStrength ?? 0.06, dark: base == .dark)
     }
     private var address: some View {
         AddressFeedback(feedback: store.feedback, activate: { store.openOmnibar() }) {
@@ -269,7 +278,12 @@ struct SidebarView: View {
                         .system(size: 12)
                     ).lineLimit(1)
                     if store.profile.personalization?.compactSidebarWeather != true {
-                        Text(store.weather.error ?? (store.weather.loading ? "loading weather…" : store.weather.condition.isEmpty ? "weather unavailable" : store.weather.condition)).font(
+                        Text(
+                            store.weather.error
+                                ?? (store.weather.loading
+                                    ? "loading weather…"
+                                    : store.weather.condition.isEmpty ? "weather unavailable" : store.weather.condition)
+                        ).font(
                             .system(size: 10)
                         ).foregroundStyle(.secondary).lineLimit(1)
                     }
@@ -519,9 +533,10 @@ struct SidebarView: View {
                     .transition(.identity)
                     HStack(spacing: 4) {
                         ForEach(store.profiles) { p in
-                            Capsule().fill(store.profile.privateMode ? profileTint(store.profile) : profileTint(p)).frame(
-                                width: p.id == store.selectedProfileID ? 20 : 8, height: 2
-                            ).opacity(p.id == store.selectedProfileID ? 1 : 0.35)
+                            Capsule().fill(store.profile.privateMode ? profileTint(store.profile) : profileTint(p))
+                                .frame(
+                                    width: p.id == store.selectedProfileID ? 20 : 8, height: 2
+                                ).opacity(p.id == store.selectedProfileID ? 1 : 0.35)
                         }
                     }
                     .animation(reduceMotion ? nil : ProfileSwitchMotion.animation, value: store.selectedProfileID)

@@ -371,13 +371,20 @@ nonisolated struct BrowserPreferences: Codable, Sendable {
     var searchEngine: SearchEngine?
     var customSearchTemplate: String?
     var suggestionProvider: SuggestionProvider?
+    var quickSearchProvider: AIProvider?
+    var quickSearchModelID: String?
+    var sideChatModelID: String?
+    var quickSearchAccountID: String?
+    var sideChatAccountID: String?
+    var summaryAccountID: String?
+    var aiSearchEngine: SearchEngine?
     var aiProvider: AIProvider?
     var summaryProvider: AIProvider?
     var summaryModelID: String?
     mutating func configureOnboardingAlternateSearch() {
         var redirect = alternateSearch ?? SearchRedirect()
-        redirect.enabled = aiFeaturesEnabled != false && aiProvider != nil
-        redirect.provider = aiProvider == .claude ? .claude : aiProvider == .chatgpt ? .chatgpt : .appleIntelligence
+        redirect.enabled = aiFeaturesEnabled != false
+        redirect.provider = .automatic
         alternateSearch = redirect
     }
     var aiFeaturesEnabled: Bool?

@@ -54,6 +54,7 @@ import WebKit
     private let suppliedChatGPTAccount: ChatGPTAccount?
     private let suppliedClaudeAccount: ClaudeAccount?
     lazy var chatGPTAccount = suppliedChatGPTAccount ?? ChatGPTAccount()
+    lazy var chatGPTAccounts = ChatGPTAccounts(primary: chatGPTAccount)
     lazy var claudeAccount = suppliedClaudeAccount ?? ClaudeAccount()
     let favicons: FaviconService
     let sites = PopularSites()
@@ -79,7 +80,7 @@ import WebKit
     func setAIFeaturesEnabled(_ enabled: Bool) {
         preferences.aiFeaturesEnabled = enabled
         if !enabled {
-            if [.chatgpt, .claude, .appleIntelligence, .perplexity, .googleAIOverview].contains(
+            if [.automatic, .chatgpt, .claude, .appleIntelligence, .perplexity, .googleAIOverview].contains(
                 preferences.alternateSearch?.provider)
             {
                 preferences.alternateSearch?.enabled = false
@@ -185,7 +186,7 @@ import WebKit
             preferences.alternateSearch?.provider = .google
         }
         if preferences.aiFeaturesEnabled == false {
-            if [.chatgpt, .claude, .appleIntelligence, .perplexity, .googleAIOverview].contains(
+            if [.automatic, .chatgpt, .claude, .appleIntelligence, .perplexity, .googleAIOverview].contains(
                 preferences.alternateSearch?.provider)
             {
                 preferences.alternateSearch?.enabled = false

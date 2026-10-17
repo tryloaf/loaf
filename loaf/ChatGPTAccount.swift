@@ -44,6 +44,7 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
     private var catalogTask: Task<Void, Never>?
     private var generation = UUID()
     let session: URLSession
+    let connectionID: String
     private let keychainService: String
     private let defaults: UserDefaults
     private let persistCredentials: Bool
@@ -51,8 +52,9 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
 
     init(
         persistCredentials: Bool = true, session: URLSession? = nil, defaults: UserDefaults = .standard,
-        registration: ChatGPTRegistration? = nil
+        registration: ChatGPTRegistration? = nil, connectionID: String = "primary"
     ) {
+        self.connectionID = connectionID
         self.persistCredentials = persistCredentials
         self.defaults = defaults
         self.registration = registration
@@ -225,6 +227,19 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
             disconnecting = false
         }
     }
+    var canForgetConnection: Bool { !connected && !connecting && !disconnecting && registration?.credentials == nil }
+    func forgetConnection() -> Bool {
+        guard canForgetConnection else { return false }
+        if persistCredentials {
+            let status = SecItemDelete(keychainQuery as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                error = "couldn’t remove this ChatGPT connection from Keychain. try again."
+                return false
+            }
+        }
+        registration = nil
+        return true
+    }
     func refreshCatalog() {
         guard connected, !checkingModels, catalogTask == nil, !disconnecting else { return }
         catalogTask = Task {
@@ -359,7 +374,8 @@ nonisolated final class ChatGPTNetworkDelegate: NSObject, URLSessionTaskDelegate
     private var keychainQuery: [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: "registration", kSecAttrSynchronizable as String: false,
+            kSecAttrAccount as String: connectionID == "primary" ? "registration" : "registration." + connectionID,
+            kSecAttrSynchronizable as String: false,
         ]
     }
     private func readRegistration() throws -> ChatGPTRegistration? {

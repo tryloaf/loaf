@@ -79,6 +79,7 @@ nonisolated struct SavedChat: Codable, Identifiable, Sendable {
             for index in portable.turns.indices {
                 portable.turns[index].images = []
                 portable.turns[index].capture = nil
+                portable.turns[index].accountID = nil
             }
             let compressed = try (JSONEncoder().encode(portable) as NSData).compressed(using: .zlib) as Data
             let encrypted = try seal(compressed, synced: true)
@@ -104,10 +105,12 @@ nonisolated struct SavedChat: Codable, Identifiable, Sendable {
             guard chat.id == id, chat.profileID == profileID, chat.turns.count <= 100 else {
                 throw ICloudSyncFailure.invalidData
             }
+            for index in chat.turns.indices { chat.turns[index].accountID = nil }
             if let local = next.first(where: { $0.id == id }), local.updatedAt >= chat.updatedAt { continue }
             if let local = next.first(where: { $0.id == id }) {
                 for index in chat.turns.indices {
                     if let previous = local.turns.first(where: { $0.id == chat.turns[index].id }) {
+                        chat.turns[index].accountID = previous.accountID
                         chat.turns[index].images = previous.images
                         chat.turns[index].capture = previous.capture
                     }

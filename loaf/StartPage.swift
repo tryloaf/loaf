@@ -96,7 +96,10 @@ struct StartPage: View, Equatable {
                                     editButton
                                 }
                                 if editing {
-                                    HStack(spacing: 8) { editingControls; Spacer(minLength: 0) }
+                                    HStack(spacing: 8) {
+                                        editingControls
+                                        Spacer(minLength: 0)
+                                    }
                                 }
                             }
                         }.buttonStyle(.bordered).controlSize(.small)
@@ -170,7 +173,9 @@ struct StartPage: View, Equatable {
                         update { $0.showWidget(hiddenWidget) }
                         self.hiddenWidget = nil
                     }.buttonStyle(.bordered)
-                    Button { self.hiddenWidget = nil } label: {
+                    Button {
+                        self.hiddenWidget = nil
+                    } label: {
                         Image(systemName: "xmark").font(.system(size: 10, weight: .medium))
                     }.buttonStyle(.plain).accessibilityLabel("dismiss")
                 }.font(.system(size: 12)).padding(12)
@@ -271,7 +276,11 @@ struct StartPage: View, Equatable {
         StartPageBackground(store: store, image: backgroundImage)
     }
     @ViewBuilder private func widgetView(_ widget: String, size: StartWidgetSize) -> some View {
-        let options = preferences.widgetOptions?[widget] ?? StartWidgetOptions()
+        let options: StartWidgetOptions = {
+            var value = preferences.widgetOptions?[widget] ?? StartWidgetOptions()
+            if value.itemLimit == nil, size.rows > 1 { value.itemLimit = 8 }
+            return value
+        }()
         let compact = size == .square
         switch widget {
         case "search":
@@ -285,18 +294,7 @@ struct StartPage: View, Equatable {
                     Text("⌘L").font(.system(size: 12)).foregroundStyle(.secondary).fixedSize()
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
             }.buttonStyle(.plain)
-        case "clock":
-            TimelineView(.periodic(from: .now, by: options.clockSeconds == true ? 1 : 30)) { time in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(clockText(MarketingLaunch.displayDate(time.date), options: options)).textCase(.lowercase).font(
-                        .system(size: compact || options.clockSeconds == true ? 32 : 40, weight: .light)
-                    ).monospacedDigit().lineLimit(1).minimumScaleFactor(0.1).allowsTightening(true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(MarketingLaunch.displayDate(time.date), format: .dateTime.weekday(.wide).month(.wide).day()).textCase(.lowercase).font(
-                        .system(size: 13)
-                    ).foregroundStyle(.secondary).lineLimit(compact ? 2 : 1).minimumScaleFactor(0.8)
-                }.frame(maxHeight: .infinity, alignment: .leading)
-            }
+        case "clock": StartClockWidget(options: options)
         case "battery": BatteryWidget(monitor: store.application.resources, showsHeader: !editing)
         case "browsingTime": BrowsingTimeWidget(store: store, monitor: store.application.resources)
         case "calendar": StartWeekView(compact: compact)
@@ -324,9 +322,9 @@ struct StartPage: View, Equatable {
                         text: Binding(
                             get: { preferences.notes },
                             set: { value in update { $0.notes = String(value.prefix(10000)) } })
-                    ).scrollContentBackground(.hidden).scrollIndicators(.hidden)
+                    ).scrollContentBackground(.hidden).scrollIndicators(.never)
                         .frame(minHeight: 40).accessibilityLabel("local notes")
-                }.font(.system(size: options.largerNotes == true ? 16 : 13))
+                }.font(.system(size: options.largerNotes == true ? 17 : size.rows > 1 ? 15 : 13))
             }.frame(maxHeight: .infinity)
         case "recent": StartRecentTabsWidget(store: store, limit: options.limit, showsHeader: !editing)
         case "downloads": StartDownloadsWidget(store: store, limit: options.limit, showsHeader: !editing)
@@ -336,14 +334,6 @@ struct StartPage: View, Equatable {
                 showsHeader: !editing)
         }
     }
-    private func clockText(_ date: Date, options: StartWidgetOptions) -> String {
-        var style = Date.FormatStyle.dateTime.hour(
-            options.clock24Hour == true ? .twoDigits(amPM: .omitted) : .defaultDigits(amPM: .abbreviated)
-        ).minute()
-        if options.clock24Hour == true { style = style.locale(Locale(identifier: "en_GB")) }
-        if options.clockSeconds == true { style = style.second() }
-        return date.formatted(style)
-    }
     @ViewBuilder private func widgetHeader(_ icon: LoafIcon, _ name: String) -> some View {
         if !editing {
             HStack(spacing: 8) {
@@ -351,73 +341,6 @@ struct StartPage: View, Equatable {
                 Text(name).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
             }
         }
-    }
-}
-
-struct StartWeatherWidget: View {
-    let store: BrowserStore
-    @ObservedObject var weather: WeatherService
-    let privateMode: Bool
-    @Environment(\.colorScheme) private var scheme
-    private var place: String {
-        if !weather.city.isEmpty { return weather.city }
-        return store.preferences.hasWeatherLocation ? store.preferences.weatherLocationLabel : "select a city"
-    }
-    var body: some View {
-        GeometryReader { geometry in
-            let horizontal = geometry.size.width >= 240 && geometry.size.height < 200
-            let forecast = !weather.hours.isEmpty && (geometry.size.width >= 200 || geometry.size.height >= 200)
-            VStack(alignment: .leading, spacing: 8) {
-                if horizontal {
-                    HStack(spacing: 16) {
-                        current(compact: false).frame(maxWidth: .infinity, alignment: .leading)
-                        if forecast { hourly.frame(maxWidth: .infinity) }
-                    }.frame(maxHeight: .infinity)
-                } else {
-                    current(compact: geometry.size.width < 200)
-                    if forecast { hourly.padding(.top, 8) }
-                    Spacer(minLength: 0)
-                }
-                attribution
-            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }.modifier(WeatherRefresh(store: store))
-    }
-    private func current(compact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                GolzheimIcon(icon: weather.icon, size: compact ? 26 : 32).accessibilityHidden(true)
-                Text(weather.temperature.map { "\($0)°" } ?? "—")
-                    .font(.system(size: compact ? 32 : 40, weight: .light)).monospacedDigit()
-                    .lineLimit(1).minimumScaleFactor(0.75)
-            }
-            Text(place).font(.system(size: 12)).lineLimit(1).help(place)
-            Text(weather.error ?? (weather.loading && weather.temperature == nil ? "loading weather…" : weather.condition))
-                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }.frame(maxWidth: .infinity, alignment: .leading)
-    }
-    private var hourly: some View {
-        HStack(spacing: 8) {
-            ForEach(weather.hours.prefix(3)) { hour in
-                VStack(spacing: 6) {
-                    Text(hour.date, format: .dateTime.hour()).foregroundStyle(.secondary)
-                    Text("\(hour.temperature)°").font(.system(size: 14, weight: .medium))
-                }.font(.system(size: 10)).lineLimit(1)
-                    .frame(maxWidth: .infinity).accessibilityElement(children: .combine)
-            }
-        }.accessibilityLabel("hourly forecast")
-    }
-    private var attribution: some View {
-        Button {
-            NSWorkspace.shared.open(weather.attributionURL)
-        } label: {
-            if let mark = scheme == .dark ? weather.attributionMarkDark : weather.attributionMarkLight {
-                Image(nsImage: mark).resizable().scaledToFit().frame(maxWidth: 100, maxHeight: 12)
-            } else {
-                Text(weather.attribution).font(.system(size: 10)).foregroundStyle(
-                    privateMode ? PrivateChrome.accent : .secondary)
-            }
-        }.buttonStyle(.plain).accessibilityLabel(weather.attribution)
     }
 }
 
@@ -518,8 +441,10 @@ struct StartWidgetPlacementGrid: View {
     var body: some View {
         Canvas { context, _ in
             let side = StartWidgetSize.squareSide(columnWidth: layout.columnWidth)
-            for row in 0..<max(1, layout.rowCount + Int(ceil(max(0, height - layout.height) / layout.gridStride.height)) + 1)
-                where layout.rowOrigin(row) < height {
+            for row
+                in 0..<max(
+                    1, layout.rowCount + Int(ceil(max(0, height - layout.height) / layout.gridStride.height)) + 1)
+            where layout.rowOrigin(row) < height {
                 for column in 0..<layout.gridColumns {
                     let rect = CGRect(
                         x: CGFloat(column) * layout.gridStride.width, y: layout.rowOrigin(row),
@@ -586,7 +511,6 @@ struct StartWidgetDropDelegate: DropDelegate {
     }
 }
 
-
 struct StartWidgetSection<Header: View, Content: View>: View {
     var centered = false
     var spacing: CGFloat = 12
@@ -595,9 +519,11 @@ struct StartWidgetSection<Header: View, Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             header().lineLimit(1)
-            StartWidgetScrollContent(centered: centered, content: VStack(alignment: .leading, spacing: spacing) {
-                content()
-            })
+            StartWidgetScrollContent(
+                centered: centered,
+                content: VStack(alignment: .leading, spacing: spacing) {
+                    content()
+                })
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
@@ -751,7 +677,10 @@ struct StartWidgetCard<Content: View>: View {
                         .accessibilityLabel("\(id) widget settings")
                 }
             }
-            if ["notes", "search", "pins", "recent", "downloads", "checklist", "weather", "clock", "worldClock", "timer", "stopwatch", "battery"].contains(id) {
+            if [
+                "notes", "search", "pins", "recent", "downloads", "checklist", "weather", "clock", "worldClock",
+                "timer", "stopwatch", "battery",
+            ].contains(id) {
                 content().frame(maxHeight: .infinity)
             } else {
                 StartWidgetScrollContent(centered: true, content: content())
@@ -847,7 +776,10 @@ struct StartWidgetCard<Content: View>: View {
                 Text("list").tag("list")
             }
         }
-        if ["notes", "search", "pins", "recent", "downloads", "checklist", "weather", "clock", "worldClock", "timer", "stopwatch", "battery"].contains(id) {
+        if [
+            "notes", "search", "pins", "recent", "downloads", "checklist", "weather", "clock", "worldClock", "timer",
+            "stopwatch", "battery",
+        ].contains(id) {
             Toggle(
                 "larger text",
                 isOn: Binding(
@@ -935,26 +867,22 @@ struct StartWeekView: View {
     var compact = false
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
-            let calendar = Calendar.current
-            let date = MarketingLaunch.displayDate(context.date)
-            let start = calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? date
-            VStack(alignment: .leading, spacing: 12) {
-                Text(MarketingLaunch.displayDate(context.date), format: .dateTime.month(.wide).day()).font(
-                    .system(size: compact ? 20 : 24, weight: .light)
-                ).lineLimit(1).minimumScaleFactor(0.1)
-                HStack(spacing: compact ? 2 : 4) {
-                    ForEach(0..<7, id: \.self) { offset in
-                        let date = calendar.date(byAdding: .day, value: offset, to: start) ?? start
-                        VStack(spacing: 8) {
-                            Text(date, format: .dateTime.weekday(.narrow)).font(.system(size: 10)).foregroundStyle(
-                                .secondary)
-                            Text(date, format: .dateTime.day()).font(.system(size: compact ? 10 : 12))
-                                .lineLimit(1).minimumScaleFactor(0.5)
-                                .frame(maxWidth: .infinity).frame(height: compact ? 16 : 24).background(
-                                calendar.isDate(date, inSameDayAs: MarketingLaunch.displayDate(context.date)) ? Color.accentColor.opacity(0.2) : .clear, in: Circle())
-                        }.frame(maxWidth: .infinity)
+            GeometryReader { geometry in
+                let date = MarketingLaunch.displayDate(context.date)
+                let metrics = StartWidgetMetrics(size: geometry.size)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(date, format: .dateTime.month(.wide).day())
+                        .font(.system(size: metrics.expanded ? 36 : metrics.tiny ? 20 : 26, weight: .light))
+                        .lineLimit(1).minimumScaleFactor(0.65)
+                    if geometry.size.height >= 235 && geometry.size.width >= 126 {
+                        StartMonthGrid(date: date)
+                            .frame(height: max(0, geometry.size.height - (metrics.expanded ? 56 : 46)))
+                    } else if !metrics.tiny {
+                        StartWeekStrip(date: date)
+                    } else {
+                        Text(date, format: .dateTime.weekday(.wide)).font(.system(size: 11)).foregroundStyle(.secondary)
                     }
-                }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: metrics.tall ? .topLeading : .leading)
             }
         }
     }
