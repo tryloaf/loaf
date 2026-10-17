@@ -683,7 +683,7 @@ import WebKit
         cancelPointerLock()
         OmnibarTextField.fields.removeValue(forKey: id)
         omnibarFocusID = UUID()
-        omnibarBufferedInput = false
+        omnibarBufferedInput = query.map { WonderbarInput($0).isLocal } ?? false
         omnibarCreatesTab = newTab
         omnibarOriginalURL = query == nil ? selectedTab?.url : nil
         omnibarQuery =

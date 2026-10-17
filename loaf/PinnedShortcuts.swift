@@ -208,6 +208,32 @@ extension BrowserWindowState {
         tabChanged(tab)
         application.persistSoon()
     }
+    func canPopOutPin(_ tab: BrowserTab) -> Bool {
+        guard tab.store === self, !tab.isDisposed, tab.profileID == selectedProfileID,
+            tab.pinned, isOpenTab(tab), let url = tab.url, tab.pinnedAddress != nil
+        else { return false }
+        return !Self.matchesPinnedPage(tab.pinnedAddress, url: url)
+    }
+
+    @discardableResult func popOutPin(_ tab: BrowserTab, forSplit: Bool = false) -> BrowserTab? {
+        guard tab.store === self, !tab.isDisposed, tab.profileID == selectedProfileID, tab.pinned,
+            forSplit || canPopOutPin(tab)
+        else { return nil }
+        let open = openPinned(tab)
+        // The shortcut stays in the same saved position. The live tab, its WKWebView,
+        // navigation stack and page state become a regular tab without loading anything.
+        open.pinned = false
+        open.pinnedShortcutID = nil
+        open.pinnedTitle = nil
+        open.pinnedIcon = nil
+        open.pinPresentation = nil
+        open.pinnedAddress = nil
+        tabChanged(open)
+        sidebarEntryCache = nil
+        runtime(for: open.profileID).extensions.controller.didChangeTabProperties(.pinned, for: open)
+        objectWillChange.send()
+        return open
+    }
     func returnToPin(_ tab: BrowserTab) {
         let open = tab.pinned ? openPinned(tab) : openGroupMember(tab)
         select(open)

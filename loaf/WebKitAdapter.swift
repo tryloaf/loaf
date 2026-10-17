@@ -108,6 +108,24 @@ struct PointerCapturePosition {
         typealias TryClose = @convention(c) (AnyObject, Selector) -> Bool
         return unsafeBitCast(implementation, to: TryClose.self)(view, selector)
     }
+    static func enableWebGPU(_ preferences: WKPreferences) {
+        // Resolve WebKit's private feature SPI at runtime so unavailable flags are harmless.
+        // Keep this on OS releases where WebGPU ships, without experimental backend flags.
+        guard #available(macOS 26, *), WKPreferences.responds(to: NSSelectorFromString("_features")),
+            let features = WKPreferences.perform(NSSelectorFromString("_features"))?.takeUnretainedValue() as? [NSObject]
+        else { return }
+        let selector = NSSelectorFromString("_setEnabled:forFeature:")
+        guard preferences.responds(to: selector), let implementation = preferences.method(for: selector) else { return }
+        typealias Setter = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
+        let set = unsafeBitCast(implementation, to: Setter.self)
+        for feature in features {
+            guard feature.responds(to: NSSelectorFromString("key")),
+                let key = feature.value(forKey: "key") as? String,
+                ["WebGPUEnabled", "WebGPUHDREnabled"].contains(key)
+            else { continue }
+            set(preferences, selector, true, feature)
+        }
+    }
     static func enablePictureInPicture(_ preferences: WKPreferences) {
         let selector = NSSelectorFromString("_setAllowsPictureInPictureMediaPlayback:")
         guard preferences.responds(to: selector), let implementation = preferences.method(for: selector) else { return }

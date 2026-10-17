@@ -54,6 +54,8 @@ nonisolated enum WonderbarCommand: Hashable, Sendable {
     case reopen(UUID)
     case duplicate(UUID)
     case bookmark(UUID)
+    case copyURL(UUID)
+    case popOut(UUID)
     case pin(UUID, Bool)
     case mute(UUID, Bool)
     case split(UUID, UUID)
@@ -79,6 +81,8 @@ nonisolated enum WonderbarCommand: Hashable, Sendable {
         }
         if let tab = store.selectedTab, !tab.isDisposed {
             if tab.url != nil {
+                add(.copyURL(tab.id), "copy current URL", "⌘⇧C", .copy)
+                if store.canPopOutPin(tab) { add(.popOut(tab.id), "pop out tab", "keep this page and its saved pin", .external) }
                 add(.bookmark(tab.id), "save bookmark…", tab.sidebarTitle, .favorite)
                 add(.duplicate(tab.id), "duplicate tab", tab.sidebarTitle, .copy)
                 add(.pin(tab.id, !tab.pinned), tab.pinned ? "unpin tab" : "pin tab", tab.sidebarTitle, .pinned)
@@ -97,7 +101,7 @@ nonisolated enum WonderbarCommand: Hashable, Sendable {
                 }
                 add(.endSplit(split.left, split.right), "end split view", "keep both tabs open", .collapse)
             }
-            for other in store.splittableTabs where other !== tab && !tab.pinned && tab.page == .web && tab.url != nil {
+            for other in store.splittableTabs where other !== tab && tab.page == .web && tab.url != nil {
                 add(.split(tab.id, other.id), "split with " + other.sidebarTitle, "open side by side", .expand)
             }
             if !store.profile.privateMode {
@@ -165,6 +169,14 @@ extension BrowserWindowState {
             saved.pinnedShortcutID = nil
             dismissOmnibar()
             _ = openSavedTab(saved)
+        case .copyURL(let id):
+            guard let tab = selected(id) else { return false }
+            dismissOmnibar()
+            copyAddress(tab)
+        case .popOut(let id):
+            guard let tab = selected(id), let open = popOutPin(tab) else { return false }
+            dismissOmnibar()
+            select(open)
         case .bookmark(let id):
             guard let tab = selected(id) else { return false }
             dismissOmnibar()
@@ -183,7 +195,7 @@ extension BrowserWindowState {
             dismissOmnibar()
             for source in tab.media where source.muted != muted { tab.control(source, action: "mute") }
         case .split(let leftID, let rightID):
-            guard let left = selected(leftID), let right = tabs.first(where: { $0.id == rightID }),
+            guard let left = selected(leftID), let right = splittableTabs.first(where: { $0.id == rightID }),
                 splittableTabs.contains(where: { $0 === left }), splittableTabs.contains(where: { $0 === right })
             else { return false }
             dismissOmnibar()

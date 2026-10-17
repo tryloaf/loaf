@@ -294,8 +294,8 @@ struct StartPage: View, Equatable {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Text(MarketingLaunch.displayDate(time.date), format: .dateTime.weekday(.wide).month(.wide).day()).textCase(.lowercase).font(
                         .system(size: 13)
-                    ).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
+                    ).foregroundStyle(.secondary).lineLimit(compact ? 2 : 1).minimumScaleFactor(0.8)
+                }.frame(maxHeight: .infinity, alignment: .leading)
             }
         case "battery": BatteryWidget(monitor: store.application.resources, showsHeader: !editing)
         case "browsingTime": BrowsingTimeWidget(store: store, monitor: store.application.resources)
@@ -311,7 +311,7 @@ struct StartPage: View, Equatable {
             ).id(store.selectedProfileID)
         case "weather":
             StartWeatherWidget(
-                store: store, weather: store.weather, compact: compact, privateMode: snapshot.privateMode)
+                store: store, weather: store.weather, privateMode: snapshot.privateMode)
         case "notes":
             VStack(alignment: .leading, spacing: 8) {
                 widgetHeader(.book, "notes")
@@ -354,53 +354,70 @@ struct StartPage: View, Equatable {
     }
 }
 
-private struct StartWeatherWidget: View {
+struct StartWeatherWidget: View {
     let store: BrowserStore
     @ObservedObject var weather: WeatherService
-    let compact: Bool
     let privateMode: Bool
     @Environment(\.colorScheme) private var scheme
+    private var place: String {
+        if !weather.city.isEmpty { return weather.city }
+        return store.preferences.hasWeatherLocation ? store.preferences.weatherLocationLabel : "select a city"
+    }
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 8 : 12) {
-            HStack(spacing: compact ? 8 : 12) {
-                GolzheimIcon(icon: weather.icon, size: compact ? 32 : 40)
-                Text(weather.temperature.map { "\($0)°" } ?? "—").font(
-                    .system(size: compact ? 32 : 40, weight: .light))
-                Spacer()
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(weather.city.isEmpty ? "select a city" : weather.city).font(.system(size: 13))
-                    .lineLimit(weather.city.isEmpty && !compact ? 3 : 1).minimumScaleFactor(0.8)
-                    .fixedSize(horizontal: false, vertical: true).help(weather.city)
-                Text(weather.condition).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }.frame(maxWidth: .infinity, alignment: .leading)
-            if !compact && !weather.hours.isEmpty {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 36), spacing: 8)], spacing: 8) {
-                    ForEach(weather.hours) { hour in
-                        VStack(spacing: 3) {
-                            Text(hour.date, format: .dateTime.hour())
-                            Text("\(hour.temperature)°").fontWeight(.medium)
-                        }.font(.system(size: 10)).accessibilityElement(children: .combine)
-                    }
+        GeometryReader { geometry in
+            let horizontal = geometry.size.width >= 240 && geometry.size.height < 200
+            let forecast = !weather.hours.isEmpty && (geometry.size.width >= 200 || geometry.size.height >= 200)
+            VStack(alignment: .leading, spacing: 8) {
+                if horizontal {
+                    HStack(spacing: 16) {
+                        current(compact: false).frame(maxWidth: .infinity, alignment: .leading)
+                        if forecast { hourly.frame(maxWidth: .infinity) }
+                    }.frame(maxHeight: .infinity)
+                } else {
+                    current(compact: geometry.size.width < 200)
+                    if forecast { hourly.padding(.top, 8) }
+                    Spacer(minLength: 0)
                 }
-            }
-            if privateMode {
-                Button {
-                    NSWorkspace.shared.open(weather.attributionURL)
-                } label: {
-                    Text(weather.attribution).font(.system(size: 10)).foregroundStyle(PrivateChrome.accent)
-                }.buttonStyle(.plain)
-            } else {
-                Link(destination: weather.attributionURL) {
-                    if let mark = scheme == .dark ? weather.attributionMarkDark : weather.attributionMarkLight {
-                        Image(nsImage: mark).resizable().scaledToFit().frame(height: 16)
-                    } else {
-                        Text(weather.attribution).font(.system(size: 10)).foregroundStyle(.secondary)
-                    }
-                }
-            }
+                attribution
+            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }.modifier(WeatherRefresh(store: store))
+    }
+    private func current(compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                GolzheimIcon(icon: weather.icon, size: compact ? 26 : 32).accessibilityHidden(true)
+                Text(weather.temperature.map { "\($0)°" } ?? "—")
+                    .font(.system(size: compact ? 32 : 40, weight: .light)).monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.75)
+            }
+            Text(place).font(.system(size: 12)).lineLimit(1).help(place)
+            Text(weather.error ?? (weather.loading && weather.temperature == nil ? "loading weather…" : weather.condition))
+                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private var hourly: some View {
+        HStack(spacing: 8) {
+            ForEach(weather.hours.prefix(3)) { hour in
+                VStack(spacing: 6) {
+                    Text(hour.date, format: .dateTime.hour()).foregroundStyle(.secondary)
+                    Text("\(hour.temperature)°").font(.system(size: 14, weight: .medium))
+                }.font(.system(size: 10)).lineLimit(1)
+                    .frame(maxWidth: .infinity).accessibilityElement(children: .combine)
+            }
+        }.accessibilityLabel("hourly forecast")
+    }
+    private var attribution: some View {
+        Button {
+            NSWorkspace.shared.open(weather.attributionURL)
+        } label: {
+            if let mark = scheme == .dark ? weather.attributionMarkDark : weather.attributionMarkLight {
+                Image(nsImage: mark).resizable().scaledToFit().frame(maxWidth: 100, maxHeight: 12)
+            } else {
+                Text(weather.attribution).font(.system(size: 10)).foregroundStyle(
+                    privateMode ? PrivateChrome.accent : .secondary)
+            }
+        }.buttonStyle(.plain).accessibilityLabel(weather.attribution)
     }
 }
 
@@ -734,7 +751,7 @@ struct StartWidgetCard<Content: View>: View {
                         .accessibilityLabel("\(id) widget settings")
                 }
             }
-            if ["notes", "search", "pins", "recent", "downloads", "checklist", "worldClock", "timer", "stopwatch", "battery"].contains(id) {
+            if ["notes", "search", "pins", "recent", "downloads", "checklist", "weather", "clock", "worldClock", "timer", "stopwatch", "battery"].contains(id) {
                 content().frame(maxHeight: .infinity)
             } else {
                 StartWidgetScrollContent(centered: true, content: content())
@@ -830,7 +847,7 @@ struct StartWidgetCard<Content: View>: View {
                 Text("list").tag("list")
             }
         }
-        if ["notes", "search", "pins", "recent", "downloads", "checklist", "worldClock", "timer", "stopwatch", "battery"].contains(id) {
+        if ["notes", "search", "pins", "recent", "downloads", "checklist", "weather", "clock", "worldClock", "timer", "stopwatch", "battery"].contains(id) {
             Toggle(
                 "larger text",
                 isOn: Binding(

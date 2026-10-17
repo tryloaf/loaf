@@ -166,44 +166,41 @@ struct StartWorldClockWidget: View {
     var showsHeader = true
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            StartWidgetSection {
-                if showsHeader {
-                    HStack(spacing: 8) {
-                        GolzheimIcon(icon: .globe, size: 14)
-                        Text("world clock").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            GeometryReader { geometry in
+                let zones = StartWorldClock.zones(options.timeZones)
+                let compact = geometry.size.height < CGFloat(zones.count * 32 + (showsHeader ? 28 : 0))
+                VStack(alignment: .leading, spacing: compact ? 6 : 10) {
+                    if showsHeader && geometry.size.height >= 100 {
+                        HStack(spacing: 6) {
+                            GolzheimIcon(icon: .globe, size: 13)
+                            Text("world clock").font(.system(size: 12, weight: .medium))
+                        }.foregroundStyle(.secondary).lineLimit(1)
                     }
-                }
-            } content: {
-                ForEach(StartWorldClock.zones(options.timeZones), id: \.identifier) { zone in
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) {
-                            cityAndDay(zone, date: MarketingLaunch.displayDate(context.date))
-                            Spacer(minLength: 0)
-                            time(zone, date: MarketingLaunch.displayDate(context.date)).fixedSize()
-                        }
-                        VStack(alignment: .leading, spacing: 4) {
-                            cityAndDay(zone, date: MarketingLaunch.displayDate(context.date))
-                            time(zone, date: MarketingLaunch.displayDate(context.date))
-                        }
+                    if zones.isEmpty {
+                        Text("choose places in widget settings").font(.system(size: 12)).foregroundStyle(.secondary)
+                    } else {
+                        VStack(spacing: compact ? 6 : 10) {
+                            ForEach(zones, id: \.identifier) { zone in
+                                HStack(alignment: .center, spacing: 6) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(StartWorldClock.city(zone)).font(.system(size: compact ? 11 : 12))
+                                            .lineLimit(1).truncationMode(.tail).help(StartWorldClock.city(zone))
+                                        if !compact {
+                                            Text(StartWorldClock.day(MarketingLaunch.displayDate(context.date), zone: zone))
+                                                .font(.system(size: 10)).foregroundStyle(.secondary)
+                                        }
+                                    }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                                    Text(StartWorldClock.time(MarketingLaunch.displayDate(context.date), zone: zone,
+                                        hour24: options.clock24Hour == true))
+                                        .font(.system(size: compact ? 12 : 14)).monospacedDigit()
+                                        .lineLimit(1).fixedSize().layoutPriority(1)
+                                }.accessibilityElement(children: .combine)
+                            }
+                        }.frame(maxHeight: .infinity, alignment: .center)
                     }
-                }
-                if StartWorldClock.zones(options.timeZones).isEmpty {
-                    Text("choose places in widget settings").font(.system(size: 12)).foregroundStyle(.secondary)
-                }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-    }
-    private func cityAndDay(_ zone: TimeZone, date: Date) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(StartWorldClock.city(zone)).font(.system(size: 12)).lineLimit(1)
-                .truncationMode(.tail).help(StartWorldClock.city(zone))
-            Text(StartWorldClock.day(date, zone: zone)).font(.system(size: 10)).foregroundStyle(.secondary)
-        }
-    }
-    private func time(_ zone: TimeZone, date: Date) -> some View {
-        Text(StartWorldClock.time(date, zone: zone, hour24: options.clock24Hour == true))
-            .font(.system(size: 14)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.1)
-            .layoutPriority(1)
     }
 }
 

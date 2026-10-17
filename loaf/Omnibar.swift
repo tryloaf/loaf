@@ -1442,7 +1442,7 @@ struct OmnibarView: View {
                     },
                     focusSnapshot: {
                         guard ownsSession(focusID, profile: profileID) else { return nil }
-                        return (store.omnibarQuery, !store.omnibarBufferedInput)
+                        return (store.omnibarQuery, !store.omnibarBufferedInput && !WonderbarInput(store.omnibarQuery).isLocal)
                     }, fadesOverflow: true, reduceMotion: reduceMotion, monochromeSelection: store.profile.privateMode
                 ).id(focusID).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading).frame(height: 24)
                 Button {
@@ -1540,7 +1540,7 @@ struct OmnibarView: View {
                 .vertical, 8)
 
         }.frame(width: width, alignment: .top)
-            .modifier(OmnibarPanelHeight(height: 56 + 30 + (displayed.isEmpty ? 0 : 1 + rowsHeight)))
+            .modifier(OmnibarPanelHeight(height: 56 + 30 + (displayed.isEmpty && emptyText == nil ? 0 : 1 + rowsHeight)))
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: rowsHeight)
             .background {
                 ProfileWindowSurface(

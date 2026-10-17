@@ -160,6 +160,11 @@ struct TabActions: View {
         Button(multiple ? "group selected tabs" : "new group with tab") {
             store.groupSelectedTabs(including: tab)
         }
+        if store.canPopOutPin(tab) {
+            Button("pop out tab") {
+                if let open = store.popOutPin(tab) { store.select(open) }
+            }
+        }
         if tab.pinned {
             Button(tab.pinPresentation == "row" ? "move pin to grid" : "show pin as row") {
                 store.setPinPresentation(tab, row: tab.pinPresentation != "row")

@@ -358,6 +358,12 @@ nonisolated enum PageNavigationScrollEligibility {
             const seen = new Set();
             while (el && !seen.has(el)) {
                 seen.add(el);
+                // Canvas editors pan without DOM scroll ranges. Their wheel and
+                // pinch handlers must retain the gesture, even inside overflow:hidden.
+                const tag = el.tagName?.toUpperCase();
+                if (tag === 'CANVAS' || (tag === 'SVG' && el.getBoundingClientRect().width > 160
+                    && el.getBoundingClientRect().height > 100) || el.getAttribute?.('role') === 'application'
+                    || el.isContentEditable || style(el).touchAction === 'none') return true;
                 if (el.tagName === 'IFRAME') {
                     let child = null;
                     try { child = el.contentDocument; } catch (_) {}
@@ -457,7 +463,9 @@ nonisolated enum PageNavigationScrollEligibility {
             let tab = view.browserTab, !tab.isDisposed, tab.store?.selectedTab === tab,
             view.fullscreenState == .notInFullscreen, !tab.pointerCapturePosition.captured
         else { return false }
-        if view.magnification > 1.0001 {
+        if !event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
+            || view.magnification > 1.0001 || tab.pageClaimsWheel
+        {
             finish()
             gesture.reset()
             return false

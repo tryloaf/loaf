@@ -24,6 +24,53 @@ enum PageScripts {
           }
         })();
         """#
+    static let canvasGestures = #"""
+        (() => {
+          let last = 0;
+          let scale = 1, wheelPinch = false;
+          const canvasTarget = event => {
+            const path = event.composedPath();
+            return path.some(el => el instanceof Element &&
+              (el.tagName?.toUpperCase() === 'CANVAS'
+                || (el.tagName?.toUpperCase() === 'SVG' && el.getBoundingClientRect().width > 160
+                  && el.getBoundingClientRect().height > 100) || el.getAttribute('role') === 'application'
+                || getComputedStyle(el).touchAction === 'none'));
+          };
+          const pinchWheel = (event, deltaY) => new WheelEvent('wheel', {
+            bubbles:true, cancelable:true, composed:true, ctrlKey:true, deltaMode:0, deltaY,
+            clientX:event.clientX, clientY:event.clientY, screenX:event.screenX, screenY:event.screenY});
+          window.addEventListener('gesturestart', event => {
+            scale = 1; wheelPinch = false;
+            if (event.defaultPrevented || !canvasTarget(event)) return;
+            wheelPinch = !event.target.dispatchEvent(pinchWheel(event, 0));
+            if (wheelPinch) event.preventDefault();
+          }, {passive:false});
+          window.addEventListener('gestureend', () => { wheelPinch = false; }, {passive:true});
+          window.addEventListener('gesturechange', event => {
+            const next = event.scale;
+            if (!(next > 0) || !Number.isFinite(next)) return;
+            const ratio = next / scale;
+            scale = next;
+            if (event.defaultPrevented || !wheelPinch || Math.abs(ratio - 1) < 0.00001) return;
+            // Some canvas apps implement Chromium's ctrl-wheel pinch path only.
+            // Offer that path when the page has not already handled Safari's gesture.
+            const wheel = pinchWheel(event, -Math.log(ratio)*100);
+            if (!event.target.dispatchEvent(wheel)) event.preventDefault();
+          }, {passive:false});
+          window.addEventListener('wheel', event => {
+            if (!event.isTrusted) return;
+            // Observe after page handlers have run, including listeners that stop
+            // propagation. No events or page APIs are replaced.
+            setTimeout(() => {
+              if (!event.defaultPrevented) return;
+              const now = performance.now();
+              if (now - last < 100) return;
+              last = now;
+              window.webkit.messageHandlers.loafPageRevision.postMessage({wheelClaimed:true});
+            }, 0);
+          }, {capture:true, passive:true});
+        })();
+        """#
     static let pageEdits = #"""
         (() => {
           const edited = event => {

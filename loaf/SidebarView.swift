@@ -83,7 +83,7 @@ struct SidebarView: View {
                 profileStrip
                 VStack(spacing: 8) {
                     SidebarMediaPlayers(store: store, collection: store.sidebarMedia)
-                    if !store.preferences.weatherCity.isEmpty && store.profile.personalization?.sidebarWeather != false
+                    if store.preferences.hasWeatherLocation && store.profile.personalization?.sidebarWeather != false
                     {
                         weather
                     }
@@ -265,11 +265,11 @@ struct SidebarView: View {
                     size: store.profile.personalization?.compactSidebarWeather == true ? 16 : 22
                 ).fixedSize()
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(store.weather.city.isEmpty ? store.preferences.weatherCity : store.weather.city).font(
+                    Text(store.weather.city.isEmpty ? store.preferences.weatherLocationLabel : store.weather.city).font(
                         .system(size: 12)
                     ).lineLimit(1)
                     if store.profile.personalization?.compactSidebarWeather != true {
-                        Text(store.weather.condition.isEmpty ? "weather unavailable" : store.weather.condition).font(
+                        Text(store.weather.error ?? (store.weather.loading ? "loading weather…" : store.weather.condition.isEmpty ? "weather unavailable" : store.weather.condition)).font(
                             .system(size: 10)
                         ).foregroundStyle(.secondary).lineLimit(1)
                     }

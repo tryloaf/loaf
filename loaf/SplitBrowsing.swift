@@ -29,7 +29,11 @@ extension BrowserWindowState {
         return split
     }
     var splittableTabs: [BrowserTab] {
-        tabs.filter { !$0.isDisposed && !$0.pinned && $0.page == .web && $0.url != nil }
+        (tabs + pinnedTabs).reduce(into: [BrowserTab]()) { result, tab in
+            if !tab.isDisposed, tab.page == .web, tab.url != nil, !result.contains(where: { $0.id == tab.id }) {
+                result.append(tab)
+            }
+        }
     }
     func splitSelection(including tab: BrowserTab) -> [BrowserTab] {
         let selection = groupingTabs(including: tab)
@@ -45,11 +49,13 @@ extension BrowserWindowState {
     }
     func split(_ left: BrowserTab, with right: BrowserTab) {
         guard left !== right, left.store === self, right.store === self,
-            !left.isDisposed, !right.isDisposed, tabs.contains(where: { $0 === left }),
-            tabs.contains(where: { $0 === right }),
+            !left.isDisposed, !right.isDisposed, splittableTabs.contains(where: { $0 === left }),
+            splittableTabs.contains(where: { $0 === right }),
             left.profileID == selectedProfileID, right.profileID == selectedProfileID,
-            left.page == .web, right.page == .web, left.url != nil, right.url != nil,
-            !left.pinned, !right.pinned
+            left.page == .web, right.page == .web, left.url != nil, right.url != nil
+        else { return }
+        guard let left = left.pinned ? popOutPin(left, forSplit: true) : left,
+            let right = right.pinned ? popOutPin(right, forSplit: true) : right
         else { return }
         assignTab(right, to: left.groupID)
         browserSplit = .init(left: left.id, right: right.id)
@@ -414,26 +420,33 @@ private struct SplitTabSegment: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var selected: Bool { store.selectedTab?.id == tab.id || store.selectedSidebarTabIDs.contains(tab.id) }
     var body: some View {
-        HStack(spacing: 0) {
-            Button {
-                store.selectSidebarTab(tab, modifiers: NSApp.currentEvent?.modifierFlags ?? [])
-                store.focusPage()
-            } label: {
-                HStack(spacing: 5) {
-                    EditableTabIcon(tab: tab, store: store, size: 14)
-                    Text(tab.sidebarTitle).font(.system(size: 11)).lineLimit(1)
-                    Spacer(minLength: 0)
-                }.padding(.leading, 7).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityLabel(tab.sidebarTitle).accessibilityAddTraits(
-                selected ? .isSelected : [])
-            Button {
-                store.closeFromPointer(tab)
-            } label: {
-                GolzheimIcon(icon: .close, size: 12).foregroundStyle(.secondary).frame(width: 20, height: 24)
-            }.buttonStyle(PlayerActionStyle(outline: false)).accessibilityLabel("close " + tab.sidebarTitle)
-                .opacity(hovered ? 1 : 0).allowsHitTesting(hovered)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
-        }.padding(.trailing, 3).frame(maxWidth: .infinity).frame(height: 28)
+        Button {
+            store.selectSidebarTab(tab, modifiers: NSApp.currentEvent?.modifierFlags ?? [])
+            store.focusPage()
+        } label: {
+            HStack(spacing: 5) {
+                EditableTabIcon(tab: tab, store: store, size: 14)
+                Text(tab.sidebarTitle).font(.system(size: 11)).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .mask(alignment: .trailing) {
+                        HStack(spacing: 0) {
+                            Rectangle()
+                            LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                                .frame(width: hovered ? 28 : 0)
+                            Color.clear.frame(width: hovered ? 10 : 0)
+                        }
+                    }
+            }.padding(.leading, 7).padding(.trailing, 5).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityLabel(tab.sidebarTitle)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .overlay(alignment: .trailing) {
+                Button { store.closeFromPointer(tab) } label: {
+                    GolzheimIcon(icon: .close, size: 12).foregroundStyle(.secondary).frame(width: 20, height: 24)
+                }.buttonStyle(PlayerActionStyle(outline: false)).accessibilityLabel("close " + tab.sidebarTitle)
+                    .opacity(hovered ? 1 : 0).allowsHitTesting(hovered).padding(.trailing, 3)
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
+            .frame(maxWidth: .infinity).frame(height: 28)
             .background(selected ? Color(nsColor: .textBackgroundColor) : .clear, in: RoundedRectangle(cornerRadius: 6))
             .onHover { hovered = $0 }
             .contextMenu {

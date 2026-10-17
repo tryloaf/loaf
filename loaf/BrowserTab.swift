@@ -207,6 +207,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             }, pinnedShortcutID: pinnedShortcutID, customTitle: customTitle, groupID: groupID,
             groupMemberID: groupMemberID, customIcon: customIcon)
     }
+    private var claimedWheelUntil: TimeInterval = 0
+    var pageClaimsWheel: Bool { ProcessInfo.processInfo.systemUptime < claimedWheelUntil }
     var isEmptyNewTab: Bool {
         page == .web && url == nil && existingWebView?.url == nil && !loading && navigationError == nil
     }
@@ -251,6 +253,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         config.preferences.isFraudulentWebsiteWarningEnabled = true
         config.preferences.isElementFullscreenEnabled = true
         WebKitAdapter.enablePictureInPicture(config.preferences)
+        WebKitAdapter.enableWebGPU(config.preferences)
         if !inheritsPopupPreferences { config.preferences.javaScriptCanOpenWindowsAutomatically = false }
         config.userContentController.addUserScript(WKUserScript(
             source: PopupBlocking.script, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
@@ -282,7 +285,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 in: .defaultClient))
         config.userContentController.addUserScript(
             WKUserScript(
-                source: PageScripts.linkPreview + "\n" + PageScripts.pageEdits, injectionTime: .atDocumentStart, forMainFrameOnly: false,
+                source: PageScripts.linkPreview + "\n" + PageScripts.pageEdits + "\n" + PageScripts.canvasGestures, injectionTime: .atDocumentStart, forMainFrameOnly: false,
                 in: .defaultClient))
         config.userContentController.addUserScript(
             WKUserScript(
@@ -537,7 +540,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 in: .defaultClient))
         controller.addUserScript(
             WKUserScript(
-                source: PageScripts.linkPreview + "\n" + PageScripts.pageEdits, injectionTime: .atDocumentStart, forMainFrameOnly: false,
+                source: PageScripts.linkPreview + "\n" + PageScripts.pageEdits + "\n" + PageScripts.canvasGestures, injectionTime: .atDocumentStart, forMainFrameOnly: false,
                 in: .defaultClient))
         controller.addUserScript(
             WKUserScript(
@@ -1145,6 +1148,10 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         guard let body = message.body as? [String: Any] else { return }
         if message.name == "loafBlockedPopup" {
             reportBlockedPopup(message)
+            return
+        }
+        if message.name == "loafPageRevision", body["wheelClaimed"] as? Bool == true {
+            claimedWheelUntil = ProcessInfo.processInfo.systemUptime + 1
             return
         }
         if message.name == "loafPageRevision", body["edited"] as? Bool == true {

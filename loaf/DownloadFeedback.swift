@@ -47,6 +47,8 @@ struct DownloadProgressSummary: Equatable {
 
 @MainActor final class DownloadFeedback: ObservableObject {
     @Published private(set) var arrivals = 0
+    @Published private(set) var pendingFlights: [UUID: UUID] = [:]
+    func hasPendingFlight(for profileID: UUID) -> Bool { pendingFlights.values.contains(profileID) }
     @Published private(set) var completions = 0
     weak var trayAnchor: NSView?
     weak var overlay: DownloadFlightOverlay.FlightView?
@@ -59,6 +61,7 @@ struct DownloadProgressSummary: Equatable {
     func launch(from origin: DownloadClickOrigin?, name: String, profileID: UUID, owner: BrowserStore) {
         guard owner.nativeWindow?.isVisible == true, launches.count < 8 else { return }
         let id = UUID()
+        pendingFlights[id] = profileID
         let reveal = !owner.sidebarPresented && !owner.hoveredSidebar
         if reveal {
             owner.hoveredSidebar = true
@@ -84,15 +87,20 @@ struct DownloadProgressSummary: Equatable {
             if reveal {
                 do { try await Task.sleep(for: .milliseconds(280)) } catch { return }
             }
-            guard !Task.isCancelled, let self, let owner, owner.nativeWindow?.isVisible == true,
-                owner.selectedProfileID == profileID else { return }
+            guard !Task.isCancelled, let self else { return }
+            guard let owner, owner.nativeWindow?.isVisible == true, owner.selectedProfileID == profileID else {
+                self.pendingFlights.removeValue(forKey: id)
+                return
+            }
             if let origin, let overlay = self.overlay, let anchor = self.trayAnchor,
                 anchor.window === overlay.window, !anchor.isHiddenOrHasHiddenAncestor {
                 overlay.fly(from: origin.screenPoint, to: anchor, name: name, tint: NSColor(profileTint(owner.profile))) { [weak self, weak owner] in
+                    self?.pendingFlights.removeValue(forKey: id)
                     guard owner?.selectedProfileID == profileID else { return }
                     self?.arrivals += 1
                 }
             } else {
+                self.pendingFlights.removeValue(forKey: id)
                 self.arrivals += 1
             }
         }
@@ -101,6 +109,7 @@ struct DownloadProgressSummary: Equatable {
     func stop() {
         for task in launches.values { task.cancel() }
         launches.removeAll()
+        pendingFlights.removeAll()
         revealTask?.cancel()
         revealTask = nil
         temporarilyRevealed = false
@@ -185,10 +194,10 @@ struct DownloadFlightOverlay: NSViewRepresentable {
             paper.position = end
             paper.opacity = 0
             CATransaction.begin()
-            CATransaction.setCompletionBlock { [weak self, weak group] in
+            CATransaction.setCompletionBlock { [weak group] in
                 MainActor.assumeIsolated {
                     group?.removeFromSuperlayer()
-                    if self?.window?.isVisible == true { arrived() }
+                    arrived()
                 }
             }
             paper.add(flight, forKey: "download")
@@ -255,7 +264,7 @@ struct DownloadTrayButton: View {
                     Color(nsColor: .textBackgroundColor).opacity(expansion * 0.12),
                     in: RoundedRectangle(cornerRadius: 6))
                 .overlay(alignment: .bottom) {
-                    if summary.count > 0 {
+                    if summary.count > 0 && !feedback.hasPendingFlight(for: store.selectedProfileID) {
                         DownloadTrayProgress(summary: summary, tint: tint).frame(width: 22, height: 3).padding(.bottom, 1)
                     }
                 }

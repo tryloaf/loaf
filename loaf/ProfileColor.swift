@@ -427,11 +427,12 @@ struct ProfileColorPad: View {
 }
 
 enum AppearancePreviewOption: String, CaseIterable {
-    case titlebar, pageMargins, wonderbarTint
+    case titlebar, pageMargins, sidebarSmoothing, wonderbarTint
     var title: String {
         switch self {
         case .titlebar: "sidebar-only titlebar"
         case .pageMargins: "page margins"
+        case .sidebarSmoothing: "sidebar smoothing"
         case .wonderbarTint: "wonderbar tint"
         }
     }
@@ -441,11 +442,13 @@ struct AppearancePreviewSettings: Equatable {
     var sidebarOnlyTitlebar = true
     var pageMargins = true
     var tintWonderbar = false
+    var sidebarSmoothing = true
     init() {}
     init(_ preferences: BrowserPreferences) {
         sidebarOnlyTitlebar = preferences.sidebarOnlyChrome != false
         pageMargins = preferences.insetCollapsedPage != false
         tintWonderbar = preferences.tintWonderbar == true
+        sidebarSmoothing = preferences.resizeTransition != false
     }
     func demonstrating(_ option: AppearancePreviewOption?, enabled: Bool) -> Self {
         var value = self
@@ -454,6 +457,7 @@ struct AppearancePreviewSettings: Equatable {
         case .pageMargins:
             value.sidebarOnlyTitlebar = true
             value.pageMargins = enabled
+        case .sidebarSmoothing: value.sidebarSmoothing = enabled
         case .wonderbarTint: value.tintWonderbar = enabled
         case nil: break
         }
@@ -488,6 +492,7 @@ struct ProfileThemePreview: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var demoEnabled = true
     @State private var sidebarCollapsed = false
+    @State private var previewBlur = false
     private struct Playback: Equatable {
         let option: AppearancePreviewOption?
         let reduced: Bool
@@ -626,7 +631,8 @@ struct ProfileThemePreview: View {
                                     }
                                 }
                             }.padding(12)
-                        }.clipShape(RoundedRectangle(cornerRadius: pageInset == 0 ? 0 : 6)).padding(
+                        }.blur(radius: previewBlur && resolved.sidebarSmoothing && !reduceMotion ? 2 : 0)
+                        .clipShape(RoundedRectangle(cornerRadius: pageInset == 0 ? 0 : 6)).padding(
                             [.top, .trailing, .bottom], pageInset
                         )
                         .padding(.leading, sidebarCollapsed ? pageInset : 0)
@@ -651,6 +657,7 @@ struct ProfileThemePreview: View {
     }
     private func playDemonstration() async {
         demoEnabled = true
+        previewBlur = false
         sidebarCollapsed =
             demonstration == .pageMargins || demonstration == .titlebar
         guard demonstration != nil, !reduceMotion else { return }
@@ -658,6 +665,12 @@ struct ProfileThemePreview: View {
             while !Task.isCancelled {
                 try await Task.sleep(for: .milliseconds(1800))
                 demoEnabled.toggle()
+                if demonstration == .sidebarSmoothing {
+                    previewBlur = true
+                    withAnimation(.easeInOut(duration: SidebarMotion.duration)) { sidebarCollapsed.toggle() }
+                    try await Task.sleep(for: .milliseconds(260))
+                    withAnimation(.easeOut(duration: 0.12)) { previewBlur = false }
+                }
             }
         } catch {}
     }

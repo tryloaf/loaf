@@ -178,13 +178,18 @@ struct BatteryWidget: View {
     private var percentage: Int? { MarketingLaunch.isStudio ? 100 : monitor.batteryPercent }
     private var charging: Bool { MarketingLaunch.isStudio ? false : monitor.charging }
     private var saving: Bool { MarketingLaunch.isStudio ? false : monitor.saverEnabled }
+    static func icon(percentage: Int?, charging: Bool) -> LoafIcon {
+        if charging { return .batteryCharging }
+        guard let percentage else { return .batteryFull }
+        return percentage <= 25 ? .batteryLow : percentage <= 65 ? .batteryHalf : .batteryFull
+    }
     var body: some View {
         StartWidgetSection(centered: true) {
             if showsHeader {
                 Label {
                     Text("battery")
                 } icon: {
-                    GolzheimIcon(icon: .powerSaver, size: 13)
+                    GolzheimIcon(icon: Self.icon(percentage: percentage, charging: charging), size: 18)
                 }.font(.system(size: 13))
             }
         } content: {

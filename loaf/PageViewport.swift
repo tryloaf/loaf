@@ -1,5 +1,6 @@
 import AppKit
 import CoreImage
+import WebKit
 import QuartzCore
 import SwiftUI
 
@@ -44,6 +45,13 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         final class SnapshotView: NSImageView {
             override func hitTest(_ point: NSPoint) -> NSView? { nil }
         }
+        private var snapshotGeneration = UUID()
+        private var waitingForSnapshot = false
+        private var snapshotTimeout: DispatchWorkItem?
+        private var snapshotFade: DispatchWorkItem?
+        private var cachedNativeSnapshot: NSImage?
+        private var nativeCapture: DispatchWorkItem?
+
         private var leading: CGFloat = 0
         private var edge: CGFloat = 0
         private var trailing: CGFloat = 0
@@ -51,12 +59,9 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         private var initialized = false
         private var sidebarPresented = true
         private var animateNextLayout = false
-        private var sidebarResizePending = false
         private var lastLayoutSize: NSSize?
         private var resizeTransition = true
         private var reduceMotion = false
-        private var blurEnd: DispatchWorkItem?
-        private var pendingResizeSnapshot: NSImage?
         private var link: CADisplayLink?
         private var motionStart = NSRect.zero
         private var motionTarget = NSRect.zero
@@ -105,13 +110,9 @@ struct PageViewport<Content: View>: NSViewRepresentable {
                     || self.reduceMotion != reduceMotion || self.resizeTransition != resizeTransition
             else { return }
             let changed = initialized && self.sidebarPresented != sidebarPresented
-            let sidebarChanged = initialized && (changed || self.leading != leading)
-            if sidebarChanged, resizeTransition, !reduceMotion, lastLayoutSize == bounds.size,
-                window?.inLiveResize != true, pendingResizeSnapshot == nil
-            {
-                pendingResizeSnapshot = captureResizeSnapshot()
+            if changed && resizeTransition && !reduceMotion && window != nil {
+                prepareTransitionSnapshot()
             }
-            sidebarResizePending = sidebarResizePending || sidebarChanged
             self.leading = leading
             self.edge = edge
             self.trailing = trailing
@@ -121,46 +122,38 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             self.reduceMotion = reduceMotion
             initialized = true
             if changed { animateNextLayout = !reduceMotion && window != nil }
-            if reduceMotion { stopMotion() }
-            if !resizeTransition {
-                pendingResizeSnapshot = nil
-                clearResizeBlur()
+            if reduceMotion || !resizeTransition {
+                cancelCapture()
+                stopMotion()
+                clearSnapshot()
             }
             needsLayout = true
         }
         override func layout() {
             super.layout()
+            if waitingForSnapshot { return }
             let windowResized = lastLayoutSize != bounds.size || window?.inLiveResize == true
-            let soften = sidebarResizePending && !windowResized && resizeTransition && !reduceMotion
-            let preparedSnapshot = pendingResizeSnapshot
-            pendingResizeSnapshot = nil
-            sidebarResizePending = false
+            if windowResized { clearSnapshot(); cachedNativeSnapshot = nil }
             lastLayoutSize = bounds.size
-            if windowResized { clearResizeBlur() }
             let target = NSRect(
                 x: leading, y: edge,
                 width: max(0, bounds.width - leading - edge - trailing), height: max(0, bounds.height - 2 * edge))
             let previous = surface.frame
             let previousRadius = surface.layer?.cornerRadius ?? radius
             let animate =
-                (animateNextLayout || moving) && !windowResized && !reduceMotion
+                (animateNextLayout || moving) && !windowResized && !reduceMotion && resizeTransition
                 && previous.width > 0 && previous.height > 0 && target != previous
             animateNextLayout = false
             if moving && target == motionTarget && !windowResized { return }
-            guard target != surface.frame || surface.layer?.cornerRadius != radius else { return }
-            let snapshot = soften ? preparedSnapshot ?? captureResizeSnapshot() : nil
+            guard target != surface.frame || surface.layer?.cornerRadius != radius else {
+                scheduleNativeCapture()
+                return
+            }
             stopMotion()
             motionTarget = target
-            if let snapshot {
-                resizeSnapshot.image = snapshot
-                resizeSnapshot.frame = surface.bounds
-                resizeSnapshot.isHidden = false
-            }
-            if soften, window != nil {
-                beginResizeBlur(duration: animate ? SidebarMotion.duration + 0.12 : 0.18)
-            }
             guard animate, window != nil else {
                 applyGeometry(target, radius: radius)
+                scheduleNativeCapture()
                 return
             }
             motionStart = previous
@@ -168,6 +161,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             motionStartRadius = previousRadius
             motionStarted = CACurrentMediaTime()
             moving = true
+            if resizeSnapshotVisible { animateSnapshot() }
             applyGeometry(previous, radius: previousRadius)
             let link = displayLink(target: TickTarget(self), selector: #selector(TickTarget.update(_:)))
             self.link = link
@@ -178,11 +172,14 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             CATransaction.setDisableActions(true)
             surface.frame = frame
             surface.layer?.cornerRadius = radius
-            let contentFrame =
-                moving && resizeSnapshotVisible
-                ? NSRect(origin: .zero, size: motionTarget.size) : surface.bounds
+            // The stretched texture carries the animation while WebKit lays out once,
+            // at its destination size, underneath it.
+            let contentFrame = moving && resizeSnapshotVisible
+                ? NSRect(origin: .zero, size: motionTarget.size) : moving
+                ? NSRect(origin: .zero, size: NSSize(
+                    width: max(motionStart.width, motionTarget.width),
+                    height: max(motionStart.height, motionTarget.height))) : surface.bounds
             if contentSurface.frame != contentFrame { contentSurface.frame = contentFrame }
-            // A resize snapshot carries the motion while the live page stays at its destination size.
             if host.frame != contentSurface.bounds {
                 host.frame = contentSurface.bounds
                 host.layoutSubtreeIfNeeded()
@@ -204,78 +201,141 @@ struct PageViewport<Content: View>: NSViewRepresentable {
                 link?.invalidate()
                 link = nil
                 moving = false
+                applyGeometry(motionTarget, radius: radius)
+                scheduleNativeCapture()
             }
         }
         func stopMotion() {
             link?.invalidate()
             link = nil
             moving = false
-            pendingResizeSnapshot = nil
             surface.layer?.removeAllAnimations()
             contentSurface.layer?.removeAllAnimations()
-            clearResizeBlur()
         }
-        deinit { link?.invalidate() }
-        private func captureResizeSnapshot() -> NSImage? {
-            if resizeSnapshotVisible { return resizeSnapshot.image }
-            guard window != nil, contentSurface.bounds.width > 0, contentSurface.bounds.height > 0,
-                let bitmap = contentSurface.bitmapImageRepForCachingDisplay(in: contentSurface.bounds)
-            else { return nil }
-            contentSurface.cacheDisplay(in: contentSurface.bounds, to: bitmap)
-            let image = NSImage(size: contentSurface.bounds.size)
-            image.addRepresentation(bitmap)
-            return image
+        deinit { link?.invalidate(); nativeCapture?.cancel(); snapshotTimeout?.cancel(); snapshotFade?.cancel() }
+
+        private func webViews() -> [WKWebView] {
+            func find(_ root: NSView) -> [WKWebView] {
+                if let web = root as? WKWebView { return web.isHiddenOrHasHiddenAncestor ? [] : [web] }
+                return root.subviews.flatMap(find)
+            }
+            return find(host)
         }
-        private func beginResizeBlur(duration: TimeInterval) {
-            let filteredView: NSView = resizeSnapshotVisible ? resizeSnapshot : contentSurface
-            guard let filter = CIFilter(name: "CIGaussianBlur") else { return }
-            filteredView.layerUsesCoreImageFilters = true
-            guard let layer = filteredView.layer else { return }
+        private func scheduleNativeCapture() {
+            guard !moving, !waitingForSnapshot, webViews().isEmpty, window?.isVisible == true else { return }
+            nativeCapture?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, !self.moving, !self.waitingForSnapshot,
+                    self.contentSurface.bounds.width > 0, self.contentSurface.bounds.height > 0,
+                    let bitmap = self.contentSurface.bitmapImageRepForCachingDisplay(in: self.contentSurface.bounds)
+                else { return }
+                self.contentSurface.cacheDisplay(in: self.contentSurface.bounds, to: bitmap)
+                let image = NSImage(size: self.contentSurface.bounds.size)
+                image.addRepresentation(bitmap)
+                self.cachedNativeSnapshot = image
+            }
+            nativeCapture = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+        }
+        private func cancelCapture() {
+            snapshotGeneration = UUID()
+            waitingForSnapshot = false
+            snapshotTimeout?.cancel()
+            snapshotTimeout = nil
+            nativeCapture?.cancel()
+            nativeCapture = nil
+        }
+        private func prepareTransitionSnapshot() {
+            if resizeSnapshotVisible { return }
+            cancelCapture()
+            let pages = webViews()
+            if pages.isEmpty {
+                if let cachedNativeSnapshot, cachedNativeSnapshot.size == contentSurface.bounds.size {
+                    showSnapshot(cachedNativeSnapshot)
+                }
+                return
+            }
+            cachedNativeSnapshot = nil
+            let generation = snapshotGeneration
+            let sourceBounds = contentSurface.bounds
+            guard sourceBounds.width > 0, sourceBounds.height > 0 else { return }
+            waitingForSnapshot = true
+            // Bound capture latency. A slow or hidden WebKit process must never block the sidebar.
+            let timeout = DispatchWorkItem { [weak self] in
+                guard let self, self.snapshotGeneration == generation else { return }
+                self.cancelCapture()
+                self.needsLayout = true
+            }
+            snapshotTimeout = timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: timeout)
+            var pending = pages.count
+            var images: [(NSImage, NSRect)] = []
+            for page in pages {
+                let rect = contentSurface.convert(page.bounds, from: page)
+                let configuration = WKSnapshotConfiguration()
+                configuration.rect = page.bounds
+                configuration.snapshotWidth = NSNumber(value: Double(min(1600, page.bounds.width)))
+                configuration.afterScreenUpdates = false
+                page.takeSnapshot(with: configuration) { [weak self] image, _ in
+                    guard let self, self.snapshotGeneration == generation else { return }
+                    if let image { images.append((image, rect)) }
+                    pending -= 1
+                    guard pending == 0 else { return }
+                    self.snapshotTimeout?.cancel()
+                    self.snapshotTimeout = nil
+                    self.waitingForSnapshot = false
+                    if images.count == pages.count {
+                        let image = NSImage(size: sourceBounds.size, flipped: true) { bounds in
+                            NSColor.windowBackgroundColor.setFill()
+                            bounds.fill()
+                            for (image, rect) in images {
+                                image.draw(in: rect, from: .zero, operation: .copy, fraction: 1, respectFlipped: true, hints: nil)
+                            }
+                            return true
+                        }
+                        self.showSnapshot(image)
+                    }
+                    self.needsLayout = true
+                }
+            }
+        }
+        private func showSnapshot(_ image: NSImage) {
+            snapshotFade?.cancel()
+            resizeSnapshot.layer?.removeAllAnimations()
+            resizeSnapshot.image = image
+            resizeSnapshot.frame = surface.bounds
+            resizeSnapshot.layer?.opacity = 1
+            resizeSnapshot.isHidden = false
+        }
+        private func animateSnapshot() {
+            snapshotFade?.cancel()
+            guard let filter = CIFilter(name: "CIGaussianBlur"), let layer = resizeSnapshot.layer else { return }
             filter.name = "sidebarResize"
             filter.setValue(0, forKey: kCIInputRadiusKey)
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            filteredView.contentFilters = [filter]
-            if resizeSnapshotVisible { layer.opacity = 0 }
-            CATransaction.commit()
+            resizeSnapshot.layerUsesCoreImageFilters = true
+            resizeSnapshot.contentFilters = [filter]
             let blur = CAKeyframeAnimation(keyPath: "filters.sidebarResize.inputRadius")
-            blur.values = [3, 3, 0]
-            blur.keyTimes = [0, 0.65, 1]
-            blur.duration = duration
-            blur.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            blur.values = [0, 3, 3, 0]
+            blur.keyTimes = [0, 0.2, 0.7, 1]
+            blur.duration = SidebarMotion.duration + 0.12
             layer.add(blur, forKey: "sidebarResizeBlur")
-            if resizeSnapshotVisible {
-                let fade = CABasicAnimation(keyPath: "opacity")
-                fade.fromValue = 1
-                fade.toValue = 0
-                fade.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + duration - 0.12
-                fade.duration = 0.12
-                fade.fillMode = .backwards
-                layer.add(fade, forKey: "sidebarSnapshotFade")
-            }
-            let end = DispatchWorkItem { [weak self] in self?.clearResizeBlur() }
-            blurEnd = end
-            DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: end)
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1; fade.toValue = 0
+            fade.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + SidebarMotion.duration
+            fade.duration = 0.12
+            fade.fillMode = .forwards; fade.isRemovedOnCompletion = false
+            layer.add(fade, forKey: "sidebarSnapshotFade")
+            let cleanup = DispatchWorkItem { [weak self] in self?.clearSnapshot() }
+            snapshotFade = cleanup
+            DispatchQueue.main.asyncAfter(deadline: .now() + SidebarMotion.duration + 0.12, execute: cleanup)
         }
-        private func clearResizeBlur() {
-            guard
-                blurEnd != nil || !resizeSnapshot.isHidden || !contentSurface.contentFilters.isEmpty
-                    || !resizeSnapshot.contentFilters.isEmpty
-            else { return }
-            blurEnd?.cancel()
-            blurEnd = nil
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            contentSurface.layer?.removeAnimation(forKey: "sidebarResizeBlur")
-            contentSurface.contentFilters = []
-            contentSurface.layerUsesCoreImageFilters = false
+        private func clearSnapshot() {
+            snapshotFade?.cancel(); snapshotFade = nil
             resizeSnapshot.layer?.removeAllAnimations()
             resizeSnapshot.contentFilters = []
             resizeSnapshot.layerUsesCoreImageFilters = false
-            resizeSnapshot.layer?.opacity = 1
-            resizeSnapshot.isHidden = true
             resizeSnapshot.image = nil
-            CATransaction.commit()
+            resizeSnapshot.isHidden = true
         }
         override func setFrameSize(_ newSize: NSSize) {
             guard frame.size != newSize else { return }
@@ -284,7 +344,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if window == nil { stopMotion() } else { needsLayout = true }
+            if window == nil { cancelCapture(); stopMotion(); clearSnapshot() } else { needsLayout = true }
         }
     }
 }

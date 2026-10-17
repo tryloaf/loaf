@@ -87,7 +87,6 @@ struct BrowserToolbar: View {
                 ChromeMoreIcon(color: palette.primary).frame(width: 26, height: 26).contentShape(Rectangle())
             }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("page actions")
         }.foregroundStyle(palette.primary).tint(palette.primary).padding(.trailing, 8).frame(height: 32)
-            .offset(y: store.chromeControlsCenterY - 16)
             .background(WindowDragArea())
             .background {
                 if reduceTransparency {

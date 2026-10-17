@@ -173,7 +173,7 @@ extension NSMenuItem {
 @MainActor final class LoafMainMenus: NSObject, NSMenuDelegate, NSMenuItemValidation {
     private enum Command: String {
         case about, updates, settings, defaultBrowser, newWindow, newTab, newPrivateWindow, closeTab, save, printPage
-        case find, location, wonderbarCommands, sidebar, sideChat, summarize, reload, reloadFromOrigin, reader, zoomIn,
+        case find, location, copyURL, wonderbarCommands, sidebar, sideChat, summarize, reload, reloadFromOrigin, reader, zoomIn,
             zoomOut, actualSize
         case back, forward, history, reopenTab, reopenWindow, bookmark, favorites
         case nextTab, previousTab, pin, duplicate, downloads, previousProfile, nextProfile, editProfile, addProfile
@@ -289,6 +289,7 @@ extension NSMenuItem {
         edit.addItem(.separator())
         add("Find on Page", .find, key: "f", to: edit)
         add("Search or Enter URL", .location, key: "l", to: edit)
+        add("Copy Current URL", .copyURL, key: "c", flags: [.command, .shift], to: edit)
         add("Search Commands…", .wonderbarCommands, key: "p", flags: [.command, .shift], to: edit)
         edit.addItem(.separator())
         let spelling = appendMenu("Spelling and Grammar", to: edit)
@@ -735,6 +736,7 @@ extension NSMenuItem {
                 : automatic ? "controlled by macOS Low Power Mode or your battery threshold." : nil
             LowercaseMenus.normalize(item)
             return application.resources.hasInternalBattery && application.preferences.gameMode != true && !automatic
+        case .copyURL: return store?.selectedTab?.url != nil
         case .save: return store?.selectedTab?.url != nil && store?.selectedTab?.loading == false
         case .sideChat: return store?.canShowSideChat == true
         case .summarize: return store?.canSummarizePage == true
@@ -799,6 +801,7 @@ extension NSMenuItem {
         case .find:
             store?.findVisible = true
             store?.findFocusID = UUID()
+        case .copyURL: coordinator.commandState?.copyCurrentAddress()
         case .location: coordinator.activateBrowser()?.openOmnibar()
         case .wonderbarCommands: coordinator.activateBrowser()?.openOmnibar(query: "> ")
         case .sidebar: store?.sidebarVisible.toggle()

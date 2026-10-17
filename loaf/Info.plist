@@ -4,6 +4,8 @@
 <dict>
 	<key>SUFeedURL</key>
 	<string>https://tryloaf.app/appcast.xml</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>3600</integer>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUEnableInstallerLauncherService</key>

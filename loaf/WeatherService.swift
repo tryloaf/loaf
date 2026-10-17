@@ -381,10 +381,15 @@ nonisolated struct WeatherSnapshot: Codable {
     }
 }
 
+extension BrowserPreferences {
+    var hasWeatherLocation: Bool { weatherUsesCurrentLocation == true || !weatherCity.isEmpty }
+    var weatherLocationLabel: String { weatherUsesCurrentLocation == true ? "current location" : weatherCity }
+}
+
 struct WeatherRefresh: ViewModifier {
-    let store: BrowserStore
+    @ObservedObject var store: BrowserStore
     private var identity: String {
-        "\(store.preferences.weatherCity):\(store.preferences.fahrenheit):\(store.preferences.weatherProvider ?? "automatic")"
+        "\(store.preferences.weatherUsesCurrentLocation == true):\(store.preferences.weatherCity):\(store.preferences.fahrenheit):\(store.preferences.weatherProvider ?? "automatic")"
     }
     private func refresh() async {
         if store.preferences.weatherUsesCurrentLocation == true {
@@ -476,11 +481,13 @@ struct WeatherRefresh: ViewModifier {
         }
         switch manager.authorizationStatus {
         case .notDetermined:
+            application?.weather.loading = true
+            application?.weather.error = nil
             manager.requestWhenInUseAuthorization()
         case .authorized, .authorizedAlways:
             requestInitialLocation()
         default:
-            break
+            locationUnavailable("allow location access in System Settings to see local weather")
         }
     }
     func refreshWeather() async {
@@ -494,6 +501,8 @@ struct WeatherRefresh: ViewModifier {
     private func requestInitialLocation() {
         guard !awaitingInitialLocation else { return }
         awaitingInitialLocation = true
+        application?.weather.loading = true
+        application?.weather.error = nil
         manager.requestLocation()
     }
     private func beginMonitoring() {
@@ -512,6 +521,8 @@ struct WeatherRefresh: ViewModifier {
         switch manager.authorizationStatus {
         case .authorized, .authorizedAlways:
             requestInitialLocation()
+        case .denied, .restricted:
+            locationUnavailable("allow location access in System Settings to see local weather")
         default:
             break
         }
@@ -534,6 +545,12 @@ struct WeatherRefresh: ViewModifier {
         }
     }
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        if awaitingInitialLocation { awaitingInitialLocation = false }
+        guard application?.preferences.weatherUsesCurrentLocation == true else { return }
+        locationUnavailable("couldn’t find your location. try again in weather settings.")
+    }
+    private func locationUnavailable(_ message: String) {
+        awaitingInitialLocation = false
+        application?.weather.loading = false
+        application?.weather.error = message
     }
 }
