@@ -47,14 +47,22 @@ extension BrowserWindowState {
         guard tab.store === self, !tab.isDisposed, let url = tab.url, ["http", "https"].contains(url.scheme),
             url.user == nil
         else { return }
+        let removing = isFavorite(tab)
         updateProfile(tab.profileID) { profile in
-            if let index = profile.favorites.firstIndex(where: { $0.address == url.absoluteString }) {
+            if let index = profile.favorites.firstIndex(where: { $0.split == nil && $0.address == url.absoluteString })
+            {
                 profile.favorites.remove(at: index)
             } else {
                 profile.favorites.append(Favorite(title: tab.sidebarTitle, address: url.absoluteString))
             }
         }
         persistSoon()
+        if selectedProfileID == tab.profileID {
+            feedback.show(
+                .favorite, icon: removing ? .favorite : .favoriteFilled,
+                text: removing ? "unfavorited" : "favorited")
+            LoafHaptics.perform(enabled: preferences.haptics != false)
+        }
     }
     func copyAddress(_ tab: BrowserTab) {
         guard let url = tab.url else { return }
@@ -63,8 +71,12 @@ extension BrowserWindowState {
         feedback.show(.copied, icon: .check, text: "address copied")
     }
     func toggleMute(_ tab: BrowserTab) {
+        guard tab.store === self, !tab.isDisposed, !tab.media.isEmpty else { return }
         let muted = tab.media.contains { !$0.muted }
         for source in tab.media where source.muted != muted { tab.control(source, action: "mute") }
+        if selectedProfileID == tab.profileID {
+            feedback.show(.status, icon: muted ? .muted : .volume, text: muted ? "muted" : "unmuted")
+        }
     }
     func editPin(_ tab: BrowserTab, address: Bool = false) {
         guard (!address || tab.pinned), !tab.isDisposed, let coordinator = application.coordinator else { return }
@@ -195,7 +207,9 @@ struct TabActions: View {
         Button("open in new window") { store.moveTabToNewWindow(tab) }.disabled(store.application.coordinator == nil)
         Divider()
         Button("save bookmark…") { store.editBookmark(tab: tab) }.disabled(tab.url == nil)
-        if store.profileFor(tab.profileID).favorites.contains(where: { $0.address == tab.url?.absoluteString }) {
+        if store.profileFor(tab.profileID).favorites.contains(where: {
+            $0.split == nil && $0.address == tab.url?.absoluteString
+        }) {
             Button("remove bookmark") { store.favorite(tab) }
         }
         Button("copy link") { store.copyAddress(tab) }.disabled(tab.url == nil)

@@ -16,6 +16,7 @@
 /docs/*
 !/docs/ICLOUD_SYNC.md
 !/docs/EXTENSIONS.md
+!/docs/WONDERBAR.md
 
 .DS_Store
 *.xcuserstate

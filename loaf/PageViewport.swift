@@ -99,6 +99,11 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             leading: CGFloat, edge: CGFloat, radius: CGFloat,
             sidebarPresented: Bool, reduceMotion: Bool, trailing: CGFloat = 0, resizeTransition: Bool = true
         ) {
+            guard
+                !initialized || self.leading != leading || self.edge != edge || self.trailing != trailing
+                    || self.radius != radius || self.sidebarPresented != sidebarPresented
+                    || self.reduceMotion != reduceMotion || self.resizeTransition != resizeTransition
+            else { return }
             let changed = initialized && self.sidebarPresented != sidebarPresented
             let sidebarChanged = initialized && (changed || self.leading != leading)
             if sidebarChanged, resizeTransition, !reduceMotion, lastLayoutSize == bounds.size,
@@ -173,12 +178,16 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             CATransaction.setDisableActions(true)
             surface.frame = frame
             surface.layer?.cornerRadius = radius
-            contentSurface.frame =
+            let contentFrame =
                 moving && resizeSnapshotVisible
                 ? NSRect(origin: .zero, size: motionTarget.size) : surface.bounds
-            host.frame = contentSurface.bounds
-            host.layoutSubtreeIfNeeded()
-            resizeSnapshot.frame = surface.bounds
+            if contentSurface.frame != contentFrame { contentSurface.frame = contentFrame }
+            // A resize snapshot carries the motion while the live page stays at its destination size.
+            if host.frame != contentSurface.bounds {
+                host.frame = contentSurface.bounds
+                host.layoutSubtreeIfNeeded()
+            }
+            if resizeSnapshot.frame != surface.bounds { resizeSnapshot.frame = surface.bounds }
             CATransaction.commit()
         }
         private func tick() {
@@ -249,6 +258,10 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: end)
         }
         private func clearResizeBlur() {
+            guard
+                blurEnd != nil || !resizeSnapshot.isHidden || !contentSurface.contentFilters.isEmpty
+                    || !resizeSnapshot.contentFilters.isEmpty
+            else { return }
             blurEnd?.cancel()
             blurEnd = nil
             CATransaction.begin()
@@ -265,12 +278,13 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             CATransaction.commit()
         }
         override func setFrameSize(_ newSize: NSSize) {
+            guard frame.size != newSize else { return }
             super.setFrameSize(newSize)
             needsLayout = true
         }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if window == nil { stopMotion() }
+            if window == nil { stopMotion() } else { needsLayout = true }
         }
     }
 }

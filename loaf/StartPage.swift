@@ -471,7 +471,7 @@ private struct StartFavoritesWidget: View {
     }
     private func favoriteButton(_ favorite: Favorite, style: String) -> some View {
         Button {
-            store.navigate(favorite.address)
+            store.openBookmark(favorite)
         } label: {
             Group {
                 if style == "tiles" {

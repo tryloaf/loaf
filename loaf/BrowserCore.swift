@@ -248,11 +248,19 @@ nonisolated struct Visit: Codable, Identifiable, Equatable, Sendable {
     var sessionID: UUID?
 }
 
-nonisolated struct Favorite: Codable, Identifiable, Sendable {
+nonisolated struct SavedBookmarkSplit: Codable, Equatable, Sendable {
+    var address: String
+    var fraction: Double = 0.5
+}
+
+nonisolated struct Favorite: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
     var title: String
     var address: String
     var folderID: UUID?
+    var split: SavedBookmarkSplit?
+    var destinationKey: [String] { split.map { [address, $0.address] } ?? [address] }
+    var searchAddress: String { split.map { address + " " + $0.address } ?? address }
 }
 
 nonisolated enum BookmarkImport {

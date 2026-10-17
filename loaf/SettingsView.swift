@@ -672,7 +672,9 @@ struct SettingsView: View {
             }
         }
         Section("wonderbar") {
-            Text("local tabs, history, favorites, and the bundled site catalog are always available").foregroundStyle(
+            Text(
+                "local tabs, history, favorites, and the bundled site catalog are always available. type > for commands, or @ to search tabs, history, bookmarks, and recently closed tabs."
+            ).foregroundStyle(
                 .secondary)
             Toggle("search suggestions", isOn: $store.preferences.googleSuggestions).id("google-suggestions")
             Picker("suggestion provider", selection: optional(\.suggestionProvider, fallback: .google)) {

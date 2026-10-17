@@ -67,6 +67,44 @@ extension BrowserWindowState {
         }
         sidebarEntryCache = nil
     }
+    var canSaveSplitBookmark: Bool {
+        guard let split = visibleSplit,
+            let left = tabs.first(where: { $0.id == split.left })?.url,
+            let right = tabs.first(where: { $0.id == split.right })?.url
+        else { return false }
+        return Self.bookmarkURL(left.absoluteString) != nil && Self.bookmarkURL(right.absoluteString) != nil
+    }
+    func editSplitBookmark() {
+        guard let split = visibleSplit,
+            let left = tabs.first(where: { $0.id == split.left }),
+            let right = tabs.first(where: { $0.id == split.right }),
+            let leftURL = left.url, let rightURL = right.url,
+            Self.bookmarkURL(leftURL.absoluteString) != nil, Self.bookmarkURL(rightURL.absoluteString) != nil
+        else { return }
+        bookmarkDraft = BookmarkDraft(
+            profileID: selectedProfileID,
+            title: left.sidebarTitle + " + " + right.sidebarTitle,
+            address: leftURL.absoluteString,
+            split: SavedBookmarkSplit(address: rightURL.absoluteString, fraction: split.fraction))
+    }
+    @discardableResult func openBookmark(_ bookmark: Favorite, inNewTab: Bool = false) -> Bool {
+        guard let current = profile.favorites.first(where: { $0.id == bookmark.id }),
+            let leftURL = Self.bookmarkURL(current.address)
+        else { return false }
+        guard let pair = current.split else {
+            navigate(leftURL.absoluteString, inNewTab: inNewTab)
+            return true
+        }
+        guard let rightURL = Self.bookmarkURL(pair.address), pair.fraction.isFinite else { return false }
+        // Always create two unpinned pages in the current profile; a saved pair never replaces an existing page.
+        dismissOmnibar()
+        let left = newTab(url: leftURL, showOmnibar: false, activate: false)
+        let right = newTab(url: rightURL, showOmnibar: false, activate: false)
+        split(left, with: right)
+        browserSplit?.fraction = min(0.95, max(0.05, pair.fraction))
+        persistSoon()
+        return true
+    }
     func endSplit() {
         markVisibleTabsActive()
         browserSplit = nil
@@ -80,6 +118,16 @@ extension BrowserWindowState {
 
 @MainActor final class LoafWebView: WKWebView {
     weak var browserTab: BrowserTab?
+    override func cancelOperation(_ sender: Any?) {
+        // WebKit has already offered Escape to the page. Its unhandled cancel command
+        // must not reach NSHostingView, which uses it to exit browser window fullscreen.
+        if let window = window as? LoafBrowserWindow, window.styleMask.contains(.fullScreen),
+            fullscreenState == .notInFullscreen
+        {
+            return
+        }
+        nextResponder?.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+    }
     override var canGoBack: Bool { super.canGoBack || browserTab?.openerTrail != nil }
     override var canGoForward: Bool { super.canGoForward || browserTab?.openerReturnItem != nil }
     override func goBack() -> WKNavigation? {
@@ -390,6 +438,7 @@ private struct SplitTabSegment: View {
             .onHover { hovered = $0 }
             .contextMenu {
                 TabActions(tab: tab, store: store)
+                Button("save split view…") { store.editSplitBookmark() }.disabled(!store.canSaveSplitBookmark)
                 Button("end split") { store.endSplit() }
             }
     }

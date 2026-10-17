@@ -78,6 +78,7 @@ struct SidebarView: View {
                                 width: 76, height: 32)
                         }
                     }
+                    .padding(.top, floating ? 8 : 0)
                 address.padding(.horizontal, 8)
                 profileStrip
                 VStack(spacing: 8) {
@@ -93,7 +94,10 @@ struct SidebarView: View {
             }
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             .overlay(alignment: .bottom) {
-                tray(availableHeight: max(0, geometry.size.height - 40), sidebarWidth: geometry.size.width).zIndex(3)
+                tray(
+                    availableHeight: max(0, geometry.size.height - 40 - (floating ? 8 : 0)),
+                    sidebarWidth: geometry.size.width
+                ).zIndex(3)
             }
         }
         .animation(nil, value: store.extensionsVisible)

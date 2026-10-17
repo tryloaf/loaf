@@ -151,6 +151,7 @@ struct SidebarDockHost: NSViewRepresentable {
         private var laidOut = false
         private var targetX: CGFloat = 0
         private var hoverArea: NSTrackingArea?
+        private var hoverHasPointer = false
         override var isFlipped: Bool { true }
         init(pane: SidebarDockPane) {
             floating = pane.floating
@@ -260,6 +261,11 @@ struct SidebarDockHost: NSViewRepresentable {
                 stopMotion()
                 hostedSidebar.isHidden = !shown
             }
+            // Tracking can be installed after the pointer has already crossed onto the page.
+            // Use the destination bounds while the card moves under the pointer.
+            if let window {
+                dismissFloatingSidebarIfOutside(at: convert(window.mouseLocationOutsideOfEventStream, from: nil))
+            }
         }
         func stopMotion() {
             link?.invalidate()
@@ -291,13 +297,23 @@ struct SidebarDockHost: NSViewRepresentable {
             if shown, floating, hoverArea?.rect == rect { return }
             if let hoverArea { removeTrackingArea(hoverArea) }
             hoverArea = nil
-            guard shown, floating else { return }
+            guard shown, floating else {
+                hoverHasPointer = false
+                return
+            }
+            if let window, rect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
+                hoverHasPointer = true
+            }
 
             let area = NSTrackingArea(
                 rect: rect,
-                options: [.mouseEnteredAndExited, .activeAlways], owner: self, userInfo: nil)
+                options: [.mouseEnteredAndExited, .activeAlways, .assumeInside], owner: self, userInfo: nil)
             addTrackingArea(area)
             hoverArea = area
+        }
+        override func mouseEntered(with event: NSEvent) {
+            guard let window else { return }
+            dismissFloatingSidebarIfOutside(at: convert(window.mouseLocationOutsideOfEventStream, from: nil))
         }
         override func mouseExited(with event: NSEvent) {
             guard let window else { return }
@@ -305,10 +321,13 @@ struct SidebarDockHost: NSViewRepresentable {
         }
         func dismissFloatingSidebarIfOutside(at point: NSPoint) {
             let store = hostedSidebar.rootView.store
-            guard shown, floating, !store.sidebarPresented, store.hoveredSidebar,
-                !(store.siteSettingsVisible && store.siteSettingsTrigger == .sidebar),
-                !NSRect(x: 0, y: 0, width: sidebarWidth, height: bounds.height).contains(point)
-            else { return }
+            guard shown, floating, !store.sidebarPresented, store.hoveredSidebar else { return }
+            if NSRect(x: 0, y: 0, width: sidebarWidth, height: bounds.height).contains(point) {
+                hoverHasPointer = true
+                return
+            }
+            // Download feedback can reveal the card before the pointer has ever entered it.
+            guard hoverHasPointer, !(store.siteSettingsVisible && store.siteSettingsTrigger == .sidebar) else { return }
             store.hoveredSidebar = false
         }
         override func viewDidMoveToWindow() {

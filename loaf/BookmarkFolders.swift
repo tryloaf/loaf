@@ -104,6 +104,7 @@ struct BookmarkDraft: Identifiable {
     var title = ""
     var address = ""
     var folderID: UUID?
+    var split: SavedBookmarkSplit?
 }
 
 extension BrowserWindowState {
@@ -114,7 +115,7 @@ extension BrowserWindowState {
                 ["http", "https"].contains(url.scheme), url.user == nil, url.password == nil
             else { return }
             let existing = profile.favorites.first {
-                Self.bookmarkURL($0.address) == Self.bookmarkURL(url.absoluteString)
+                $0.split == nil && Self.bookmarkURL($0.address) == Self.bookmarkURL(url.absoluteString)
             }
             bookmarkDraft = BookmarkDraft(
                 profileID: selectedProfileID, title: existing?.title ?? tab.sidebarTitle,
@@ -139,28 +140,44 @@ extension BrowserWindowState {
         if components.port == (scheme == "https" ? 443 : 80) { components.port = nil }
         return components.url
     }
-    @discardableResult func saveBookmark(title: String, address: String, folderID: UUID?, profileID: UUID) -> Bool {
+    @discardableResult func saveBookmark(
+        title: String, address: String, folderID: UUID?, profileID: UUID,
+        split: SavedBookmarkSplit? = nil
+    ) -> Bool {
         guard profileID == selectedProfileID, profiles.contains(where: { $0.id == profileID }),
             folderID == nil || profile.bookmarkFolders?.contains(where: { $0.id == folderID }) == true,
             let url = Self.bookmarkURL(address),
             ["http", "https"].contains(url.scheme), url.host != nil, url.user == nil, url.password == nil
         else { return false }
+        let paired: SavedBookmarkSplit?
+        if let split {
+            guard let right = Self.bookmarkURL(split.address), split.fraction.isFinite else { return false }
+            paired = SavedBookmarkSplit(address: right.absoluteString, fraction: min(0.95, max(0.05, split.fraction)))
+        } else {
+            paired = nil
+        }
         let name = String(
             title.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(
                 in: .whitespacesAndNewlines
             ).prefix(200))
         updateCurrent { profile in
-            if let index = profile.favorites.firstIndex(where: { Self.bookmarkURL($0.address) == url }) {
+            if let index = profile.favorites.firstIndex(where: {
+                Self.bookmarkURL($0.address) == url && ($0.split == nil) == (paired == nil)
+                    && $0.split.flatMap { Self.bookmarkURL($0.address) }
+                        == paired.flatMap { Self.bookmarkURL($0.address) }
+            }) {
                 profile.favorites[index].address = url.absoluteString
                 profile.favorites[index].title = name.isEmpty ? url.host ?? url.absoluteString : name
                 profile.favorites[index].folderID = folderID
+                profile.favorites[index].split = paired
             } else {
                 profile.favorites.append(
                     Favorite(
                         title: name.isEmpty ? url.host ?? url.absoluteString : name, address: url.absoluteString,
-                        folderID: folderID))
+                        folderID: folderID, split: paired))
             }
         }
+        feedback.show(.favorite, icon: .favoriteFilled, text: paired == nil ? "favorited" : "split saved")
         return true
     }
 }
@@ -173,9 +190,16 @@ struct BookmarkEditor: View {
     @FocusState private var addressFocused: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("save bookmark").font(.system(size: 18, weight: .medium))
+            Text(draft.split == nil ? "save bookmark" : "save split view").font(.system(size: 18, weight: .medium))
             Form {
-                TextField("address", text: $draft.address).focused($addressFocused)
+                TextField(draft.split == nil ? "address" : "left address", text: $draft.address).focused(
+                    $addressFocused)
+                if draft.split != nil {
+                    TextField(
+                        "right address",
+                        text: Binding(
+                            get: { draft.split?.address ?? "" }, set: { draft.split?.address = $0 }))
+                }
                 TextField("name", text: $draft.title)
                 Picker("folder", selection: $draft.folderID) {
                     Text("favorites").tag(Optional<UUID>.none)
@@ -189,11 +213,16 @@ struct BookmarkEditor: View {
                 Spacer()
                 Button("save") {
                     if store.saveBookmark(
-                        title: draft.title, address: draft.address, folderID: draft.folderID, profileID: draft.profileID
+                        title: draft.title, address: draft.address, folderID: draft.folderID,
+                        profileID: draft.profileID,
+                        split: draft.split
                     ) {
                         dismiss()
                     } else {
-                        error = "enter a valid website address and choose an existing folder"
+                        error =
+                            draft.split == nil
+                            ? "enter a valid website address and choose an existing folder"
+                            : "enter valid addresses for both pages and choose an existing folder"
                     }
                 }.keyboardShortcut(.defaultAction).disabled(
                     draft.address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

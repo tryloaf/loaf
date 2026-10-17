@@ -191,6 +191,16 @@ import WebKit
     var runtimes: [UUID: ProfileRuntime] { application.runtimes }
     private var adapters: [UUID: ExtensionWindow] = [:]
     private var restoredProfiles = Set<UUID>()
+    struct RecentlyClosedTab: Identifiable {
+        let id: UUID
+        let saved: SavedTab
+    }
+    var recentlyClosedTabs: [RecentlyClosedTab] {
+        guard !profile.privateMode else { return [] }
+        return (closedTabs[selectedProfileID] ?? []).reversed().map {
+            RecentlyClosedTab(id: $0.saved.id, saved: $0.saved)
+        }
+    }
     private struct ClosedTab {
         var saved: SavedTab
         let interactionState: Any?
@@ -608,7 +618,17 @@ import WebKit
     }
 
     func reopenTab() {
-        guard let closed = closedTabs[selectedProfileID]?.popLast() else { return }
+        guard let id = closedTabs[selectedProfileID]?.last?.saved.id else { return }
+        _ = reopenClosedTab(id)
+    }
+    @discardableResult func reopenClosedTab(_ id: UUID) -> Bool {
+        guard let index = closedTabs[selectedProfileID]?.lastIndex(where: { $0.saved.id == id }),
+            let closed = closedTabs[selectedProfileID]?.remove(at: index)
+        else { return false }
+        restoreClosedTab(closed)
+        return true
+    }
+    private func restoreClosedTab(_ closed: ClosedTab) {
         var saved = closed.saved
         saved.id = UUID()
         if let pinID = saved.pinnedShortcutID,
@@ -997,15 +1017,16 @@ import WebKit
     }
     func isFavorite(_ tab: BrowserTab) -> Bool {
         guard tab.store === self, !tab.isDisposed, let url = tab.url else { return false }
-        return profileFor(tab.profileID).favorites.contains { $0.address == url.absoluteString }
+        return profileFor(tab.profileID).favorites.contains { $0.split == nil && $0.address == url.absoluteString }
     }
     func favoriteCurrent() {
         guard let tab = selectedTab, let url = tab.url, ["http", "https"].contains(url.scheme), url.user == nil else {
             return
         }
-        let removing = profile.favorites.contains { $0.address == url.absoluteString }
+        let removing = profile.favorites.contains { $0.split == nil && $0.address == url.absoluteString }
         updateCurrent { profile in
-            if let index = profile.favorites.firstIndex(where: { $0.address == url.absoluteString }) {
+            if let index = profile.favorites.firstIndex(where: { $0.split == nil && $0.address == url.absoluteString })
+            {
                 profile.favorites.remove(at: index)
             } else {
                 profile.favorites.append(Favorite(title: tab.title, address: url.absoluteString))
@@ -1013,7 +1034,7 @@ import WebKit
         }
         feedback.show(
             .favorite, icon: removing ? .favorite : .favoriteFilled,
-            text: removing ? "removed from favorites" : "added to favorites")
+            text: removing ? "unfavorited" : "favorited")
         LoafHaptics.perform(enabled: preferences.haptics != false)
     }
     func setPageZoom(_ zoom: Double) {

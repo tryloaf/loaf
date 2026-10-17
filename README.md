@@ -4,6 +4,8 @@ a browser for Mac, built with SwiftUI and WebKit. designed and developed by [owe
 
 profiles, split view, a customizable startpage, and a miniplayer. optional, experimental iCloud sync for profiles, pinned tabs, browser preferences, and tabs from other Macs. Chrome extension support is experimental, including userscript managers like Tampermonkey. [compatibility notes](docs/EXTENSIONS.md). no tracking or telemetry.
 
+the wonderbar supports explicit browser commands (`>`, or ⇧⌘P) and local search scopes for tabs, history, bookmarks, and recently closed tabs. split views can be saved as bookmarks with both pages and their divider position. [wonderbar guide](docs/WONDERBAR.md).
+
 [download](https://tryloaf.app) · [updates](https://tryloaf.app/updates) · [report a bug](https://tryloaf.app/report)
 
 major releases are named after breads. loaf 1.x is **brioche**; the name stays the same across minor and patch updates. release notes pair the name with the numeric version.

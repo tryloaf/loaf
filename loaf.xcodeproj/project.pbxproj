@@ -1,4 +1,4 @@
-
+// !$*UTF8*$!
 {
 	archiveVersion = 1;
 	classes = {
@@ -6,97 +6,97 @@
 	objectVersion = 90;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		000000000000000000000401 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000402 /* ZIPFoundation */; };
+		000000000000000000000411 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000412 /* Sparkle */; };
+/* End PBXBuildFile section */
 
-		000000000000000000000401  = {isa = PBXBuildFile; productRef = 000000000000000000000402 ; };
-		000000000000000000000411  = {isa = PBXBuildFile; productRef = 000000000000000000000412 ; };
+/* Begin PBXFileReference section */
+		000000000000000000000120 /* loaf.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = loaf.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
 
-
-
-		000000000000000000000120  = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = loaf.app; sourceTree = BUILT_PRODUCTS_DIR; };
-
-
-
-		000000000000000000000030  = {
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		000000000000000000000030 /* Exceptions for "loaf" folder in "loaf" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 000000000000000100000000 ;
+			target = 000000000000000100000000 /* loaf */;
 		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
-
-
-		000000000000000000000010  = {
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		000000000000000000000010 /* loaf */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				000000000000000000000030 ,
+				000000000000000000000030 /* Exceptions for "loaf" folder in "loaf" target */,
 			);
 			path = loaf;
 			sourceTree = "<group>";
 		};
+/* End PBXFileSystemSynchronizedRootGroup section */
 
-
-
-		000000000000000130000000  = {
+/* Begin PBXFrameworksBuildPhase section */
+		000000000000000130000000 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
-				000000000000000000000401 ,
-				000000000000000000000411 ,
+				000000000000000000000401 /* ZIPFoundation in Frameworks */,
+				000000000000000000000411 /* Sparkle in Frameworks */,
 			);
 		};
+/* End PBXFrameworksBuildPhase section */
 
-
-
+/* Begin PBXGroup section */
 		000000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
-				000000000000000000000010 ,
-				000000000000000000000020 ,
+				000000000000000000000010 /* loaf */,
+				000000000000000000000020 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		000000000000000000000020  = {
+		000000000000000000000020 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				000000000000000000000120 ,
+				000000000000000000000120 /* loaf.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
+/* End PBXGroup section */
 
-
-
-		000000000000000100000000  = {
+/* Begin PBXNativeTarget section */
+		000000000000000100000000 /* loaf */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 000000000000000110000000 ;
+			buildConfigurationList = 000000000000000110000000 /* Build configuration list for PBXNativeTarget "loaf" */;
 			buildPhases = (
-				000000000000000120000000 ,
-				000000000000000130000000 ,
-				000000000000000140000000 ,
+				000000000000000120000000 /* Sources */,
+				000000000000000130000000 /* Frameworks */,
+				000000000000000140000000 /* Resources */,
 			);
 			buildRules = (
 			);
 			fileSystemSynchronizedGroups = (
-				000000000000000000000010 ,
+				000000000000000000000010 /* loaf */,
 			);
 			name = loaf;
 			packageProductDependencies = (
-				000000000000000000000402 ,
-				000000000000000000000412 ,
+				000000000000000000000402 /* ZIPFoundation */,
+				000000000000000000000412 /* Sparkle */,
 			);
 			productName = loaf;
-			productReference = 000000000000000000000120 ;
+			productReference = 000000000000000000000120 /* loaf.app */;
 			productType = "com.apple.product-type.application";
 		};
+/* End PBXNativeTarget section */
 
-
-
-		000000000000000000000000  = {
+/* Begin PBXProject section */
+		000000000000000000000000 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2630;
-				LastUpgradeCheck = 2700;
+				LastUpgradeCheck = 2710;
 				TargetAttributes = {
 					000000000000000100000000 = {
 						CreatedOnToolsVersion = 26.3;
@@ -114,7 +114,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 000000000000000010000000 ;
+			buildConfigurationList = 000000000000000010000000 /* Build configuration list for PBXProject "loaf" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -124,37 +124,37 @@
 			mainGroup = 000000000000000000000001;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				000000000000000000000403 ,
-				000000000000000000000413 ,
+				000000000000000000000403 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
+				000000000000000000000413 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 90;
-			productRefGroup = 000000000000000000000020 ;
+			productRefGroup = 000000000000000000000020 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				000000000000000100000000 ,
+				000000000000000100000000 /* loaf */,
 			);
 		};
+/* End PBXProject section */
 
-
-
-		000000000000000140000000  = {
+/* Begin PBXResourcesBuildPhase section */
+		000000000000000140000000 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
 		};
+/* End PBXResourcesBuildPhase section */
 
-
-
-		000000000000000120000000  = {
+/* Begin PBXSourcesBuildPhase section */
+		000000000000000120000000 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
 			);
 		};
+/* End PBXSourcesBuildPhase section */
 
-
-
-		000000000000000011000000  = {
+/* Begin XCBuildConfiguration section */
+		000000000000000011000000 /* Debug configuration for PBXProject "loaf" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -190,6 +190,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 2Z7G4AHZG9;
 				DRIVERKIT_DEPLOYMENT_TARGET = 27.0;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -224,7 +225,7 @@
 			};
 			name = Debug;
 		};
-		000000000000000012000000  = {
+		000000000000000012000000 /* Release configuration for PBXProject "loaf" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -260,6 +261,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 2Z7G4AHZG9;
 				DRIVERKIT_DEPLOYMENT_TARGET = 27.0;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -286,7 +288,7 @@
 			};
 			name = Release;
 		};
-		000000000000000111000000  = {
+		000000000000000111000000 /* Debug configuration for PBXNativeTarget "loaf" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = loaf;
@@ -295,8 +297,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 29;
-				DEVELOPMENT_TEAM = 2Z7G4AHZG9;
+				CURRENT_PROJECT_VERSION = 30;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -351,7 +352,7 @@
 			};
 			name = Debug;
 		};
-		000000000000000112000000  = {
+		000000000000000112000000 /* Release configuration for PBXNativeTarget "loaf" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = loaf;
@@ -361,8 +362,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 29;
-				DEVELOPMENT_TEAM = 2Z7G4AHZG9;
+				CURRENT_PROJECT_VERSION = 30;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -417,29 +417,29 @@
 			};
 			name = Release;
 		};
+/* End XCBuildConfiguration section */
 
-
-
-		000000000000000010000000  = {
+/* Begin XCConfigurationList section */
+		000000000000000010000000 /* Build configuration list for PBXProject "loaf" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				000000000000000011000000 ,
-				000000000000000012000000 ,
+				000000000000000011000000 /* Debug configuration for PBXProject "loaf" */,
+				000000000000000012000000 /* Release configuration for PBXProject "loaf" */,
 			);
 			defaultConfigurationName = Release;
 		};
-		000000000000000110000000  = {
+		000000000000000110000000 /* Build configuration list for PBXNativeTarget "loaf" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				000000000000000111000000 ,
-				000000000000000112000000 ,
+				000000000000000111000000 /* Debug configuration for PBXNativeTarget "loaf" */,
+				000000000000000112000000 /* Release configuration for PBXNativeTarget "loaf" */,
 			);
 			defaultConfigurationName = Release;
 		};
+/* End XCConfigurationList section */
 
-
-
-		000000000000000000000403  = {
+/* Begin XCRemoteSwiftPackageReference section */
+		000000000000000000000403 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/weichsel/ZIPFoundation";
 			requirement = {
@@ -447,7 +447,7 @@
 				version = 0.9.20;
 			};
 		};
-		000000000000000000000413  = {
+		000000000000000000000413 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
 			requirement = {
@@ -455,20 +455,20 @@
 				version = 2.10.0;
 			};
 		};
+/* End XCRemoteSwiftPackageReference section */
 
-
-
-		000000000000000000000402  = {
+/* Begin XCSwiftPackageProductDependency section */
+		000000000000000000000402 /* ZIPFoundation */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 000000000000000000000403 ;
+			package = 000000000000000000000403 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
 			productName = ZIPFoundation;
 		};
-		000000000000000000000412  = {
+		000000000000000000000412 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 000000000000000000000413 ;
+			package = 000000000000000000000413 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
 		};
-
+/* End XCSwiftPackageProductDependency section */
 	};
-	rootObject = 000000000000000000000000 ;
+	rootObject = 000000000000000000000000 /* Project object */;
 }

@@ -811,7 +811,7 @@ import WebKit
         else { return false }
 
         guard !forwardedPageCommands.contains(event) else {
-            return ["a", "s", "f", "l", "r"].contains(event.charactersIgnoringModifiers?.lowercased() ?? "")
+            return ["a", "d", "s", "f", "l", "r"].contains(event.charactersIgnoringModifiers?.lowercased() ?? "")
         }
         let editing =
             ["a", "c", "x", "v", "z"].contains(event.charactersIgnoringModifiers?.lowercased() ?? "")
@@ -819,7 +819,7 @@ import WebKit
 
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
-        let editingShortcut = key == "a" && modifiers == .command
+        let editingShortcut = ["a", "d"].contains(key) && modifiers == .command
         let siteFirst = (["s", "f", "l", "r"].contains(key) && modifiers == .command) || editingShortcut
         if siteFirst {
             guard !event.isARepeat else { return true }
@@ -963,7 +963,7 @@ import WebKit
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53, isReplayedPageEscape(event) { return }
         if forwardedPageCommands.contains(event),
-            ["a", "s", "f", "l", "r"].contains(event.charactersIgnoringModifiers?.lowercased() ?? "")
+            ["a", "d", "s", "f", "l", "r"].contains(event.charactersIgnoringModifiers?.lowercased() ?? "")
         {
             return
         }

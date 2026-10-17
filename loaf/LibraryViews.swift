@@ -28,7 +28,6 @@ struct HistoryView: View {
     @State private var deletionIDs = Set<UUID>()
     @State private var deletionProfileID: UUID?
     @State private var deletionProfileName = ""
-    @State private var cookies: [HTTPCookie] = []
     @FocusState private var listFocused: Bool
     init(store: BrowserStore, presentation: HistoryPresentation? = nil) {
         self.store = store
@@ -128,9 +127,6 @@ struct HistoryView: View {
             .onChange(of: ordered) { _, ids in selection.retain(ids) }
         }.task(id: store.selectedProfileID) {
             selection.clear()
-            cookies = []
-            presentation.replaceCookies([], profile: store.selectedProfileID)
-            await refreshCookies()
         }
         .destructiveConfirmationDialog(
             "delete \(deletionIDs.count) visits?", isPresented: $confirmDeletion, titleVisibility: .visible
@@ -224,24 +220,6 @@ struct HistoryView: View {
         deletionProfileName = store.profile.name
         confirmDeletion = true
     }
-    private func refreshCookies() async {
-        let id = store.selectedProfileID
-        let all = await store.runtime.dataStore.httpCookieStore.allCookies()
-        if id == store.selectedProfileID {
-            cookies = all
-            presentation.replaceCookies(all, profile: id)
-        }
-    }
-    private func deleteCookies(host: String) {
-        let rt = store.runtime
-        let id = store.selectedProfileID
-        Task {
-            for cookie in cookies where BrowserAddress.domain(cookie.domain, belongsTo: host) {
-                await rt.dataStore.httpCookieStore.deleteCookie(cookie)
-            }
-            if id == store.selectedProfileID { await refreshCookies() }
-        }
-    }
 }
 
 struct FavoritesView: View {
@@ -273,11 +251,16 @@ struct FavoritesView: View {
                             WebsiteIcon(url: URL(string: favorite.address), store: store).clipShape(
                                 RoundedRectangle(cornerRadius: 4))
                             Button {
-                                store.navigate(favorite.address, inNewTab: true)
+                                store.openBookmark(favorite, inNewTab: true)
                             } label: {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(BrowserAddress.visible(favorite.title)).font(.system(size: 13))
-                                    Text(BrowserAddress.display(URL(string: favorite.address))).font(.system(size: 11))
+                                    Text(
+                                        favorite.split.map {
+                                            BrowserAddress.display(URL(string: favorite.address)) + " + "
+                                                + BrowserAddress.display(URL(string: $0.address))
+                                        } ?? BrowserAddress.display(URL(string: favorite.address))
+                                    ).font(.system(size: 11))
                                         .foregroundStyle(.secondary)
                                 }.frame(maxWidth: .infinity, alignment: .leading)
                             }.buttonStyle(LoafButtonStyle())
@@ -426,7 +409,7 @@ struct DownloadsView: View {
                             icon: .download, title: "no downloads", detail: "loaf asks where to save each file.")
                     }
                     ForEach(manager.items.filter { $0.profileID == store.selectedProfileID }) { item in
-                        DownloadRow(item: item, manager: store.downloads, store: store)
+                        DownloadRow(item: item, manager: store.downloads, store: store, detailed: true)
                     }
                 }.frame(maxWidth: 600).padding(28).frame(maxWidth: .infinity)
             }
@@ -463,6 +446,7 @@ struct DownloadRow: View {
     @ObservedObject var item: DownloadItem
     let manager: DownloadManager
     var store: BrowserStore? = nil
+    var detailed = false
     var body: some View {
         HStack(spacing: 10) {
             GolzheimIcon(icon: .download, size: 22)
@@ -473,12 +457,37 @@ struct DownloadRow: View {
                 } else if item.finished {
                     Text(item.compactStatus).font(.system(size: 11)).foregroundStyle(.secondary)
                 } else {
-                    ProgressView(value: item.fraction).frame(maxWidth: 300)
+                    if item.statistics.totalBytes != nil {
+                        ProgressView(value: item.fraction).frame(maxWidth: 300)
+                    } else {
+                        ProgressView().progressViewStyle(.linear).frame(maxWidth: 300)
+                    }
+                }
+                if detailed {
+                    Text(sizeAndRate).font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+                        .fixedSize(horizontal: false, vertical: true)
+                    if item.statistics.elapsed > 0 {
+                        Text(timing).font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
             DownloadControls(item: item, manager: manager, store: store)
         }.padding(12).background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 9))
             .contextMenu { DownloadActions(item: item, manager: manager, store: store) }
+    }
+    private var sizeAndRate: String {
+        let stats = item.statistics
+        if item.finished { return stats.totalBytes.map(DownloadStatistics.bytes) ?? "file size unavailable" }
+        return stats.sizeText + (item.active ? " · " + stats.rateText : "")
+    }
+    private var timing: String {
+        let stats = item.statistics
+        let elapsed = DownloadStatistics.duration(stats.elapsed) + " elapsed"
+        guard item.active else { return elapsed }
+        return elapsed + " · "
+            + (stats.estimatedRemaining.map { "about " + DownloadStatistics.duration($0) + " remaining" }
+                ?? "estimating time remaining…")
     }
 }
 
@@ -537,6 +546,9 @@ struct DownloadActions: View {
             Button("copy download link") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                if store?.selectedProfileID == item.profileID {
+                    store?.feedback.show(.copied, icon: .check, text: "link copied")
+                }
             }
         }
         if !item.active {

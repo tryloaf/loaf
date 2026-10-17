@@ -7,7 +7,7 @@ enum SiteShortcutBridge {
           window.addEventListener('keydown', event => {
             const key = event.key.toLowerCase();
             if (!event.isTrusted || event.repeat || !event.metaKey || event.ctrlKey || event.altKey || event.shiftKey ||
-                !['a','s','f','l','r'].includes(key)) return;
+                !['a','d','s','f','l','r'].includes(key)) return;
             setTimeout(() => {
               window.webkit.messageHandlers.loafShortcut.postMessage({key, claimed: event.defaultPrevented});
             }, 0);
@@ -21,6 +21,7 @@ extension LoafBrowserWindow {
         guard let store else { return }
         switch key {
         case "s": store.sidebarVisible.toggle()
+        case "d": if let tab = store.selectedTab { store.editBookmark(tab: tab) }
         case "f":
             store.findVisible = true
             store.findFocusID = UUID()
@@ -39,7 +40,7 @@ extension LoafBrowserWindow {
     }
 
     func siteClaimedShortcut(_ key: String, tabID: UUID, claimed: Bool = true) {
-        guard let tab = store?.selectedTab, tab.id == tabID, ["s", "f", "l", "r", "a"].contains(key),
+        guard let tab = store?.selectedTab, tab.id == tabID, ["s", "f", "l", "r", "a", "d"].contains(key),
             let index = pendingSiteShortcuts.firstIndex(where: { $0.key == key && $0.tabID == tabID })
         else { return }
         let pending = pendingSiteShortcuts.remove(at: index)

@@ -127,9 +127,58 @@ struct ClearingView: View {
     }
 }
 
+nonisolated struct CookieListSnapshot: Sendable {
+    struct Item: Identifiable, Sendable {
+        enum Content: Sendable {
+            case domain(String, Int)
+            case cookie(HTTPCookie)
+        }
+        let id: String
+        let content: Content
+    }
+    let cookies: [HTTPCookie]
+    static func identity(_ cookie: HTTPCookie) -> String {
+        cookie.domain + "\n" + cookie.path + "\n" + cookie.name
+    }
+    init(_ cookies: [HTTPCookie]) {
+        self.cookies = cookies.sorted { ($0.domain, $0.name, $0.path) < ($1.domain, $1.name, $1.path) }
+    }
+    func items(matching query: String) -> [Item] {
+        let matching =
+            query.isEmpty
+            ? cookies
+            : cookies.filter {
+                $0.domain.localizedCaseInsensitiveContains(query) || $0.name.localizedCaseInsensitiveContains(query)
+            }
+        var counts: [String: Int] = [:]
+        for cookie in matching { counts[cookie.domain, default: 0] += 1 }
+        var items: [Item] = []
+        items.reserveCapacity(matching.count + counts.count)
+        var previousDomain: String?
+        for (index, cookie) in matching.enumerated() {
+            if index % 256 == 0, Task.isCancelled { return [] }
+            if previousDomain != cookie.domain {
+                items.append(
+                    Item(
+                        id: "domain\n" + cookie.domain,
+                        content: .domain(cookie.domain, counts[cookie.domain] ?? 0)))
+                previousDomain = cookie.domain
+            }
+            items.append(Item(id: "cookie\n" + Self.identity(cookie), content: .cookie(cookie)))
+        }
+        return items
+    }
+}
+
 struct CookieManagerView: View {
     @ObservedObject var store: BrowserStore
-    @State private var cookies: [HTTPCookie] = []
+    @State private var snapshot = CookieListSnapshot([])
+    @State private var items: [CookieListSnapshot.Item] = []
+    @State private var snapshotProfileID: UUID?
+    @State private var snapshotRevision = UUID()
+    @State private var loadRevision = UUID()
+    @State private var loading = true
+    @State private var displayedSource: FilterSource?
     @State private var query = ""
     @State private var selectedCookies: Set<String> = []
     @State private var deletionCookies: [HTTPCookie] = []
@@ -137,22 +186,28 @@ struct CookieManagerView: View {
     @State private var deletionProfileName = ""
     @State private var confirmDeletion = false
     @State private var deleting = false
-    private var filtered: [HTTPCookie] {
-        cookies.filter {
-            query.isEmpty || $0.domain.localizedCaseInsensitiveContains(query)
-                || $0.name.localizedCaseInsensitiveContains(query)
-        }.sorted { ($0.domain, $0.name) < ($1.domain, $1.name) }
+    private struct FilterSource: Equatable {
+        let profile: UUID
+        let revision: UUID
+        let query: String
     }
-    private var domains: [String] { Array(Set(filtered.map(\.domain))).sorted() }
+    private var filterSource: FilterSource {
+        FilterSource(profile: store.selectedProfileID, revision: snapshotRevision, query: query)
+    }
+    private var isBusy: Bool { loading || displayedSource != filterSource }
+    private var cookies: [HTTPCookie] { snapshot.cookies }
+    private var filtered: [HTTPCookie] {
+        items.compactMap { if case .cookie(let cookie) = $0.content { cookie } else { nil } }
+    }
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 TextField("search cookies…", text: $query).textFieldStyle(.roundedBorder).focusRingPadding()
                 Button("select all") { selectedCookies = Set(filtered.map(cookieID)) }
-                    .controlSize(.small).disabled(filtered.isEmpty)
+                    .controlSize(.small).disabled(items.isEmpty || isBusy)
                 if !selectedCookies.isEmpty {
                     Button("delete \(selectedCookies.count)…", role: .destructive) { deleteSelectedCookies() }
-                        .controlSize(.small).disabled(deleting)
+                        .controlSize(.small).disabled(deleting || isBusy)
                 }
                 Button("history") { store.showPage(.history) }.controlSize(.small)
             }.frame(maxWidth: 600).padding(.horizontal, 28).padding(.vertical, 16)
@@ -162,28 +217,33 @@ struct CookieManagerView: View {
                         "\(cookies.count.formatted()) \(cookies.count == 1 ? "cookie" : "cookies") · \(store.profile.name)"
                     )
                     .font(.system(size: 12)).foregroundStyle(.secondary).padding(.bottom, 8)
-                    if filtered.isEmpty {
+                    if isBusy {
+                        ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 32)
+                            .accessibilityLabel("loading cookies")
+                    } else if items.isEmpty {
                         emptyLibrary(
                             icon: .cookie, title: query.isEmpty ? "no cookies saved" : "no matching cookies",
                             detail: query.isEmpty
                                 ? "cookies saved by sites in this profile will appear here."
                                 : "try another domain or cookie name.")
                     }
-                    ForEach(domains, id: \.self) { domain in
-                        let domainCookies = filtered.filter { $0.domain == domain }
-                        HStack(spacing: 8) {
-                            WebsiteIcon(
-                                url: URL(
-                                    string: "https://" + domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))),
-                                store: store)
-                            Text(domain).font(.system(size: 12, weight: .medium)).textSelection(.enabled)
-                            Spacer(minLength: 8)
-                            Text(domainCookies.count.formatted()).font(.system(size: 11)).foregroundStyle(.secondary)
-                        }.padding(.top, 16).padding(.bottom, 4)
-                            .contextMenu {
-                                Button("delete domain cookies…", role: .destructive) { deleteDomain(domain) }
-                            }
-                        ForEach(domainCookies, id: \.self) { cookie in
+                    ForEach(items) { item in
+                        switch item.content {
+                        case .domain(let domain, let count):
+                            HStack(spacing: 8) {
+                                WebsiteIcon(
+                                    url: URL(
+                                        string: "https://"
+                                            + domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))),
+                                    store: store)
+                                Text(domain).font(.system(size: 12, weight: .medium)).textSelection(.enabled)
+                                Spacer(minLength: 8)
+                                Text(count.formatted()).font(.system(size: 11)).foregroundStyle(.secondary)
+                            }.padding(.top, 16).padding(.bottom, 4)
+                                .contextMenu {
+                                    Button("delete domain cookies…", role: .destructive) { deleteDomain(domain) }
+                                }
+                        case .cookie(let cookie):
                             HStack(spacing: 10) {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(cookie.name).font(.system(size: 12)).lineLimit(1)
@@ -217,10 +277,11 @@ struct CookieManagerView: View {
                                         selectedCookies = [cookieID(cookie)]
                                         deleteSelectedCookies()
                                     }
-                                    Button("delete domain cookies…", role: .destructive) { deleteDomain(domain) }
+                                    Button("delete domain cookies…", role: .destructive) { deleteDomain(cookie.domain) }
                                 }
                         }
                     }
+                    .disabled(isBusy)
                     if !cookies.isEmpty {
                         Text("domain cookies may be shared by subdomains. deleting them can sign you out.")
                             .font(.system(size: 11)).foregroundStyle(.secondary).padding(.top, 20)
@@ -240,19 +301,39 @@ struct CookieManagerView: View {
                 selectedCookies = []
                 confirmDeletion = false
                 deletionCookies = []
+                items = []
+                snapshot = CookieListSnapshot([])
+                snapshotProfileID = nil
+                displayedSource = nil
                 await refresh()
             }
-            .onChange(of: query) { _, _ in selectedCookies.formIntersection(Set(filtered.map(cookieID))) }
+            .task(id: filterSource) {
+                guard snapshotProfileID == store.selectedProfileID else { return }
+                let snapshot = snapshot
+                let source = filterSource
+                let work = Task.detached(priority: .userInitiated) { snapshot.items(matching: source.query) }
+                let result = await withTaskCancellationHandler {
+                    await work.value
+                } onCancel: {
+                    work.cancel()
+                }
+                guard !Task.isCancelled, source == filterSource else { return }
+                items = result
+                selectedCookies.formIntersection(Set(filtered.map(cookieID)))
+                displayedSource = source
+            }
     }
     private func deleteDomain(_ domain: String) {
         requestDeletion(cookies.filter { $0.domain.lowercased() == domain.lowercased() })
     }
-    private func cookieID(_ cookie: HTTPCookie) -> String { cookie.domain + "\n" + cookie.path + "\n" + cookie.name }
+    private func cookieID(_ cookie: HTTPCookie) -> String { CookieListSnapshot.identity(cookie) }
     private func deleteSelectedCookies() {
         requestDeletion(cookies.filter { selectedCookies.contains(cookieID($0)) })
     }
     private func requestDeletion(_ selected: [HTTPCookie]) {
-        guard !deleting, !selected.isEmpty, !store.application.busyProfileIDs.contains(store.selectedProfileID) else {
+        guard !deleting, !isBusy, snapshotProfileID == store.selectedProfileID,
+            !selected.isEmpty, !store.application.busyProfileIDs.contains(store.selectedProfileID)
+        else {
             return
         }
         deletionCookies = selected
@@ -280,11 +361,22 @@ struct CookieManagerView: View {
     }
     private func refresh() async {
         let id = store.selectedProfileID
+        let revision = UUID()
+        loadRevision = revision
+        loading = true
         let result = await store.runtime.dataStore.httpCookieStore.allCookies()
-        if id == store.selectedProfileID {
-            cookies = result
-            selectedCookies.formIntersection(Set(result.map(cookieID)))
+        guard !Task.isCancelled, id == store.selectedProfileID, loadRevision == revision else { return }
+        let work = Task.detached(priority: .userInitiated) { CookieListSnapshot(result) }
+        let prepared = await withTaskCancellationHandler {
+            await work.value
+        } onCancel: {
+            work.cancel()
         }
+        guard !Task.isCancelled, id == store.selectedProfileID, loadRevision == revision else { return }
+        snapshot = prepared
+        snapshotProfileID = id
+        snapshotRevision = UUID()
+        loading = false
     }
 }
 

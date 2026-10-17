@@ -4,13 +4,19 @@ import CoreImage
 import SwiftUI
 
 struct BrowserNotice: Identifiable {
-    enum Kind { case zoom, favorite, pointer, copied, info, popupBlocked }
+    enum Kind { case zoom, favorite, pointer, copied, status, info, popupBlocked }
     let id: UUID
     let kind: Kind
     let icon: LoafIcon
     let text: String
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
+    var prefersAddressBar: Bool {
+        action == nil && (kind == .zoom || kind == .favorite || kind == .copied || kind == .status)
+    }
+    func floats(sidebarVisible: Bool, topBarVisible: Bool) -> Bool {
+        !topBarVisible && (!prefersAddressBar || !sidebarVisible)
+    }
     var numericValue: Double? {
         guard kind == .zoom else { return nil }
         return Double(text.filter { $0.isNumber || $0 == "." })
@@ -56,17 +62,24 @@ struct AddressFeedback<Content: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let activate: () -> Void
     var horizontalInset: CGFloat = 8
+    var includesFloatingNotices = false
     @ViewBuilder let content: () -> Content
-    private var notice: BrowserNotice? { feedback.notice?.action == nil ? feedback.notice : nil }
+    private var notice: BrowserNotice? {
+        guard let notice = feedback.notice, includesFloatingNotices || notice.prefersAddressBar else { return nil }
+        return notice
+    }
     var body: some View {
-        content().opacity(notice == nil ? 1 : 0)
-            .blur(radius: reduceMotion || notice == nil ? 0 : 4)
-            .offset(y: reduceMotion || notice == nil ? 0 : 8)
-            .allowsHitTesting(notice == nil).accessibilityHidden(notice != nil)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: notice != nil)
-            .overlay(alignment: .leading) {
-                if let notice = notice {
-                    Button(action: activate) {
+        ZStack(alignment: .leading) {
+            content().opacity(notice == nil ? 1 : 0)
+                .blur(radius: reduceMotion || notice == nil ? 0 : 4)
+                .offset(y: reduceMotion || notice == nil ? 0 : 8)
+                .allowsHitTesting(notice == nil).accessibilityHidden(notice != nil)
+                .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: notice != nil)
+            if let notice = notice {
+                HStack(spacing: 6) {
+                    Button(action: {
+                        if notice.action != nil { feedback.performAction() } else { activate() }
+                    }) {
                         HStack(spacing: 8) {
                             GolzheimIcon(icon: notice.icon, size: 12)
                             if let value = notice.numericValue {
@@ -82,24 +95,37 @@ struct AddressFeedback<Content: View>: View {
                                     .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: notice.text)
                             }
                             Spacer(minLength: 0)
+                            if let title = notice.actionTitle, notice.action != nil {
+                                Text(title).font(.system(size: 11, weight: .medium)).fixedSize()
+                            }
                         }.padding(.horizontal, horizontalInset).frame(maxWidth: .infinity, maxHeight: .infinity)
                             .contentShape(Rectangle())
-                    }.buttonStyle(.plain).id(notice.id)
-                        .transition(
-                            reduceMotion
-                                ? .opacity
-                                : .asymmetric(
-                                    insertion: .modifier(
-                                        active: AddressNoticeMotion(y: -8, blur: 4, opacity: 0),
-                                        identity: AddressNoticeMotion(y: 0, blur: 0, opacity: 1)),
-                                    removal: .modifier(
-                                        active: AddressNoticeMotion(y: -8, blur: 4, opacity: 0),
-                                        identity: AddressNoticeMotion(y: 0, blur: 0, opacity: 1)))
-                        )
-                        .accessibilityLabel(notice.text + ", address bar").help("search or surf...")
-                }
-            }.clipped().animation(
-                reduceMotion ? .easeOut(duration: 0.1) : .smooth(duration: 0.18), value: notice?.id)
+                    }.buttonStyle(.plain)
+                        .accessibilityLabel(notice.text + (notice.actionTitle.map { ", " + $0 } ?? ", address bar"))
+                    if !notice.prefersAddressBar {
+                        Button {
+                            feedback.clear()
+                        } label: {
+                            GolzheimIcon(icon: .close, size: 10)
+                        }
+                        .buttonStyle(.plain).padding(.trailing, horizontalInset).accessibilityLabel(
+                            "dismiss notification")
+                    }
+                }.id(notice.id)
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .asymmetric(
+                                insertion: .modifier(
+                                    active: AddressNoticeMotion(y: -8, blur: 4, opacity: 0),
+                                    identity: AddressNoticeMotion(y: 0, blur: 0, opacity: 1)),
+                                removal: .modifier(
+                                    active: AddressNoticeMotion(y: -8, blur: 4, opacity: 0),
+                                    identity: AddressNoticeMotion(y: 0, blur: 0, opacity: 1)))
+                    )
+            }
+        }.clipped().animation(
+            reduceMotion ? .easeOut(duration: 0.1) : .smooth(duration: 0.18), value: notice?.id)
     }
 }
 
@@ -122,6 +148,8 @@ private struct AddressNoticeMotion: ViewModifier {
 struct BrowserNotificationToast: NSViewRepresentable {
     @ObservedObject var feedback: BrowserFeedback
     var enabled = true
+    var sidebarVisible = false
+    var topBarVisible = false
     var transparency: Double = 0
     var tint: Color = .accentColor
     var topInset: CGFloat = 12
@@ -130,7 +158,10 @@ struct BrowserNotificationToast: NSViewRepresentable {
     func makeNSView(context: Context) -> Container { Container() }
     func updateNSView(_ view: Container, context: Context) {
         view.configure(
-            notice: enabled ? feedback.notice : nil, environment: environment, transparency: transparency, tint: NSColor(tint),
+            notice: enabled
+                && feedback.notice?.floats(sidebarVisible: sidebarVisible, topBarVisible: topBarVisible) == true
+                ? feedback.notice : nil,
+            environment: environment, transparency: transparency, tint: NSColor(tint),
             topInset: topInset, trailingInset: trailingInset, dismiss: { feedback.clear() })
     }
     static func dismantleNSView(_ view: Container, coordinator: ()) { view.stopMotion() }
@@ -308,6 +339,8 @@ final class BrowserNotificationCardView: NSView {
     let actionButton = NSButton()
     private var dismiss: (() -> Void)?
     private var action: (() -> Void)?
+    private var displayedText: String?
+    private var displayedIcon: LoafIcon?
     private var measuredSize = NSSize.zero
     private var textWidth: CGFloat = 0
     private var textHeight: CGFloat = 0
@@ -373,37 +406,47 @@ final class BrowserNotificationCardView: NSView {
     ) {
         self.dismiss = dismiss
         action = notice.action
+        let measure = displayedText != notice.text || actionButton.isHidden != (action == nil)
         actionButton.isHidden = action == nil
-        actionButton.title = (notice.actionTitle ?? "open") + "  ⇧⌘K"
+        let actionTitle = (notice.actionTitle ?? "open") + "  ⇧⌘K"
+        if actionButton.title != actionTitle { actionButton.title = actionTitle }
         actionButton.setAccessibilityLabel(notice.actionTitle ?? "open")
         actionButton.setAccessibilityHelp("Command-Shift-K")
         actionButton.contentTintColor = .labelColor
-        appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        icon.image =
-            Golzheim.image(notice.icon.rawValue, size: 13)
-            ?? NSImage(systemSymbolName: notice.icon.fallback, accessibilityDescription: nil)
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byWordWrapping
-        paragraph.lineSpacing = 2
-        let text = NSAttributedString(
-            string: notice.text,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor,
-                .paragraphStyle: paragraph,
-            ])
-        label.setAccessibilityLabel(notice.text)
-        label.attributedStringValue = text
+        let appearanceName: NSAppearance.Name = dark ? .darkAqua : .aqua
+        if appearance?.name != appearanceName { appearance = NSAppearance(named: appearanceName) }
+        if displayedIcon != notice.icon {
+            displayedIcon = notice.icon
+            icon.image =
+                Golzheim.image(notice.icon.rawValue, size: 13)
+                ?? NSImage(systemSymbolName: notice.icon.fallback, accessibilityDescription: nil)
+        }
+        if measure {
+            displayedText = notice.text
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byWordWrapping
+            paragraph.lineSpacing = 2
+            let text = NSAttributedString(
+                string: notice.text,
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor,
+                    .paragraphStyle: paragraph,
+                ])
+            label.setAccessibilityLabel(notice.text)
+            label.attributedStringValue = text
 
-        textWidth = min(309, max(action == nil ? 1 : 180, ceil(text.size().width) + 4))
-        let measured = text.boundingRect(
-            with: NSSize(width: max(1, textWidth - 4), height: 100_000),
-            options: [.usesLineFragmentOrigin, .usesFontLeading])
-        let cellHeight =
-            label.cell?.cellSize(
-                forBounds: NSRect(x: 0, y: 0, width: textWidth, height: 100_000)
-            ).height ?? 0
-        textHeight = ceil(max(measured.height, cellHeight))
-        measuredSize = NSSize(width: 71 + textWidth, height: max(32, textHeight + 16 + (action == nil ? 0 : 27)))
+            textWidth = min(309, max(action == nil ? 1 : 180, ceil(text.size().width) + 4))
+            let measured = text.boundingRect(
+                with: NSSize(width: max(1, textWidth - 4), height: 100_000),
+                options: [.usesLineFragmentOrigin, .usesFontLeading])
+            let cellHeight =
+                label.cell?.cellSize(
+                    forBounds: NSRect(x: 0, y: 0, width: textWidth, height: 100_000)
+                ).height ?? 0
+            textHeight = ceil(max(measured.height, cellHeight))
+            measuredSize = NSSize(width: 71 + textWidth, height: max(32, textHeight + 16 + (action == nil ? 0 : 27)))
+            needsLayout = true
+        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let opacity = ProfileTransparency.opacity(max(0.65, transparency), reduceTransparency: reduceTransparency)
@@ -413,13 +456,13 @@ final class BrowserNotificationCardView: NSView {
         fill.layer?.backgroundColor = color.withAlphaComponent(opacity).cgColor
         layer?.borderColor = (dark ? NSColor.white : NSColor.black).withAlphaComponent(dark ? 0.12 : 0.07).cgColor
         CATransaction.commit()
-        needsLayout = true
     }
     func clear() {
         dismiss = nil
         action = nil
         actionButton.isHidden = true
         label.stringValue = ""
+        displayedText = nil
         measuredSize = .zero
     }
     override func layout() {

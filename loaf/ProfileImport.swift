@@ -243,9 +243,16 @@ nonisolated enum ProfileImport {
                     && $0.date <= Date.now.addingTimeInterval(86_400)
                     && seenVisits.insert([$0.address, String($0.date.timeIntervalSince1970)]).inserted
             }.sorted { $0.date > $1.date }.prefix(20_000))
-        var seenBookmarks = Set<String>()
+        var seenBookmarks = Set<[String]>()
         item.bookmarks = Array(
-            item.bookmarks.filter { validURL($0.address) && seenBookmarks.insert($0.address).inserted }.prefix(20_000))
+            item.bookmarks.filter {
+                guard validURL($0.address) else { return false }
+                if let split = $0.split {
+                    guard validURL(split.address), split.fraction.isFinite, (0.05...0.95).contains(split.fraction)
+                    else { return false }
+                }
+                return seenBookmarks.insert($0.destinationKey).inserted
+            }.prefix(20_000))
         var uniqueCookies: [CookieTransfer] = []
         var cookieValues: [[String]: CookieTransfer] = [:]
         var conflictingCookies = Set<[String]>()
@@ -748,8 +755,8 @@ extension ProfileImport {
             profile.history.sort { $0.date > $1.date }
         }
         if bookmarks {
-            var known = Set(profile.favorites.map(\.address))
-            let additions = preview.bookmarks.filter { known.insert($0.address).inserted }
+            var known = Set(profile.favorites.map(\.destinationKey))
+            let additions = preview.bookmarks.filter { known.insert($0.destinationKey).inserted }
             let usedFolders = Set(additions.compactMap(\.folderID))
             var mapping: [UUID: UUID] = [:]
             for folder in preview.folders where usedFolders.contains(folder.id) {

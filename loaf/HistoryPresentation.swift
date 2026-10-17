@@ -84,41 +84,62 @@ private actor HistorySearchWorker {
     }
     private var revision: UInt64?
     private var minimumRevision: UInt64 = 0
-    private var texts: [SearchText] = []
-    private var semanticDocuments: [Int: LocalPageSearch.Document] = [:]
+    private struct CachedText {
+        let visit: Visit
+        let text: SearchText
+    }
+    private var texts: [CachedText] = []
+    private var semanticDocuments: [UUID: LocalPageSearch.Document] = [:]
     private lazy var embedding = NLEmbedding.wordEmbedding(for: .english)
 
-    func discard(before revision: UInt64) {
-        minimumRevision = max(minimumRevision, revision)
-        if let cached = self.revision, cached < revision {
+    func discard(before revision: UInt64, clear: Bool) {
+        guard revision >= minimumRevision else { return }
+        minimumRevision = revision
+        if let cached = self.revision, cached >= revision { return }
+        if clear {
             texts = []
             semanticDocuments = [:]
-            self.revision = nil
         }
+        self.revision = nil
     }
     func matches(_ visits: [Visit], revision: UInt64, query: String) -> [Int]? {
         guard !Task.isCancelled, revision >= minimumRevision else { return nil }
         if self.revision != revision {
-            var prepared: [SearchText] = []
+            let previous = texts.reduce(into: [UUID: CachedText]()) { $0[$1.visit.id] = $1 }
+            var prepared: [CachedText] = []
+            var documents: [UUID: LocalPageSearch.Document] = [:]
             prepared.reserveCapacity(visits.count)
             for (index, visit) in visits.enumerated() {
                 if index % 128 == 0, Task.isCancelled { return nil }
-                prepared.append(SearchText(visit))
+                if let cached = previous[visit.id], cached.visit.title == visit.title,
+                    cached.visit.address == visit.address
+                {
+                    prepared.append(CachedText(visit: visit, text: cached.text))
+                    documents[visit.id] = semanticDocuments[visit.id]
+                } else {
+                    prepared.append(CachedText(visit: visit, text: SearchText(visit)))
+                }
             }
             texts = prepared
-            semanticDocuments = [:]
+            semanticDocuments = documents
             self.revision = revision
         }
         let query = LocalPageSearch.Query(query, embedding: embedding)
         var matches: [Int] = []
         for (index, text) in texts.enumerated() {
             if index % 128 == 0, Task.isCancelled { return nil }
-            if text.matches(query, semantic: {
-                let document = semanticDocuments[index]
-                    ?? LocalPageSearch.Document(title: visits[index].title, address: visits[index].address)
-                semanticDocuments[index] = document
-                return document.score(query) != nil
-            }) { matches.append(index) }
+            if text.text.matches(
+                query,
+                semantic: {
+                    let document =
+                        semanticDocuments[text.visit.id]
+                        ?? LocalPageSearch.Document(title: visits[index].title, address: visits[index].address)
+                    semanticDocuments[text.visit.id] = document
+                    return document.score(query) != nil
+                })
+            {
+                matches.append(index)
+            }
         }
         return Task.isCancelled ? nil : matches
     }
@@ -293,7 +314,7 @@ private actor HistorySearchWorker {
         let calendar = Calendar.current
         let searchWorker = searchWorker
         let revision = sourceRevision
-        Task { await searchWorker.discard(before: revision) }
+        Task { await searchWorker.discard(before: revision, clear: changedProfile || !reuseRows || visits.isEmpty) }
         if visits.count > 512 {
             isPreparing = true
             isSearching = false

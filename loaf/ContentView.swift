@@ -29,7 +29,10 @@ struct BrowserToolbar: View {
                 }.disabled(store.selectedTab?.canReload != true)
             }
             Spacer(minLength: 8)
-            AddressFeedback(feedback: store.feedback, activate: { store.openOmnibar() }, horizontalInset: 12) {
+            AddressFeedback(
+                feedback: store.feedback, activate: { store.openOmnibar() }, horizontalInset: 12,
+                includesFloatingNotices: true
+            ) {
                 HStack(spacing: 0) {
                     AddressSecurityButton(
                         icon: BrowserAddress.defaultSearchQuery(tab?.url) != nil
@@ -289,8 +292,8 @@ struct ContentView: View {
                 SidebarDock(store: store).zIndex(2)
                 BrowserNotificationToast(
                     feedback: store.feedback,
-                    enabled: store.feedback.notice?.action != nil
-                        || (!store.sidebarPresented && !store.hoveredSidebar && store.compactToolbarHeight == 0),
+                    sidebarVisible: store.sidebarPresented || store.hoveredSidebar,
+                    topBarVisible: store.compactToolbarHeight > 0,
                     transparency: store.profile.personalization?.windowTransparency ?? 0,
                     tint: profileTint(store.profile),
                     topInset: store.pageEdgeInset + 12, trailingInset: store.pageEdgeInset + 12

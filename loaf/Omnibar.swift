@@ -18,7 +18,7 @@ nonisolated enum OmnibarMetrics {
     }
 }
 
-nonisolated enum SuggestionKind: Hashable, Sendable { case tab, history, favorite, site, search, page }
+nonisolated enum SuggestionKind: Hashable, Sendable { case tab, history, favorite, site, search, page, command, closed }
 struct Suggestion: Identifiable {
     let id: String
     let title: String
@@ -28,12 +28,20 @@ struct Suggestion: Identifiable {
     var tabID: UUID?
     var pinnedShortcutID: UUID?
     var kind: SuggestionKind = .search
-    var siteURL: URL? { kind == .search || kind == .page ? nil : BrowserAddress.resolve(destination) }
-    var defaultSearchQuery: String? { BrowserAddress.defaultSearchQuery(siteURL) }
+    var command: WonderbarCommand?
+    var closedTabID: UUID?
+    var savedSplitID: UUID?
+    var siteURL: URL? {
+        kind == .search || kind == .page || kind == .command ? nil : BrowserAddress.resolve(destination)
+    }
+    var defaultSearchQuery: String? {
+        kind == .closed || savedSplitID != nil ? nil : BrowserAddress.defaultSearchQuery(siteURL)
+    }
     var displayIcon: LoafIcon { defaultSearchQuery != nil ? .search : icon }
     var visibleTitle: String { defaultSearchQuery ?? (title.isEmpty ? BrowserAddress.suggestionLabel(siteURL) : title) }
     var fieldText: String {
-        defaultSearchQuery ?? (kind == .search ? title : kind == .page ? destination : BrowserAddress.display(siteURL))
+        if savedSplitID != nil { return title }
+        return defaultSearchQuery ?? (kind == .search ? title : kind == .page ? destination : BrowserAddress.display(siteURL))
     }
     var visibleDetail: String {
         guard defaultSearchQuery != nil else { return BrowserAddress.visible(detail) }
@@ -41,6 +49,7 @@ struct Suggestion: Identifiable {
         return kind == .favorite ? "favorite – Google search" : "Google search"
     }
     var preview: String {
+        if savedSplitID != nil { return visibleTitle + " – saved split view" }
         if let query = defaultSearchQuery { return "google search – " + query }
         if kind == .search { return detail + " – " + title }
         let address = BrowserAddress.display(siteURL)
@@ -94,7 +103,7 @@ struct Suggestion: Identifiable {
 }
 
 nonisolated struct PreparedHistoryVisit: Sendable {
-    let visit: Visit
+    private(set) var visit: Visit
     let title: String
     let address: String
     let host: String
@@ -127,6 +136,11 @@ nonisolated struct PreparedHistoryVisit: Sendable {
         hostSearch = LocalPageSearch.Text(host)
         savedSearch = BrowserAddress.defaultSearchQuery(url) != nil
         document = LocalPageSearch.Document(title: visit.title, address: visit.address)
+    }
+
+    init(_ visit: Visit, reusing prepared: PreparedHistoryVisit) {
+        self = prepared
+        self.visit = visit
     }
 
     func score(query: LocalPageSearch.Query) -> Double? {
@@ -163,29 +177,46 @@ nonisolated struct PreparedHistorySnapshot: Sendable {
 }
 
 nonisolated enum HistorySuggestionWork {
+    private struct PageKey: Hashable {
+        let title: String
+        let address: String
+        init(_ visit: Visit) {
+            title = visit.title
+            address = visit.address
+        }
+    }
     static func prepare(_ visits: [Visit], previous: [UUID: PreparedHistoryVisit]) -> PreparedHistorySnapshot {
         var rows: [PreparedHistoryVisit] = []
         var byID: [UUID: PreparedHistoryVisit] = [:]
         var hostVisits: [String: Int] = [:]
         var addressVisits: [String: Int] = [:]
         var rowsPrepared = 0
+        var pages: [PageKey: Int] = [:]
         rows.reserveCapacity(visits.count)
         byID.reserveCapacity(visits.count)
         hostVisits.reserveCapacity(min(visits.count, 2_000))
         addressVisits.reserveCapacity(min(visits.count, 10_000))
         for (index, visit) in visits.enumerated() {
             if index & 255 == 0, Task.isCancelled { break }
+            addressVisits[visit.address, default: 0] += 1
+        }
+        for (index, visit) in visits.enumerated() {
+            if index & 255 == 0, Task.isCancelled { break }
+            let key = PageKey(visit)
+            let repeatedAddress = (addressVisits[visit.address] ?? 0) > 1
             let row: PreparedHistoryVisit
-            if let cached = previous[visit.id], cached.visit == visit {
-                row = cached
+            if let cached = previous[visit.id], PageKey(cached.visit) == key {
+                row = PreparedHistoryVisit(visit, reusing: cached)
+            } else if repeatedAddress, let index = pages[key] {
+                row = PreparedHistoryVisit(visit, reusing: rows[index])
             } else {
                 row = PreparedHistoryVisit(visit)
                 rowsPrepared += 1
+                if repeatedAddress { pages[key] = rows.count }
             }
             rows.append(row)
             byID[visit.id] = row
             if let host = row.catalogHost { hostVisits[host, default: 0] += 1 }
-            addressVisits[visit.address, default: 0] += 1
         }
         return PreparedHistorySnapshot(
             rows: rows, byID: byID, hostVisits: hostVisits, addressVisits: addressVisits,
@@ -255,6 +286,7 @@ nonisolated enum HistorySuggestionWork {
     @Published var suggestions: [Suggestion] = []
     @Published var selectedID: String?
     @Published var remoteLoading = false
+    @Published private(set) var localSearching = false
     @Published var keyboardSelection = false
     private lazy var embedding = NLEmbedding.wordEmbedding(for: .english)
     private var task: Task<Void, Never>?
@@ -273,6 +305,8 @@ nonisolated enum HistorySuggestionWork {
     }
     private var historySignature: HistorySignature?
     private var historyPreparationTask: Task<Void, Never>?
+    private var historyGeneration = UUID()
+    private var preparedHistoryGeneration: UUID?
     private var preparedHistory: [PreparedHistoryVisit] = []
     private var preparedHistoryByID: [UUID: PreparedHistoryVisit] = [:]
     private var hostVisits: [String: Int] = [:]
@@ -362,7 +396,8 @@ nonisolated enum HistorySuggestionWork {
             } ?? []
     }
     func remember(_ suggestion: Suggestion, query: String, store: BrowserStore) {
-        guard !store.profile.privateMode, suggestion.id != "input", suggestion.id != "search-input",
+        guard !WonderbarInput(query).isLocal, suggestion.command == nil, suggestion.closedTabID == nil,
+            !store.profile.privateMode, suggestion.id != "input", suggestion.id != "search-input",
             !query.isEmpty, query.count <= 80, !query.contains("@"), !query.contains("://")
         else { return }
         loadLearning(from: store)
@@ -417,9 +452,15 @@ nonisolated enum HistorySuggestionWork {
         }
         task?.cancel()
         remoteLoading = false
+        localSearching = false
         let token = UUID()
         generation = token
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let input = WonderbarInput(query)
+        if input.isLocal {
+            updateLocal(input, store: store, token: token)
+            return
+        }
         let domainPrefix = BrowserAddress.domainCompletionPrefix(text)
         let needle = domainPrefix ?? text.lowercased()
         let localQuery = LocalPageSearch.Query(needle, embedding: domainPrefix == nil ? embedding : nil)
@@ -445,7 +486,6 @@ nonisolated enum HistorySuggestionWork {
         let openTabs = orderedWindows.flatMap { window in
             window.workspaces[store.selectedProfileID]?.tabs.compactMap { runtimeTabs[$0.id] } ?? []
         }
-        let previousTabs = openTabProfileID == store.selectedProfileID ? preparedOpenTabs : [:]
         var nextTabs: [UUID: PreparedOpenTab] = [:]
         nextTabs.reserveCapacity(openTabs.count)
         var tabsByAddress: [String: BrowserTab] = [:]
@@ -458,6 +498,7 @@ nonisolated enum HistorySuggestionWork {
             }
         }
         func tabAction(_ suggestion: Suggestion) -> Suggestion {
+            if suggestion.savedSplitID != nil { return suggestion }
             if suggestion.kind != .search && suggestion.kind != .page,
                 let pin = pinsByAddress[canonical(suggestion.destination, kind: suggestion.kind)],
                 let address = pin.pinnedAddress ?? pin.address
@@ -476,7 +517,7 @@ nonisolated enum HistorySuggestionWork {
                 destination: tab.url!.absoluteString, tabID: tab.id, kind: .tab)
         }
         var ranking = SuggestionRanking.Accumulator(limit: 40, transform: tabAction) {
-            self.canonical($0.destination, kind: $0.kind)
+            $0.savedSplitID.map { "saved-split:" + $0.uuidString } ?? self.canonical($0.destination, kind: $0.kind)
         }
         func adjustedScore(_ value: Suggestion, score: Double) -> Double {
             var adjusted =
@@ -532,21 +573,7 @@ nonisolated enum HistorySuggestionWork {
             let url = tab.url!
             let address = url.absoluteString
             let title = tab.sidebarTitle
-            let row: PreparedOpenTab
-            if let existing = previousTabs[tab.id], existing.title == title, existing.address == address {
-                row = existing
-            } else {
-                let lowerTitle = title.lowercased()
-                let lowerAddress = address.lowercased()
-                row = PreparedOpenTab(
-                    title: title, address: address, canonicalAddress: canonical(address, kind: .tab),
-                    canonicalDisplayAddress: canonical("https://" + BrowserAddress.display(url), kind: .tab),
-                    lowerTitle: lowerTitle, lowerAddress: lowerAddress,
-                    host: url.host?.replacingOccurrences(of: "www.", with: "").lowercased() ?? "",
-                    titleSearch: LocalPageSearch.Text(lowerTitle), addressSearch: LocalPageSearch.Text(lowerAddress),
-                    hostSearch: LocalPageSearch.Text(url.host?.replacingOccurrences(of: "www.", with: "") ?? ""),
-                    document: LocalPageSearch.Document(title: title, address: address))
-            }
+            let row = preparedTab(tab, address: address)
             nextTabs[tab.id] = row
             let key = row.canonicalAddress
             if tabsByAddress[key] == nil { tabsByAddress[key] = tab }
@@ -563,12 +590,15 @@ nonisolated enum HistorySuggestionWork {
         openTabProfileID = store.selectedProfileID
         openTabProfileIsPrivate = store.profile.privateMode
         for favorite in store.profile.favorites {
-            if let score = score(favorite.title, favorite.address) {
+            if let score = score(favorite.title, favorite.searchAddress) {
                 consider(
                     Suggestion(
                         id: "favorite-\(favorite.id)", title: favorite.title,
-                        detail: "favorite – " + BrowserAddress.suggestionLabel(URL(string: favorite.address)),
-                        icon: .favorite, destination: favorite.address, kind: .favorite),
+                        detail: favorite.split == nil
+                            ? "favorite – " + BrowserAddress.suggestionLabel(URL(string: favorite.address))
+                            : "open saved split view",
+                        icon: .favorite, destination: favorite.address, kind: .favorite,
+                        savedSplitID: favorite.split == nil ? nil : favorite.id),
                     score: score + (needle.isEmpty ? 65 : 35))
             }
         }
@@ -790,6 +820,186 @@ nonisolated enum HistorySuggestionWork {
         }
     }
 
+    private func preparedTab(_ tab: BrowserTab, address: String) -> PreparedOpenTab {
+        let title = tab.sidebarTitle
+        if openTabProfileID == tab.profileID, let existing = preparedOpenTabs[tab.id],
+            existing.title == title, existing.address == address
+        {
+            return existing
+        }
+        let host = URL(string: address)?.host?.replacingOccurrences(of: "www.", with: "") ?? ""
+        return PreparedOpenTab(
+            title: title, address: address,
+            canonicalAddress: canonical(address, kind: .tab),
+            canonicalDisplayAddress: canonical("https://" + BrowserAddress.display(URL(string: address)), kind: .tab),
+            lowerTitle: title.lowercased(), lowerAddress: address.lowercased(), host: host.lowercased(),
+            titleSearch: LocalPageSearch.Text(title), addressSearch: LocalPageSearch.Text(address),
+            hostSearch: LocalPageSearch.Text(host), document: LocalPageSearch.Document(title: title, address: address))
+    }
+    private func updateLocal(_ input: WonderbarInput, store: BrowserStore, token: UUID) {
+        func best(_ values: [(Suggestion, Double)]) -> [Suggestion] {
+            values.enumerated().sorted {
+                $0.element.1 == $1.element.1 ? $0.offset < $1.offset : $0.element.1 > $1.element.1
+            }.prefix(6).map { $0.element.0 }
+        }
+        switch input {
+        case .normal: return
+        case .commands(let query):
+            publish(
+                best(
+                    WonderbarCommands.suggestions(store: store).compactMap { value in
+                        WonderbarCommands.score(value, query: query).map { (value, $0) }
+                    }))
+        case .scopes(let prefix):
+            publish(
+                WonderbarScope.allCases.filter { $0.rawValue.hasPrefix(prefix) }.map { scope in
+                    let command = WonderbarCommand.scope(scope)
+                    return Suggestion(
+                        id: command.id, title: "search " + scope.title, detail: scope.prefix,
+                        icon: scope.icon, destination: "", kind: .command, command: command)
+                })
+        case .scoped(.history, let text):
+            prepareHistory(for: store)
+            guard preparedProfileID == store.selectedProfileID, preparedHistoryGeneration == historyGeneration else {
+                publish([]); return
+            }
+            let rows = preparedHistory
+            let counts = addressVisits
+            let query = LocalPageSearch.Query(text, embedding: embedding)
+            let profileID = store.selectedProfileID
+            localSearching = true
+            publish([])
+            task = Task { [weak self, weak store] in
+                let work = Task.detached(priority: .userInitiated) {
+                    HistorySuggestionWork.distinctMatches(rows: rows, addressVisits: counts, query: query, now: Date())
+                }
+                let matches = await withTaskCancellationHandler {
+                    await work.value
+                } onCancel: {
+                    work.cancel()
+                }
+                guard !Task.isCancelled, let self, let store, token == self.generation,
+                    store.selectedProfileID == profileID
+                else { return }
+                self.localSearching = false
+                self.publish(
+                    matches.map { match in
+                        Suggestion(
+                            id: "history-" + match.visit.address, title: match.visit.title,
+                            detail: match.label, icon: .history, destination: match.visit.address, kind: .history)
+                    })
+            }
+        case .scoped(.bookmarks, let text) where store.profile.favorites.count > 128:
+            let favorites = store.profile.favorites
+            let query = LocalPageSearch.Query(text, embedding: embedding)
+            let profileID = store.selectedProfileID
+            localSearching = true
+            publish([])
+            task = Task { [weak self, weak store] in
+                let work = Task.detached(priority: .userInitiated) {
+                    BookmarkScopeWork.matches(favorites, query: query)
+                }
+                let indices = await withTaskCancellationHandler {
+                    await work.value
+                } onCancel: {
+                    work.cancel()
+                }
+                guard !Task.isCancelled, let self, let store, token == self.generation,
+                    store.selectedProfileID == profileID, store.profile.favorites == favorites
+                else { return }
+                self.localSearching = false
+                self.publish(
+                    indices.map { index in
+                        let favorite = favorites[index]
+                        return Suggestion(
+                            id: "favorite-\(favorite.id)", title: favorite.title,
+                            detail: favorite.split == nil ? "open bookmark" : "open saved split view", icon: .favorite,
+                            destination: favorite.address, kind: .favorite,
+                            savedSplitID: favorite.split == nil ? nil : favorite.id)
+                    })
+            }
+        case .scoped(let scope, let text):
+            let query = LocalPageSearch.Query(text, embedding: embedding)
+            func score(_ title: String, _ address: String) -> Double? {
+                LocalPageSearch.Document(title: title, address: address).score(query)
+            }
+            switch scope {
+            case .history: break
+            case .tabs:
+                let profileID = store.selectedProfileID
+                let runtimeTabs = store.runtime.tabs
+                let windows = store.application.windows
+                let ordered = windows.filter { $0 === store } + windows.filter { $0 !== store }
+                let tabs = ordered.flatMap { $0.workspaces[profileID]?.tabs.compactMap { runtimeTabs[$0.id] } ?? [] }
+                var next: [UUID: PreparedOpenTab] = [:]
+                let values: [(Suggestion, Double)] = tabs.compactMap { tab in
+                    guard !tab.isDisposed else { return nil }
+                    let address = tab.url?.absoluteString ?? tab.page.address
+                    let row = preparedTab(tab, address: address)
+                    next[tab.id] = row
+                    guard let score = row.score(for: text, query: query) else { return nil }
+                    return (
+                        Suggestion(
+                            id: "tab-\(tab.id)", title: tab.sidebarTitle,
+                            detail: tab.windowID == store.id ? "switch to tab" : "switch to tab – other window",
+                            icon: .sidebar, destination: address, tabID: tab.id, kind: .tab), score
+                    )
+                }
+                preparedOpenTabs = next
+                openTabProfileID = profileID
+                openTabProfileIsPrivate = store.profile.privateMode
+                publish(best(values))
+            case .bookmarks:
+                publish(
+                    best(
+                        store.profile.favorites.compactMap { favorite in
+                            guard let score = score(favorite.title, favorite.searchAddress) else { return nil }
+                            return (
+                                Suggestion(
+                                    id: "favorite-\(favorite.id)", title: favorite.title,
+                                    detail: favorite.split == nil ? "open bookmark" : "open saved split view",
+                                    icon: .favorite,
+                                    destination: favorite.address, kind: .favorite,
+                                    savedSplitID: favorite.split == nil ? nil : favorite.id), score
+                            )
+                        }))
+            case .closed:
+                publish(
+                    best(
+                        store.recentlyClosedTabs.compactMap { closed in
+                            let saved = closed.saved
+                            let title =
+                                saved.pinned
+                                ? saved.pinnedTitle ?? saved.customTitle ?? saved.title
+                                : saved.customTitle ?? saved.title
+                            let address = saved.address ?? saved.page.address
+                            guard let score = score(title, address) else { return nil }
+                            return (
+                                Suggestion(
+                                    id: "closed-\(closed.id)", title: title, detail: "reopen closed tab",
+                                    icon: .history, destination: address, kind: .closed, closedTabID: closed.id), score
+                            )
+                        }))
+            }
+        }
+    }
+    func localEmptyMessage(for query: String, store: BrowserStore) -> String? {
+        guard suggestions.isEmpty, represents(query, profile: store.selectedProfileID) else { return nil }
+        switch WonderbarInput(query) {
+        case .normal: return nil
+        case .commands: return "no matching commands"
+        case .scopes: return "no matching search scopes"
+        case .scoped(.history, _):
+            if store.profile.privateMode { return "private sessions don’t save history" }
+            if localSearching { return "searching history…" }
+            return preparedHistoryGeneration != historyGeneration ? "loading history…" : "no matching visits"
+        case .scoped(.closed, _):
+            return store.profile.privateMode
+                ? "private sessions don’t keep searchable closed tabs" : "no matching closed tabs"
+        case .scoped(.tabs, _): return "no matching open tabs"
+        case .scoped(.bookmarks, _): return localSearching ? "searching bookmarks…" : "no matching bookmarks"
+        }
+    }
     private func ranked(
         _ candidates: [(Suggestion, Double)], query: String, domainPrefix: String?
     ) -> [Suggestion] {
@@ -853,13 +1063,15 @@ nonisolated enum HistorySuggestionWork {
             let key =
                 suggestion.kind == .search
                 ? "search-query:" + suggestion.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                : canonical(suggestion.destination, kind: suggestion.kind)
+                : suggestion.savedSplitID.map { "saved-split:" + $0.uuidString }
+                    ?? canonical(suggestion.destination, kind: suggestion.kind)
             guard !keys.contains(key), chosen.count < 6 else { return false }
             let kindLimit: Int
             switch suggestion.kind {
             case .history, .favorite, .tab: kindLimit = 2
             case .site, .search: kindLimit = 3
             case .page: kindLimit = 2
+            case .command, .closed: kindLimit = 6
             }
             if kinds[suggestion.kind, default: 0] >= kindLimit { return false }
             let host = suggestion.siteURL?.host ?? ""
@@ -894,7 +1106,11 @@ nonisolated enum HistorySuggestionWork {
     }
     func historyChanged(store: BrowserStore) {
         historySignature = nil
-        prepareHistory(for: store)
+        if currentStore === store, case .scoped(.history, _) = WonderbarInput(previousQuery) {
+            update(previousQuery, store: store)
+        } else {
+            prepareHistory(for: store)
+        }
     }
     private func prepareHistory(for store: BrowserStore) {
         let profile = store.profile
@@ -905,6 +1121,8 @@ nonisolated enum HistorySuggestionWork {
             lastID: visits.last?.id)
         guard signature != historySignature else { return }
         historySignature = signature
+        historyGeneration = UUID()
+        let preparationID = historyGeneration
         historyPreparationTask?.cancel()
         historyPreparations += 1
 
@@ -926,6 +1144,7 @@ nonisolated enum HistorySuggestionWork {
             }
             guard !Task.isCancelled, historySignature == signature else { return }
             preparedProfileID = profileID
+            preparedHistoryGeneration = preparationID
             preparedHistory = snapshot.rows
             preparedHistoryByID = snapshot.byID
             hostVisits = snapshot.hostVisits
@@ -1010,7 +1229,9 @@ nonisolated enum HistorySuggestionWork {
         selectedID = explicitSelection && values.contains { $0.id == old } ? old : values.first?.id
     }
     func inline(for prefix: String) -> String? {
-        guard prefix == publishedQuery, !prefix.isEmpty, suggestions.indices.contains(selected) else { return nil }
+        guard !WonderbarInput(prefix).isLocal, prefix == publishedQuery, !prefix.isEmpty,
+            suggestions.indices.contains(selected)
+        else { return nil }
         var suggestion = suggestions[selected]
         if suggestion.kind == .page {
             return suggestion.destination.lowercased().hasPrefix(prefix.lowercased())
@@ -1033,7 +1254,8 @@ nonisolated enum HistorySuggestionWork {
             return suggestion.title.lowercased().hasPrefix(prefix.lowercased()) && suggestion.title.count > prefix.count
                 ? prefix + suggestion.title.dropFirst(prefix.count) : nil
         }
-        guard !prefix.contains(" "), let url = BrowserAddress.resolve(suggestion.destination) else { return nil }
+        guard suggestion.savedSplitID == nil, !prefix.contains(" "),
+            let url = BrowserAddress.resolve(suggestion.destination) else { return nil }
         let candidates = [
             url.absoluteString, BrowserAddress.display(url),
             BrowserAddress.display(url).replacingOccurrences(of: "www.", with: ""),
@@ -1058,6 +1280,7 @@ nonisolated enum HistorySuggestionWork {
         keyboardSelection = true
     }
     func fieldPreview(for prefix: String) -> String? {
+        guard !WonderbarInput(prefix).isLocal else { return nil }
         guard suggestions.indices.contains(selected) else { return nil }
         let suggestion = suggestions[selected]
         if prefix == publishedQuery, !prefix.isEmpty, suggestion.id != "input", suggestion.defaultSearchQuery == nil,
@@ -1081,6 +1304,7 @@ nonisolated enum HistorySuggestionWork {
         task = nil
         generation = UUID()
         remoteLoading = false
+        localSearching = false
         if openTabProfileIsPrivate {
             preparedOpenTabs.removeAll()
             openTabProfileID = nil
@@ -1172,7 +1396,9 @@ struct OmnibarView: View {
         let query = store.omnibarQuery
         let current = engine.represents(query, profile: profileID)
         let displayed = engine.belongs(to: profileID) ? engine.suggestions : []
-        let rowsHeight = OmnibarMetrics.suggestionsHeight(count: displayed.count, maximum: suggestionHeight)
+        let emptyText = engine.localEmptyMessage(for: query, store: store)
+        let rowsHeight = OmnibarMetrics.suggestionsHeight(
+            count: emptyText == nil ? displayed.count : 1, maximum: suggestionHeight)
         let selectedAction = engine.action(query: query, profile: profileID)
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
@@ -1201,7 +1427,11 @@ struct OmnibarView: View {
                         guard ownsSession(focusID, profile: profileID) else { return }
                         refreshQuery()
                         if let action = engine.action(query: store.omnibarQuery, profile: profileID) {
-                            store.omnibarQuery = action.fieldText
+                            if case .scope(let scope) = action.command {
+                                store.omnibarQuery = scope.prefix + " "
+                            } else if !WonderbarInput(store.omnibarQuery).isLocal {
+                                store.omnibarQuery = action.fieldText
+                            }
                         }
                     }, bufferedInput: store.omnibarBufferedInput,
                     inlineCompletion: current ? engine.inline(for: store.omnibarQuery) : nil,
@@ -1226,9 +1456,13 @@ struct OmnibarView: View {
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: closeHovered)
                     .accessibilityLabel("close wonderbar")
             }.padding(16)
-            if !displayed.isEmpty {
+            if !displayed.isEmpty || emptyText != nil {
                 Divider()
                 VStack(spacing: 4) {
+                    if let emptyText {
+                        Text(emptyText).font(.system(size: 12)).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading).padding(.horizontal, 8)
+                    }
                     ForEach(Array(displayed.enumerated()), id: \.element.id) { index, suggestion in
                         Button {
                             let modifiers = NSApp.currentEvent?.modifierFlags ?? heldModifiers
@@ -1371,6 +1605,21 @@ struct OmnibarView: View {
                 }
             }
             .onChange(of: openTabIdentities) { _, _ in engine.update(store.omnibarQuery, store: store) }
+            .onChange(of: store.selectedTab?.id) { _, _ in engine.update(store.omnibarQuery, store: store) }
+            .onChange(of: store.browserSplit) { _, _ in engine.update(store.omnibarQuery, store: store) }
+            .onChange(of: store.profile.favorites) { _, _ in engine.update(store.omnibarQuery, store: store) }
+            .onChange(of: store.recentlyClosedTabs.map(\.id)) { _, _ in engine.update(store.omnibarQuery, store: store)
+            }
+            .onChange(of: store.selectedTab?.media.map(\.muted)) { _, _ in
+                if case .commands = WonderbarInput(store.omnibarQuery) {
+                    engine.update(store.omnibarQuery, store: store)
+                }
+            }
+            .onChange(of: store.application.profiles.map { $0.id.uuidString + $0.name }) { _, _ in
+                if case .commands = WonderbarInput(store.omnibarQuery) {
+                    engine.update(store.omnibarQuery, store: store)
+                }
+            }
     }
     private var openTabIdentities: [String] {
         store.application.windows.flatMap { window in
@@ -1404,6 +1653,9 @@ struct OmnibarView: View {
         }
     }
     private func actionDetail(for suggestion: Suggestion) -> String {
+        if WonderbarInput(store.omnibarQuery).isLocal || suggestion.savedSplitID != nil {
+            return suggestion.visibleDetail
+        }
         switch modifiedAction(for: heldModifiers) {
         case .alternateSearch:
             return "search with \((store.preferences.alternateSearch ?? SearchRedirect()).title)"
@@ -1419,7 +1671,8 @@ struct OmnibarView: View {
         }
     }
     private func actionIcon(for suggestion: Suggestion) -> LoafIcon {
-        switch modifiedAction(for: heldModifiers) {
+        if WonderbarInput(store.omnibarQuery).isLocal || suggestion.savedSplitID != nil { return .forward }
+        return switch modifiedAction(for: heldModifiers) {
         case .copyAddress: .copy
         case nil where suggestion.kind == .tab: .sidebar
         default: .forward
@@ -1429,6 +1682,7 @@ struct OmnibarView: View {
         _ modifiers: NSEvent.ModifierFlags, chosen: Suggestion? = nil, focusID: UUID, profileID: UUID,
         queryAtRender: String? = nil
     ) -> Bool {
+        if WonderbarInput(store.omnibarQuery).isLocal { return false }
         guard ownsSession(focusID, profile: profileID), let action = modifiedAction(for: modifiers) else {
             return false
         }
@@ -1436,6 +1690,7 @@ struct OmnibarView: View {
         if chosen == nil { refreshQuery() }
         let suggestion = engine.action(for: chosen, query: store.omnibarQuery, profile: profileID)
         guard chosen == nil || suggestion != nil else { return true }
+        if suggestion?.savedSplitID != nil { return false }
         if action == .alternateSearch {
             let query =
                 suggestion?.kind == .search && suggestion?.id != "input"
@@ -1463,6 +1718,25 @@ struct OmnibarView: View {
         if chosen == nil { refreshQuery() }
         let suggestion = engine.action(for: chosen, query: store.omnibarQuery, profile: profileID)
         guard chosen == nil || suggestion != nil else { return }
+        if WonderbarInput(store.omnibarQuery).isLocal && suggestion == nil { return }
+        if let command = suggestion?.command {
+            _ = store.performWonderbarCommand(command)
+            return
+        }
+        if let closedID = suggestion?.closedTabID {
+            guard !store.profile.privateMode, store.recentlyClosedTabs.contains(where: { $0.id == closedID }) else {
+                return
+            }
+            store.dismissOmnibar()
+            _ = store.reopenClosedTab(closedID)
+            return
+        }
+        if let savedID = suggestion?.savedSplitID {
+            if let bookmark = store.profile.favorites.first(where: { $0.id == savedID && $0.split != nil }) {
+                _ = store.openBookmark(bookmark)
+            }
+            return
+        }
         if let suggestion { engine.remember(suggestion, query: store.omnibarQuery, store: store) }
         if let pinID = suggestion?.pinnedShortcutID {
             guard let url = suggestion?.siteURL else { return }

@@ -6,6 +6,8 @@ import WebKit
 @MainActor enum LowercaseMenus {
     private static var installed = false
     private static var trackingObserver: NSObjectProtocol?
+    private static var mutationObservers: [NSObjectProtocol] = []
+    private static var normalizing = false
     private static var capitalizationEnabled: () -> Bool = { true }
     private static var originalTitleKey: UInt8 = 0
     private static var displayedTitleKey: UInt8 = 0
@@ -37,6 +39,19 @@ import WebKit
             guard let menu = note.object as? NSMenu else { return }
             MainActor.assumeIsolated { LowercaseMenus.normalize(menu) }
         }
+        // AppKit can inject or retitle window/tiling controls after tracking begins.
+        for name in [NSMenu.didAddItemNotification, NSMenu.didChangeItemNotification] {
+            mutationObservers.append(
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+                    MainActor.assumeIsolated {
+                        guard !normalizing, let menu = note.object as? NSMenu, isApplicationMenu(menu),
+                            let index = note.userInfo?["NSMenuItemIndex"] as? Int,
+                            index >= 0, index < menu.numberOfItems, let item = menu.item(at: index)
+                        else { return }
+                        normalize(item)
+                    }
+                })
+        }
         if let menu = NSApp.mainMenu { normalize(menu) }
     }
 
@@ -45,7 +60,10 @@ import WebKit
     }
 
     static func normalize(_ item: NSMenuItem) {
-
+        let wasNormalizing = normalizing
+        normalizing = true
+        defer { normalizing = wasNormalizing }
+        if item.action == #selector(NSWindow.makeKeyAndOrderFront(_:)) { return }
         if item.identifier?.rawValue == "loaf.page" || item.identifier?.rawValue == "loaf.profile" { return }
         if item.identifier?.rawValue == "loaf.profileWindow" {
             let prefix = "new window · "
@@ -60,7 +78,10 @@ import WebKit
             lastDisplayed == item.title
             ? (objc_getAssociatedObject(item, &originalTitleKey) as? String ?? item.title) : item.title
         objc_setAssociatedObject(item, &originalTitleKey, original, .OBJC_ASSOCIATION_COPY_NONATOMIC)
-        let title = capitalizationEnabled() ? standardTitle(original) : original
+        let title =
+            capitalizationEnabled()
+            ? standardTitle(original)
+            : item.menu.map(isApplicationMenu) == true ? original.lowercased(with: Locale.current) : original
         if item.title != title { item.title = title }
         objc_setAssociatedObject(item, &displayedTitleKey, title, .OBJC_ASSOCIATION_COPY_NONATOMIC)
         if let attributed = item.attributedTitle, attributed.string != title {
@@ -72,6 +93,12 @@ import WebKit
             if submenu.title != title { submenu.title = title }
             normalize(submenu)
         }
+    }
+
+    private static func isApplicationMenu(_ menu: NSMenu) -> Bool {
+        var root = menu
+        while let parent = root.supermenu { root = parent }
+        return root === NSApp.mainMenu || menu === NSApp.windowsMenu
     }
 
     private static func standardTitle(_ title: String) -> String {
@@ -146,11 +173,17 @@ extension NSMenuItem {
 @MainActor final class LoafMainMenus: NSObject, NSMenuDelegate, NSMenuItemValidation {
     private enum Command: String {
         case about, updates, settings, defaultBrowser, newWindow, newTab, newPrivateWindow, closeTab, save, printPage
-        case find, location, sidebar, sideChat, summarize, reload, reloadFromOrigin, reader, zoomIn, zoomOut, actualSize
+        case find, location, wonderbarCommands, sidebar, sideChat, summarize, reload, reloadFromOrigin, reader, zoomIn,
+            zoomOut, actualSize
         case back, forward, history, reopenTab, reopenWindow, bookmark, favorites
         case nextTab, previousTab, pin, duplicate, downloads, previousProfile, nextProfile, editProfile, addProfile
         case gameMode, powerSaver, extensions, tray
         case inspector, inlineInspector, detachedInspector, source, report, help
+    }
+    private struct BookmarkTarget {
+        let profileID: UUID
+        let bookmarkID: UUID
+        let address: String
     }
     private let coordinator: WindowCoordinator
     private var observations = Set<AnyCancellable>()
@@ -256,6 +289,7 @@ extension NSMenuItem {
         edit.addItem(.separator())
         add("Find on Page", .find, key: "f", to: edit)
         add("Search or Enter URL", .location, key: "l", to: edit)
+        add("Search Commands…", .wonderbarCommands, key: "p", flags: [.command, .shift], to: edit)
         edit.addItem(.separator())
         let spelling = appendMenu("Spelling and Grammar", to: edit)
         for (title, action) in [
@@ -468,17 +502,24 @@ extension NSMenuItem {
             bookmarks.addItem(.separator())
             bookmarks.addItem(.sectionHeader(title: "saved bookmarks"))
             for favorite in store.profile.favorites.prefix(12) {
-                addPage(favorite.title, address: favorite.address, to: bookmarks)
+                addPage(favorite.title, address: favorite.address, to: bookmarks, bookmark: favorite)
             }
         }
     }
 
-    private func addPage(_ title: String, address: String, to menu: NSMenu, fetchIcon: Bool = true) {
+    private func addPage(
+        _ title: String, address: String, to menu: NSMenu, fetchIcon: Bool = true, bookmark: Favorite? = nil
+    ) {
         let url = URL(string: address)
         let label = title.isEmpty ? BrowserAddress.suggestionLabel(url) : title
         let item = NSMenuItem(title: label, action: #selector(openFavorite(_:)), keyEquivalent: "")
         item.target = self
-        item.representedObject = address
+        if let bookmark, let store {
+            item.representedObject = BookmarkTarget(
+                profileID: store.selectedProfileID, bookmarkID: bookmark.id, address: address)
+        } else {
+            item.representedObject = address
+        }
         let font = NSFont.menuFont(ofSize: 13)
         let maximum: CGFloat = 280
         var visible = label
@@ -522,7 +563,10 @@ extension NSMenuItem {
         }
     }
     private func loadPageIcon(_ item: NSMenuItem) {
-        guard let store, let address = item.representedObject as? String, let url = URL(string: address) else { return }
+        guard let store,
+            let address = item.representedObject as? String ?? (item.representedObject as? BookmarkTarget)?.address,
+            let url = URL(string: address)
+        else { return }
         let profileID = store.selectedProfileID
         let privateID = store.profile.privateMode ? profileID : nil
         if let cached = store.application.favicons.cachedImage(for: url, privateID: privateID) {
@@ -702,14 +746,23 @@ extension NSMenuItem {
         case .previousProfile: return store != nil && store?.profiles.first?.id != store?.selectedProfileID
         case .nextProfile: return store != nil && store?.profiles.last?.id != store?.selectedProfileID
         case .addProfile: return coordinator.application.profiles.count < 8
-        case .newWindow, .newTab, .newPrivateWindow, .location, .report, .help, .closeTab, .defaultBrowser: return true
+        case .newWindow, .newTab, .newPrivateWindow, .location, .wonderbarCommands, .report, .help, .closeTab,
+            .defaultBrowser:
+            return true
         default: return store != nil
         }
     }
 
     @objc private func openFavorite(_ item: NSMenuItem) {
-        guard validateMenuItem(item), let address = item.representedObject as? String else { return }
-        store?.navigate(address, inNewTab: true)
+        guard validateMenuItem(item), let store else { return }
+        if let target = item.representedObject as? BookmarkTarget {
+            guard store.selectedProfileID == target.profileID,
+                let bookmark = store.profile.favorites.first(where: { $0.id == target.bookmarkID })
+            else { return }
+            _ = store.openBookmark(bookmark, inNewTab: true)
+        } else if let address = item.representedObject as? String {
+            store.navigate(address, inNewTab: true)
+        }
     }
     @objc private func switchProfile(_ item: NSMenuItem) {
         guard validateMenuItem(item), let id = item.representedObject as? UUID else { return }
@@ -747,6 +800,7 @@ extension NSMenuItem {
             store?.findVisible = true
             store?.findFocusID = UUID()
         case .location: coordinator.activateBrowser()?.openOmnibar()
+        case .wonderbarCommands: coordinator.activateBrowser()?.openOmnibar(query: "> ")
         case .sidebar: store?.sidebarVisible.toggle()
         case .extensions: store?.toggleExtensions()
         case .tray: store?.toggleTray()

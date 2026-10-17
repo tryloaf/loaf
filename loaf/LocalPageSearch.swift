@@ -29,13 +29,13 @@ nonisolated enum LocalPageSearch {
         let terms: [[String]]
         let literal: [UInt8]
         let patterns: [[[UInt8]]]
-        init(_ text: String, embedding: NLEmbedding? = nil) {
+        init(_ text: String, embedding: @autoclosure () -> NLEmbedding? = nil) {
             self.text = text
             literal = Array(text.lowercased().precomposedStringWithCanonicalMapping.utf8)
             let words = LocalPageSearch.words(text)
             terms = words.map { word in
                 let aliases = LocalPageSearch.aliases[word] ?? []
-                guard word.count >= 4, let embedding, embedding.contains(word) else { return [word] + aliases }
+                guard word.count >= 4, let embedding = embedding(), embedding.contains(word) else { return [word] + aliases }
                 let related = embedding.neighbors(for: word, maximumCount: 4)
                     .filter { $0.1 <= 0.45 }.map(\.0)
                 return [word] + aliases + related

@@ -21,6 +21,7 @@ struct DownloadRecord: Codable {
     var folderBookmark: Bool? = nil
     var openWhenFinished: Bool? = nil
     var reservedDestination: Bool? = nil
+    var statistics: DownloadStatistics? = nil
 }
 @MainActor final class DownloadItem: ObservableObject, Identifiable {
     let id: UUID
@@ -49,6 +50,9 @@ struct DownloadRecord: Codable {
     @Published var error: String?
     @Published var fraction = 0.0
     @Published var resumeData: Data?
+    @Published private(set) var statistics = DownloadStatistics()
+    private var transferClock = DownloadTransferClock()
+    private var lastStatisticsSample: TimeInterval = 0
     var observation: NSKeyValueObservation?
     init(_ download: WKDownload, owner: BrowserWindowState, profileID: UUID) {
         id = UUID()
@@ -79,9 +83,37 @@ struct DownloadRecord: Codable {
         resumeData = record.resumeData
         transfer = record.transfer.map { URL(fileURLWithPath: $0) }
         bookmark = record.bookmark
+        statistics = record.statistics ?? DownloadStatistics()
+        statistics.bytesPerSecond = nil
         refreshFileAvailability()
     }
-    func refreshFileAvailability() {
+    func beginTransfer(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        guard !transferComplete else { return }
+        transferClock.begin(statistics, at: time)
+        lastStatisticsSample = time - 1
+    }
+    func refreshTransferStatistics(at time: TimeInterval = ProcessInfo.processInfo.systemUptime, force: Bool = false) {
+        guard let progress = download?.progress, force || time - lastStatisticsSample >= 0.5 else { return }
+        lastStatisticsSample = time
+        // WebKit can briefly expose a zero counter while attaching a resumed download.
+        let received = max(statistics.receivedBytes, progress.completedUnitCount)
+        let next = transferClock.sample(statistics, received: received, total: progress.totalUnitCount, at: time)
+        if next != statistics { statistics = next }
+    }
+    func endTransfer(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        refreshTransferStatistics(at: time, force: true)
+        statistics = transferClock.stop(statistics, at: time)
+    }
+    func resetTransferStatistics() {
+        transferClock = DownloadTransferClock()
+        statistics = DownloadStatistics()
+    }
+    func receivedResponse(_ response: URLResponse) {
+        if response.expectedContentLength > 0 {
+            statistics.totalBytes = max(statistics.totalBytes ?? 0, response.expectedContentLength)
+        }
+    }
+    func refreshFileAvailability(refreshSize: Bool = false) {
         guard finished, let destination else { return }
         var stale = false
         let scoped = bookmark.flatMap {
@@ -105,6 +137,15 @@ struct DownloadRecord: Codable {
             let missing = !reachable || inTrash
             if fileMissing != missing { fileMissing = missing }
             if !missing, self.destination != file { self.destination = file }
+            if !missing, refreshSize || statistics.totalBytes == nil,
+                let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize
+            {
+                let bytes = Int64(size)
+                if statistics.totalBytes != bytes || statistics.receivedBytes != bytes {
+                    statistics.totalBytes = bytes
+                    statistics.receivedBytes = bytes
+                }
+            }
         } catch {
             let error = error as NSError
             if error.domain == NSCocoaErrorDomain
@@ -133,7 +174,7 @@ struct DownloadRecord: Codable {
             finished: finished, error: error, resumeData: resumeData, transfer: transfer?.path, bookmark: bookmark,
             transferComplete: transferComplete, downloadOrigin: downloadOrigin,
             sourceURL: sourceURL?.absoluteString, folderBookmark: folderBookmark, openWhenFinished: openWhenFinished,
-            reservedDestination: reservedDestination)
+            reservedDestination: reservedDestination, statistics: statistics)
     }
 }
 
@@ -244,10 +285,13 @@ struct DownloadRecord: Codable {
         item.starting = false
         item.resumeData = nil
         item.error = nil
+        if item.destination != nil && item.transfer != nil { item.beginTransfer() }
         item.observation = download.progress.observe(\.fractionCompleted, options: [.new]) {
-            [weak self, weak item] progress, _ in
-            Task { @MainActor [weak self, weak item] in
-                item?.fraction = progress.fractionCompleted
+            [weak self, weak item, weak download] progress, _ in
+            Task { @MainActor [weak self, weak item, weak download] in
+                guard let item, let download, item.download === download else { return }
+                let fraction = progress.fractionCompleted
+                item.fraction = fraction.isFinite ? min(1, max(0, fraction)) : 0
                 self?.updateDockProgress()
             }
         }
@@ -261,6 +305,7 @@ struct DownloadRecord: Codable {
             return
         }
         item.name = URL(fileURLWithPath: suggestedFilename).lastPathComponent
+        item.receivedResponse(response)
         if item.sourceURL == nil { item.sourceURL = download.originalRequest?.url ?? response.url }
         item.downloadOrigin =
             Self.websiteOrigin(for: response.url)
@@ -358,6 +403,7 @@ struct DownloadRecord: Codable {
             return
         }
         if request.item.destination != nil, let transfer = request.item.transfer, request.item.bookmark != nil {
+            request.item.beginTransfer()
             request.completion(transfer)
             announce(request.item)
             finishSheet(id, request: request)
@@ -426,6 +472,7 @@ struct DownloadRecord: Codable {
                 ? request.item.transfer ?? folder.appendingPathComponent(request.item.id.uuidString)
                 : folder.appendingPathComponent(request.item.id.uuidString)
             request.item.transfer = transfer
+            request.item.beginTransfer()
             request.completion(transfer)
             announce(request.item)
         } else {
@@ -451,6 +498,7 @@ struct DownloadRecord: Codable {
     }
     func downloadDidFinish(_ download: WKDownload) {
         guard let item = items.first(where: { $0.download === download }) else { return }
+        item.endTransfer()
         item.transferComplete = true
         item.fraction = 1
         item.observation = nil
@@ -482,7 +530,7 @@ struct DownloadRecord: Codable {
             item.reservedDestination = false
             item.error = nil
             item.transfer = nil
-            item.refreshFileAvailability()
+            item.refreshFileAvailability(refreshSize: true)
             if item.owner?.selectedProfileID == item.profileID { item.owner?.downloadFeedback.completed() }
             if item.openWhenFinished { NSWorkspace.shared.open(destination) }
         } catch { item.error = "transfer complete, save failed: " + error.localizedDescription }
@@ -490,6 +538,7 @@ struct DownloadRecord: Codable {
     }
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         let item = items.first { $0.download === download }
+        item?.endTransfer()
         if !["paused", "cancelled", "blocked by website settings"].contains(item?.error ?? "") {
             item?.error = error.localizedDescription
         }
@@ -529,7 +578,13 @@ struct DownloadRecord: Codable {
             })
         presentNext(item.windowID)
     }
-    func pause(_ item: DownloadItem) { stop(item, message: "paused") }
+    func pause(_ item: DownloadItem) {
+        guard item.active else { return }
+        stop(item, message: "paused")
+        if item.owner?.selectedProfileID == item.profileID {
+            item.owner?.feedback.show(.status, icon: .pause, text: "download paused")
+        }
+    }
     func cancel(_ item: DownloadItem) {
         if item.download != nil {
             stop(item, message: "cancelled")
@@ -543,6 +598,7 @@ struct DownloadRecord: Codable {
     }
     private func stop(_ item: DownloadItem, message: String) {
         guard item.download != nil else { return }
+        item.endTransfer()
         item.error = message
         if queues[item.windowID]?.first?.item === item {
             if let alert = permissionAlerts[item.windowID], let parent = alert.window.sheetParent {
@@ -601,6 +657,7 @@ struct DownloadRecord: Codable {
         item.error = nil
         item.starting = true
         item.fraction = 0
+        item.resetTransferStatistics()
         item.resumeData = nil
         item.transferComplete = false
         item.sourceWebView = web
@@ -668,6 +725,8 @@ struct DownloadRecord: Codable {
     }
     private func updateDockProgress() {
         let active = items.filter(\.active)
+        let time = ProcessInfo.processInfo.systemUptime
+        for item in active { item.refreshTransferStatistics(at: time) }
         progress.update(active)
         guard let dock = NSApp?.dockTile else { return }
         guard !active.isEmpty else {
@@ -704,6 +763,7 @@ struct DownloadRecord: Codable {
         }
         for item in items where item.download != nil {
             guard let download = item.download else { continue }
+            item.endTransfer()
             item.error = "paused"
             item.observation = nil
             let data: Data? = await withCheckedContinuation { continuation in
