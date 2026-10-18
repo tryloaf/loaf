@@ -24,7 +24,7 @@ import WebKit
         if event.modifierFlags.contains(.command) { release() }
         switch event.type {
         case .keyDown where event.keyCode != 53 && !event.modifierFlags.contains(.command):
-            // Queued repeats can arrive after a recovered release. Do not restart that key.
+
             if event.isARepeat, pressed[event.keyCode] == nil, !keyIsDown(event.keyCode) { return true }
             recoveredKeys.remove(event.keyCode)
             pressed[event.keyCode] = event

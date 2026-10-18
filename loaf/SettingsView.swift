@@ -510,7 +510,7 @@ struct SettingsView: View {
                         set: { value in
                             store.preferences.weatherUsesCurrentLocation = value
                             store.persistSoon()
-                            store.application.weatherLocation.setEnabled(value)
+                            store.application.weatherLocation.setEnabled(value, requestPermission: value)
                             refreshWeather()
                         })
                 )

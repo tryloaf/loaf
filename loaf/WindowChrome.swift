@@ -3,8 +3,8 @@ import SwiftUI
 
 nonisolated enum ChromeControlLayout {
     static func sidebarFrame(_ native: NSRect, centerY: CGFloat, floatingInset: CGFloat) -> NSRect {
-        // Compensate for the floating card's outer gutter so the controls
-        // stay at the same window coordinates as the docked sidebar.
+
+
         NSRect(
             x: native.minX - floatingInset, y: centerY - floatingInset - native.height / 2,
             width: native.width, height: native.height)

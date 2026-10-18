@@ -109,8 +109,8 @@ struct PointerCapturePosition {
         return unsafeBitCast(implementation, to: TryClose.self)(view, selector)
     }
     static func enableWebGPU(_ preferences: WKPreferences) {
-        // Resolve WebKit's private feature SPI at runtime so unavailable flags are harmless.
-        // Keep this on OS releases where WebGPU ships, without experimental backend flags.
+
+
         guard #available(macOS 26, *), WKPreferences.responds(to: NSSelectorFromString("_features")),
             let features = WKPreferences.perform(NSSelectorFromString("_features"))?.takeUnretainedValue() as? [NSObject]
         else { return }

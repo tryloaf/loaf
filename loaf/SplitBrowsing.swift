@@ -102,7 +102,7 @@ extension BrowserWindowState {
             return true
         }
         guard let rightURL = Self.bookmarkURL(pair.address), pair.fraction.isFinite else { return false }
-        // Always create two unpinned pages in the current profile; a saved pair never replaces an existing page.
+
         dismissOmnibar()
         let left = newTab(url: leftURL, showOmnibar: false, activate: false)
         let right = newTab(url: rightURL, showOmnibar: false, activate: false)
@@ -125,8 +125,8 @@ extension BrowserWindowState {
 @MainActor final class LoafWebView: WKWebView {
     weak var browserTab: BrowserTab?
     override func cancelOperation(_ sender: Any?) {
-        // WebKit has already offered Escape to the page. Its unhandled cancel command
-        // must not reach NSHostingView, which uses it to exit browser window fullscreen.
+
+
         if let window = window as? LoafBrowserWindow, window.styleMask.contains(.fullScreen),
             fullscreenState == .notInFullscreen
         {

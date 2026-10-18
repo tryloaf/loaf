@@ -39,7 +39,7 @@ import WebKit
             guard let menu = note.object as? NSMenu else { return }
             MainActor.assumeIsolated { LowercaseMenus.normalize(menu) }
         }
-        // AppKit can inject or retitle window/tiling controls after tracking begins.
+
         for name in [NSMenu.didAddItemNotification, NSMenu.didChangeItemNotification] {
             mutationObservers.append(
                 NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in

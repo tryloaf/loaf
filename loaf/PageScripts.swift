@@ -52,15 +52,11 @@ enum PageScripts {
             const ratio = next / scale;
             scale = next;
             if (event.defaultPrevented || !wheelPinch || Math.abs(ratio - 1) < 0.00001) return;
-            // Some canvas apps implement Chromium's ctrl-wheel pinch path only.
-            // Offer that path when the page has not already handled Safari's gesture.
             const wheel = pinchWheel(event, -Math.log(ratio)*100);
             if (!event.target.dispatchEvent(wheel)) event.preventDefault();
           }, {passive:false});
           window.addEventListener('wheel', event => {
             if (!event.isTrusted) return;
-            // Observe after page handlers have run, including listeners that stop
-            // propagation. No events or page APIs are replaced.
             setTimeout(() => {
               if (!event.defaultPrevented) return;
               const now = performance.now();

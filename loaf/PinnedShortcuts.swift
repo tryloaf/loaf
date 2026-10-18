@@ -220,8 +220,8 @@ extension BrowserWindowState {
             forSplit || canPopOutPin(tab)
         else { return nil }
         let open = openPinned(tab)
-        // The shortcut stays in the same saved position. The live tab, its WKWebView,
-        // navigation stack and page state become a regular tab without loading anything.
+
+
         open.pinned = false
         open.pinnedShortcutID = nil
         open.pinnedTitle = nil

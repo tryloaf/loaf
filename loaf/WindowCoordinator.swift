@@ -897,7 +897,7 @@ import WebKit
             escapePage = tab
             WebKitAdapter.capturedEscape(tab, type: "keydown", modifiers: event.modifierFlags)
             store?.feedback.show(
-                .pointer, icon: .pointer, text: "press escape again to release the mouse", duration: .seconds(1))
+                .pointer, icon: .pointer, text: "press escape again to release the cursor", duration: .seconds(1))
         }
         return true
     }

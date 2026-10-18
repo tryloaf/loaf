@@ -326,7 +326,7 @@ struct SidebarDockHost: NSViewRepresentable {
                 hoverHasPointer = true
                 return
             }
-            // Download feedback can reveal the card before the pointer has ever entered it.
+
             guard hoverHasPointer, !(store.siteSettingsVisible && store.siteSettingsTrigger == .sidebar) else { return }
             store.hoveredSidebar = false
         }

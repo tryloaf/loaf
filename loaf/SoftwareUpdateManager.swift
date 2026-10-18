@@ -137,8 +137,8 @@ final class UpdateInstallationState: @unchecked Sendable {
     #if canImport(Sparkle)
         func discovered(_ item: SUAppcastItem) { availableVersion = item.displayVersionString }
 
-        // Sparkle can resume a previously downloaded update without reading the feed.
-        // Check the current feed before offering it, and again before accepting Install.
+
+
         func isSuperseded(_ item: SUAppcastItem) async throws -> Bool {
             guard let feed = updater?.feedURL else { throw URLError(.badURL) }
             var request = URLRequest(url: feed, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 20)
@@ -278,7 +278,7 @@ final class UpdateInstallationState: @unchecked Sendable {
 
         override func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState,
             reply: @escaping (SPUUserUpdateChoice) -> Void) {
-            // End scheduled reminders promptly so a sidebar click starts a new feed check.
+
             offeredItem = appcastItem
             manager?.discovered(appcastItem)
             if !state.userInitiated && state.stage == .notDownloaded {
@@ -289,8 +289,8 @@ final class UpdateInstallationState: @unchecked Sendable {
                 guard let self, let manager else { reply(.dismiss); return }
                 do {
                     if try await manager.isSuperseded(appcastItem) {
-                        // Skip discards Sparkle's cached installer. The manager clears its
-                        // temporary skip record before starting the fresh check.
+
+
                         manager.discardSupersededUpdate(userInitiated: state.userInitiated)
                         reply(.skip)
                         return

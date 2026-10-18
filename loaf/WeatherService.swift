@@ -470,20 +470,21 @@ struct WeatherRefresh: ViewModifier {
 
 @MainActor final class WeatherLocationMonitor: NSObject, CLLocationManagerDelegate {
     private weak var application: BrowserApplication?
-    private let manager = CLLocationManager()
+    private let manager: CLLocationManager
     private let budget: WeatherLocationRefreshBudget
     private var lastLocation: CLLocation?
     private var awaitingInitialLocation = false
     private var monitoring = false
 
-    init(application: BrowserApplication, defaults: UserDefaults = .standard) {
+    init(application: BrowserApplication, defaults: UserDefaults = .standard, manager: CLLocationManager = CLLocationManager()) {
         self.application = application
+        self.manager = manager
         budget = WeatherLocationRefreshBudget(defaults: defaults)
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyKilometer
     }
-    func setEnabled(_ enabled: Bool) {
+    func setEnabled(_ enabled: Bool, requestPermission: Bool = false) {
         guard enabled else {
             manager.stopMonitoringSignificantLocationChanges()
             monitoring = false
@@ -493,6 +494,10 @@ struct WeatherRefresh: ViewModifier {
         }
         switch manager.authorizationStatus {
         case .notDetermined:
+            guard requestPermission else {
+                locationUnavailable("enable current location in weather settings to allow location access")
+                return
+            }
             application?.weather.loading = true
             application?.weather.error = nil
             manager.requestWhenInUseAuthorization()

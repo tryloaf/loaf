@@ -160,7 +160,7 @@ nonisolated struct WebSearchResult: Sendable, Equatable {
     private static func searchResults(_ query: String, engine: SearchEngine = .google, publicOnly: Bool = false) async throws -> [WebSearchResult] {
         var fallback = URLComponents(string: "https://html.duckduckgo.com/html/")!
         fallback.queryItems = [URLQueryItem(name: "q", value: query)]
-        // Respect the chosen engine, including failures; never send a query to another provider silently.
+
         let urls = (engine == .duckduckgo ? [fallback.url] : [engine.url(for: query)]).compactMap { $0 }
         let webView = makeWebView(publicOnly: publicOnly)
         let publicNavigation = publicOnly ? PublicSearchNavigation() : nil

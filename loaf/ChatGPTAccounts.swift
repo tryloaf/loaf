@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-/// Connection IDs stay on this Mac. Tokens are held separately in Keychain by each account.
+
 @MainActor final class ChatGPTAccounts: ObservableObject {
     @Published private(set) var accounts: [ChatGPTAccount]
     let didChange = PassthroughSubject<Void, Never>()
@@ -27,7 +27,7 @@ import Foundation
     }
 
     func account(id: String?) -> ChatGPTAccount {
-        // An explicit rule never silently sends a request to a different account.
+
         if let id {
             if let account = accounts.first(where: { $0.connectionID == id }) { return account }
             if let account = missingAccounts[id] { return account }
@@ -60,7 +60,7 @@ import Foundation
         observations.removeAll()
         for account in accounts {
             account.objectWillChange.sink { [weak self] in
-                // Published values are committed before consumers resolve their routes.
+
                 DispatchQueue.main.async { [weak self] in
                     self?.objectWillChange.send()
                     self?.didChange.send()

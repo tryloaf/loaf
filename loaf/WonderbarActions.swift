@@ -142,7 +142,7 @@ extension BrowserWindowState {
             else { return nil }
             return tab
         }
-        // Rebuild from live state so an old command cannot target a closed tab, replaced split or deleted profile.
+
         guard WonderbarCommands.suggestions(store: self).contains(where: { $0.command == command }) else {
             return false
         }

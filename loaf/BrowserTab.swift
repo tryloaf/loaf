@@ -1203,7 +1203,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             if store?.selectedTab?.id == id, let store {
                 store.feedback.show(
                     .pointer, icon: .pointer,
-                    text: locked ? "your cursor is hidden. press escape twice to show it" : "mouse released")
+                    text: locked ? "your cursor is hidden. press escape twice to show it" : "cursor released")
             }
         }
         if message.name == "loafMedia", let frameID = body["frame"] as? String, frameID.count <= 64,

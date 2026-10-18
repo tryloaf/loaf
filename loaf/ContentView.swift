@@ -257,7 +257,7 @@ struct ContentView: View {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text("allow \(offer.host) to capture the pointer?").font(
                                             .system(size: 13, weight: .medium))
-                                        Text("press escape twice to release the mouse").font(
+                                        Text("press escape twice to release the cursor").font(
                                             .system(size: 12)
                                         )
                                         .foregroundStyle(

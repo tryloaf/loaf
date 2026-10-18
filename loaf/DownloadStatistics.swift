@@ -29,8 +29,8 @@ nonisolated struct DownloadStatistics: Codable, Equatable, Sendable {
     }
 }
 
-// A short rolling sample avoids lifetime-average estimates after a speed change.
-// Monotonic time excludes save dialogs and paused/interrupted periods.
+
+
 nonisolated struct DownloadTransferClock {
     private var started: TimeInterval?
     private var previousElapsed: TimeInterval = 0

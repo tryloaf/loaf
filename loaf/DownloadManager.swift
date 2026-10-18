@@ -95,7 +95,7 @@ struct DownloadRecord: Codable {
     func refreshTransferStatistics(at time: TimeInterval = ProcessInfo.processInfo.systemUptime, force: Bool = false) {
         guard let progress = download?.progress, force || time - lastStatisticsSample >= 0.5 else { return }
         lastStatisticsSample = time
-        // WebKit can briefly expose a zero counter while attaching a resumed download.
+
         let received = max(statistics.receivedBytes, progress.completedUnitCount)
         let next = transferClock.sample(statistics, received: received, total: progress.totalUnitCount, at: time)
         if next != statistics { statistics = next }

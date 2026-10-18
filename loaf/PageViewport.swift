@@ -163,8 +163,8 @@ struct PageViewport<Content: View>: NSViewRepresentable {
                 x: leading, y: edge,
                 width: max(0, bounds.width - leading - edge - trailing), height: max(0, bounds.height - 2 * edge))
             let presentation = surface.layer?.presentation()
-            // The completion work item can run before the compositor's last frame.
-            // Always retarget from presentation geometry, even after moving becomes false.
+
+
             let previous = presentation?.frame ?? (moving ? motionSource : surface.frame)
             let previousRadius = presentation?.cornerRadius ?? surface.layer?.cornerRadius ?? radius
             let animate =
@@ -177,7 +177,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
                 scheduleNativeCapture()
                 return
             }
-            // Read the overlay before resizing it; AppKit may replace its backing layer.
+
             let snapshotState = snapshotPresentation()
             let liveBlur = blurPresentation(contentSurface)
             CATransaction.begin()
@@ -193,7 +193,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             moving = true
             motionStarted = CACurrentMediaTime()
             motionSource = previous
-            // Commit destination geometry once. All intermediate frames belong to the compositor.
+
             applyGeometry(target, radius: radius, deferContent: true)
             if let layer = surface.layer {
                 let transform = Self.transitionTransform(from: previous, to: layer.frame, anchor: layer.anchorPoint)
@@ -212,19 +212,19 @@ struct PageViewport<Content: View>: NSViewRepresentable {
                 DispatchQueue.main.asyncAfter(deadline: .now() + SidebarMotion.duration + 0.12, execute: cleanup)
             }
             CATransaction.commit()
-            // Submit the texture motion before asking the live hierarchy to reflow.
+
             CATransaction.flush()
             let layout = DispatchWorkItem { [weak self] in
                 guard let self else { return }
                 self.contentLayout = nil
-                // An uncovered reflow moves centered content abruptly. A fresh capture
-                // will commit this layout under its cover; the deadline is a fallback
-                // for loading pages or a failed WebKit capture.
+
+
+
                 if !self.transitionCapture { self.layoutLiveContent() }
             }
             contentLayout = layout
-            // Both cached and uncached transitions keep their source geometry until
-            // the motion is nearly complete. Reflow once, under the peak blur.
+
+
             DispatchQueue.main.asyncAfter(deadline: .now() + SidebarMotion.duration - 0.06, execute: layout)
             if needsFreshCover {
                 transitionCapture = true
@@ -271,13 +271,13 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             CATransaction.setDisableActions(true)
             surface.frame = frame
             surface.layer?.cornerRadius = radius
-            // The stretched texture carries the animation while WebKit lays out once,
-            // at its destination size, underneath it.
+
+
             let contentFrame = surface.bounds
             let contentSize = contentSurface.bounds.size
             if contentSurface.frame != contentFrame { contentSurface.frame = contentFrame }
             if deferContent, contentSize.width > 0, contentSize.height > 0 {
-                // Preserve the visible live pixels too when interrupting a partial fade.
+
                 contentSurface.setBoundsSize(contentSize)
             }
             if !deferContent { layoutLiveContent() }
@@ -346,7 +346,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             }
             return find(host)
         }
-        // Capture after an interaction settles, never on the toggle's critical path and never per frame.
+
         private func scheduleNativeCapture() {
             guard !moving, !transitionCapture, !waitingForSnapshot, resizeTransition, !reduceMotion, window?.isVisible == true else {
                 return
@@ -383,8 +383,8 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             showSnapshot(image)
         }
         private func captureIdleSnapshot(forTransition: Bool = false) {
-            // Hosting can attach its web views after the container's first layout.
-            // Install observers against the same hierarchy that supplies the texture.
+
+
             observePages()
             nativeCapture?.cancel()
             nativeCapture = nil
@@ -403,7 +403,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
                 if forTransition { adoptTransitionSnapshot(image) }
                 return
             }
-            // Preserve native chrome (find bar, split labels and toolbar) around the remote web layers.
+
             var nativeImage: NSImage?
             if let bitmap = contentSurface.bitmapImageRepForCachingDisplay(in: contentSurface.bounds) {
                 contentSurface.cacheDisplay(in: contentSurface.bounds, to: bitmap)
@@ -419,7 +419,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             var images: [(NSImage, NSRect)] = []
             for page in pages {
                 let pageFrame = contentSurface.convert(page.bounds, from: page)
-                // The composite image uses top-left coordinates; the AppKit surface may not.
+
                 let rect = NSRect(
                     x: pageFrame.minX - sourceBounds.minX,
                     y: contentSurface.isFlipped
@@ -452,7 +452,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
                         }
                         return true
                     }
-                    // Rasterize during idle capture, rather than the first animated draw.
+
                     if let pixels = composite.cgImage(forProposedRect: nil, context: nil, hints: nil) {
                         self.cachedNativeSnapshot = NSImage(cgImage: pixels, size: sourceBounds.size)
                     } else {
@@ -465,7 +465,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
         private func adoptTransitionSnapshot(_ image: NSImage) {
             guard transitionCapture else { return }
             if resizeSnapshotVisible {
-                // Let the previous layout fade away. Never make that old image opaque again.
+
                 let adoption = DispatchWorkItem { [weak self] in self?.adoptTransitionSnapshot(image) }
                 snapshotAdoption = adoption
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.04, execute: adoption)
@@ -481,7 +481,7 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             showSnapshot(image)
             animateSnapshot(from: (1, blur))
             CATransaction.commit()
-            // Present the source pixels before asking WebKit for the destination layout.
+
             CATransaction.flush()
             let layout = DispatchWorkItem { [weak self] in
                 guard let self else { return }
@@ -538,8 +538,8 @@ struct PageViewport<Content: View>: NSViewRepresentable {
             layer.removeAnimation(forKey: "sidebarSnapshotFade")
             layer.opacity = 1
             animateBlur(on: resizeSnapshot, from: state.blur)
-            // Only fully covering textures are restarted. Fading textures finish
-            // their handoff while a fresh source image is captured underneath.
+
+
             let fade = CAKeyframeAnimation(keyPath: "opacity")
             let total = SidebarMotion.duration + 0.12
             fade.values = [state.opacity, 1, 1, 0]

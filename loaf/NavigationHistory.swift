@@ -358,8 +358,6 @@ nonisolated enum PageNavigationScrollEligibility {
             const seen = new Set();
             while (el && !seen.has(el)) {
                 seen.add(el);
-                // Canvas editors pan without DOM scroll ranges. Their wheel and
-                // pinch handlers must retain the gesture, even inside overflow:hidden.
                 const tag = el.tagName?.toUpperCase();
                 if (tag === 'CANVAS' || (tag === 'SVG' && el.getBoundingClientRect().width > 160
                     && el.getBoundingClientRect().height > 100) || el.getAttribute?.('role') === 'application'
