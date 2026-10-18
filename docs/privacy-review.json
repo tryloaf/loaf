@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "reviewedAt": "2026-10-18T02:12:59.074Z",
+  "reviewedAt": "2026-10-18T02:15:19.386Z",
   "scope": "Defaults, remote providers, report retention, first-use agreement, and current privacy policy reviewed against these inputs.",
   "inputs": {
     "loaf-site/legal/eula.md": "05ee9d6af4cb718ae05a473397032d4c9dea163e36c989f80e19b3308bb1cc1d",

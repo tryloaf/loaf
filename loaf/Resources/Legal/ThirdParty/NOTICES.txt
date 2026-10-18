@@ -1,0 +1,44 @@
+Third-party materials in loaf 1.0.7 (33)
+
+The proprietary loaf license does not replace the following component licenses.
+Their rights, notices, and disclaimers remain independently effective.
+
+Sparkle 2.10.0
+https://github.com/sparkle-project/Sparkle/tree/eef1a539a373c1f1a320624b1130fc5de7b2e100
+See Sparkle-LICENSE.txt, including the notices for Sparkle's bundled components.
+
+ZIPFoundation 0.9.20
+Copyright (c) 2017-2025 Thomas Zoechling (https://www.peakstep.com)
+https://github.com/weichsel/ZIPFoundation/tree/22787ffb59de99e5dc1fbfe80b19c97a904ad48d
+MIT license: see ZIPFoundation-LICENSE.txt.
+
+AdGuard DNS filter data
+Copyright AdGuard Software Ltd and the contributors to AdGuard DNS filter.
+https://github.com/AdguardTeam/AdGuardSDNSFilter
+GNU General Public License version 3: see AdGuard-LICENSE.txt.
+This component is provided without warranty under that license.
+Modification notice: loaf distributes a domain-only adaptation of the AdGuard
+DNS filter, rather than the original full filter syntax. This adaptation is
+included in the October 17, 2026 distribution by Owen Van Vooren.
+The adapted data is licensed under GPL-3.0. Its complete editable plaintext
+source is supplied inside the app as adblock-domains.txt, and in the source
+repository at loaf/Resources/adblock-domains.txt. No separate compiled filter
+database replaces that source in the distribution. You may copy, modify, and
+redistribute this data under the GPL independently of loaf's proprietary terms.
+SHA-256 of the distributed domain source: 39cba3ca828f2eea01dfac521a464db4315bfcb33a45d616df7a7d889581bb8b
+https://github.com/tryloaf/loaf/blob/main/loaf/Resources/adblock-domains.txt
+
+Public Suffix List
+Copyright the Public Suffix List contributors.
+https://publicsuffix.org/list/public_suffix_list.dat
+Mozilla Public License 2.0: see PublicSuffixList-LICENSE.txt.
+The complete source, original license header, version, and upstream commit are
+included in public_suffix_list.dat in the app and source repository.
+
+Golzheim
+Golzheim is a separately licensed font. loaf's proprietary license does not
+grant a license to extract, redistribute, or use it separately. The font is
+excluded from the public source repository.
+
+Apple system frameworks and independently installed browser extensions remain
+subject to their own terms. No ownership of their materials is claimed.
