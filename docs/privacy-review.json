@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "reviewedAt": "2026-10-18T02:15:19.386Z",
+  "reviewedAt": "2026-10-18T04:08:23.502Z",
   "scope": "Defaults, remote providers, report retention, first-use agreement, and current privacy policy reviewed against these inputs.",
   "inputs": {
     "loaf-site/legal/eula.md": "05ee9d6af4cb718ae05a473397032d4c9dea163e36c989f80e19b3308bb1cc1d",
@@ -8,7 +8,7 @@
     "loaf-site/legal/privacy.md": "61eb5b6cd7e13263f235c70d099dd21b10a6f36be406b73fdd32b11175642360",
     "loaf-site/site-config.js": "3a3251bc5bd2ebfa46cd44e16c7a7a7de771633ae87271e399a5ef6deda13126",
     "loaf-site/worker.mjs": "88d1d4c7ec96bc498a6385c5ea2b8fcd48e4d04dbc8ee087847374df15b7f461",
-    "loaf.xcodeproj/project.pbxproj": "0e5266e2eb312aa283418fc631749a346abaf4652925fac9ce3793bd16af43d3",
+    "loaf.xcodeproj/project.pbxproj": "3bf4c7393611a3df4716eb060ec5e34a80d7cd325d50150b2404b23a07d85d99",
     "loaf/AIEvidence.swift": "6b770a09a6526a7e0c213efcaadd169bcd5e43cb6905cb45084300f15263dccf",
     "loaf/AIRouteSettings.swift": "52156ae3e6bc5ce548b9a65290b9286b5b942ea81f3a44ea8399e3afd613fa32",
     "loaf/AISettingsView.swift": "7a530fc5a5e4a0f9ae044b90bacdf9b6c9df80942ee303982779d29f94e981c9",
