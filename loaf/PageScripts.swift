@@ -4,22 +4,32 @@ import WebKit
 enum PageScripts {
     static let layoutViewport = #"""
         (() => {
+          if (globalThis.__loafLayoutViewport || !window.visualViewport) return;
+          globalThis.__loafLayoutViewport = true;
+          const viewport = window.visualViewport;
+
+          let scale = viewport.scale;
+          const updateScale = () => { scale = viewport.scale; };
+          viewport.addEventListener('resize', updateScale);
+          window.addEventListener('resize', updateScale, true);
+          const root = () => document.compatMode === 'BackCompat' ? document.body : document.documentElement;
           for (const [name, dimension] of [['innerWidth', 'clientWidth'], ['innerHeight', 'clientHeight']]) {
             const descriptor = Object.getOwnPropertyDescriptor(window, name);
             if (!descriptor?.get || !descriptor.configurable) continue;
             const read = descriptor.get;
             let gutter = 0;
+            const observer = new ResizeObserver(() => {
+              updateScale();
+              const element = root();
+              if (element && Math.abs(scale - 1) < 0.001) gutter = Math.max(0, read.call(window) - element[dimension]);
+            });
+            const attach = () => { const element = root(); if (element) observer.observe(element); };
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach, {once:true});
+            else attach();
             Object.defineProperty(window, name, {...descriptor, get() {
               const native = read.call(this);
-              if (this !== window) return native;
-              const root = document.compatMode === 'BackCompat' ? document.body : document.documentElement;
-              const layout = root?.[dimension];
-              if (!layout || !window.visualViewport) return native;
-              if (Math.abs(window.visualViewport.scale - 1) < 0.001) {
-                gutter = Math.max(0, native - layout);
-                return native;
-              }
-              return layout + gutter;
+              if (this !== window || Math.abs(scale - 1) < 0.001) return native;
+              return root()?.[dimension] + gutter || native;
             }});
           }
         })();
@@ -165,6 +175,7 @@ enum PageScripts {
           };
           let next = 0;
           let scheduled = false;
+          let heartbeat = 0;
           const artworkURL = metadata => {
             const candidates = Array.from(metadata?.artwork || []).slice(0, 16).map(image => {
               try {
@@ -179,6 +190,7 @@ enum PageScripts {
           };
           const send = () => {
             scheduled = false;
+            clearTimeout(heartbeat); heartbeat = 0;
             const sources = [];
             const metadata = navigator.mediaSession?.metadata;
             const artwork = artworkURL(metadata);
@@ -206,6 +218,7 @@ enum PageScripts {
 
 
             window.webkit.messageHandlers.loafMedia.postMessage({ frame, sources });
+            if (sources.length) heartbeat = setTimeout(send, 2000);
           };
           const schedule = () => { if (!scheduled) { scheduled = true; setTimeout(send, 150); } };
           const mediaNodes = root => {
@@ -249,7 +262,7 @@ enum PageScripts {
             if (changed) schedule();
           });
           observer.observe(document.documentElement, { childList: true, subtree: true });
-          setInterval(send, 2000);
+          schedule();
           document.addEventListener('pointerlockchange', event => {
             if (event.isTrusted) window.webkit.messageHandlers.loafMedia.postMessage({pointer:!!document.pointerLockElement});
           });
@@ -274,7 +287,14 @@ enum PageScripts {
           const tokens = field => (field.getAttribute('autocomplete') || '').toLowerCase().split(/\s+/);
           const parent = element => element.parentElement || element.getRootNode()?.host || null;
           const shadowRoots = new Set();
+          const prune = () => {
+            for (const shadow of shadowRoots) if (!shadow.host.isConnected) shadowRoots.delete(shadow);
+            for (const [key, saved] of targets) {
+              if (Date.now() - saved.created > 120000 || !saved.password?.isConnected && !saved.user?.isConnected) targets.delete(key);
+            }
+          };
           const discover = root => {
+            if (root !== document && !root.isConnected) return;
             if (root instanceof ShadowRoot) shadowRoots.add(root);
             if (root.shadowRoot && !shadowRoots.has(root.shadowRoot)) discover(root.shadowRoot);
             for (const element of root.querySelectorAll('*')) if (element.shadowRoot && !shadowRoots.has(element.shadowRoot)) discover(element.shadowRoot);
@@ -402,7 +422,7 @@ enum PageScripts {
             value.scope instanceof HTMLFormElement ? value.scope.action : '', buttons(value.scope).map(button => button.getAttribute('formaction'))]);
           const bind = () => {
             const value = fields(); if (!value) return null;
-            for (const [key, saved] of targets) if (Date.now() - saved.created > 120000 || !saved.password?.isConnected && !saved.user?.isConnected) targets.delete(key);
+            prune();
             const key = [...crypto.getRandomValues(new Uint32Array(4))].map(n => n.toString(16).padStart(8,'0')).join('');
             if (targets.size >= 8) targets.delete(targets.keys().next().value);
             targets.set(key, {...value, signature:signature(value), created:Date.now(), href:location.href});
@@ -472,7 +492,7 @@ enum PageScripts {
             }
             return !!(value.user || value.password);
           };
-          return {all, discover, shadowRoots, active, visible, safe, username, loginFields, usernameFields, fields, focused, bind, bound, anchor, query, attempt, usernameStep, fill, scopeFor, buttonText, loginAction};
+          return {all, discover, prune, shadowRoots, active, visible, safe, username, loginFields, usernameFields, fields, focused, bind, bound, anchor, query, attempt, usernameStep, fill, scopeFor, buttonText, loginAction};
         })());
         const editableLoginField = loafForms.visible;
         const safeLoginScope = loafForms.safe;
@@ -578,12 +598,20 @@ enum PageScripts {
                 }
               },true);
               const observer = new MutationObserver(records => {
-                for (const record of records) for (const node of record.addedNodes) if (node.nodeType === 1) loafForms.discover(node);
+                for (const record of records) for (const node of record.addedNodes) if (node.nodeType === 1 && node.isConnected) loafForms.discover(node);
+                if (offeredField && !offeredField.isConnected) {
+                  offeredField = offeredScope = offeredStage = null;
+                  if (tracking) { const targetID = tracking; deactivate(targetID); post({action:'dismiss-fill',targetID}); }
+                }
                 observeRoots(); schedule();
               });
-              const observed = new WeakSet();
+              const observed = new Set();
               const observeRoots = () => {
-                for (const root of [document.documentElement, ...loafForms.shadowRoots]) {
+                loafForms.prune();
+                const roots = [document.documentElement, ...loafForms.shadowRoots].filter(Boolean);
+
+                if ([...observed].some(root => !roots.includes(root))) { observer.disconnect(); observed.clear(); }
+                for (const root of roots) {
                   if (!observed.has(root)) { observed.add(root); observer.observe(root,{childList:true,subtree:true,attributes:true,attributeFilter:['type','name','id','form','role','autocomplete','aria-label','placeholder','disabled','readonly','hidden','style','class','action','formaction']}); }
                 }
               };

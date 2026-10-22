@@ -115,7 +115,7 @@ extension BrowserWindowState {
         profileSwipeColor { profile in
             profile.privateMode
                 ? PrivateChrome.background(profile)
-                : ProfileColor.surfaceColor(
+                : profile.extensionColorTheme?.frame.color ?? ProfileColor.surfaceColor(
                     profileTint(profile), strength: profile.personalization?.tintStrength ?? 0.06, dark: dark)
         }
     }
@@ -135,6 +135,7 @@ enum ProfileSwitchMotion {
 
 func profileTint(_ profile: Profile) -> Color {
     if profile.privateMode && profile.personalization?.privateUsesProfileColor != true { return PrivateChrome.accent }
+    if let theme = profile.extensionColorTheme { return theme.frame.color }
     return profile.personalization?.customTint?.color ?? profileTint(profile.tint)
 }
 

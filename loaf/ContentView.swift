@@ -9,10 +9,10 @@ struct BrowserToolbar: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     var body: some View {
         let tab = store.selectedTab
-        let pageChrome = tab?.page == .web && tab?.url != nil && tab?.readerArticle == nil
+        let pageChrome = store.profile.extensionColorTheme == nil && tab?.page == .web && tab?.url != nil && tab?.readerArticle == nil
         let palette = ChromePalette(
             dark: store.profile.privateMode || ((pageChrome ? tab?.chromePrefersDark : nil) ?? (scheme == .dark)),
-            sample: pageChrome ? tab?.chromeColor : nil, privateMode: store.profile.privateMode)
+            sample: store.profile.extensionColorTheme.map { NSColor($0.toolbar.color) } ?? (pageChrome ? tab?.chromeColor : nil), privateMode: store.profile.privateMode)
         HStack(spacing: 4) {
             Spacer().frame(width: 76)
             PerformanceIndicator(store: store)
@@ -351,9 +351,9 @@ struct ContentView: View {
         .ignoresSafeArea().frame(minWidth: 800, minHeight: 540)
         .background(
             NativeWindowAppearance(
-                scheme: systemAppearance.colorScheme(for: appearance, privateMode: store.profile.privateMode))
+                scheme: store.profile.interfaceScheme(fallback: systemAppearance.colorScheme(for: appearance, privateMode: store.profile.privateMode)))
         )
-        .preferredColorScheme(systemAppearance.colorScheme(for: appearance, privateMode: store.profile.privateMode))
+        .preferredColorScheme(store.profile.interfaceScheme(fallback: systemAppearance.colorScheme(for: appearance, privateMode: store.profile.privateMode)))
         .tint(store.profile.privateMode ? profileTint(store.profile) : Color.accentColor)
         .accentColor(store.profile.privateMode ? profileTint(store.profile) : nil)
         .animation(.easeOut(duration: reduceMotion ? 0.1 : 0.16), value: store.omnibarVisible)

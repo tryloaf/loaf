@@ -33,5 +33,6 @@ struct RecentDownloadsView: View {
             }
         }.padding(16).frame(width: 360).accessibilityElement(children: .contain).accessibilityLabel(
             "downloads for " + store.profile.name)
+            .onAppear { manager.refreshFileAvailability() }
     }
 }

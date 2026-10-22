@@ -58,26 +58,26 @@ nonisolated struct BrowsingTimeRecord: Codable {
         }
     }
     func refreshBattery() {
+        var battery: [String: Any]?
         if let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
             let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef]
         {
-            let battery = sources.compactMap {
+            battery = sources.compactMap {
                 IOPSGetPowerSourceDescription(info, $0)?.takeUnretainedValue() as? [String: Any]
-            }
-            .first { $0[kIOPSTypeKey] as? String == kIOPSInternalBatteryType }
-            hasInternalBattery = battery != nil
-            let current = battery?[kIOPSCurrentCapacityKey] as? Int
-            let maximum = battery?[kIOPSMaxCapacityKey] as? Int
-            batteryPercent = current.flatMap { value in
-                maximum.flatMap { $0 > 0 ? min(100, max(0, value * 100 / $0)) : nil }
-            }
-            charging = battery?[kIOPSPowerSourceStateKey] as? String == kIOPSACPowerValue
-        } else {
-            hasInternalBattery = false
-            batteryPercent = nil
-            charging = false
+            }.first { $0[kIOPSTypeKey] as? String == kIOPSInternalBatteryType }
         }
-        systemLowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+        let current = battery?[kIOPSCurrentCapacityKey] as? Int
+        let maximum = battery?[kIOPSMaxCapacityKey] as? Int
+        let percent = current.flatMap { value in
+            maximum.flatMap { $0 > 0 ? min(100, max(0, value * 100 / $0)) : nil }
+        }
+        let internalBattery = battery != nil
+        let onAC = battery?[kIOPSPowerSourceStateKey] as? String == kIOPSACPowerValue
+        let lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+        if hasInternalBattery != internalBattery { hasInternalBattery = internalBattery }
+        if batteryPercent != percent { batteryPercent = percent }
+        if charging != onAC { charging = onAC }
+        if systemLowPower != lowPower { systemLowPower = lowPower }
         applyPowerPolicy()
     }
     var automaticSaverRequested: Bool {
@@ -92,17 +92,17 @@ nonisolated struct BrowsingTimeRecord: Codable {
             preferences: application.preferences, hasInternalBattery: hasInternalBattery,
             onACPower: charging, batteryPercent: batteryPercent, systemLowPower: systemLowPower)
         if saverEnabled != policy.batterySaver { saverEnabled = policy.batterySaver }
-        let foreground =
-            NSApp.isActive
-            ? application.windows.first {
-                $0.nativeWindow?.isKeyWindow == true && $0.nativeWindow?.isMiniaturized == false
-            } : nil
         let foregroundTabs = Set(
-            foreground?.tabs.filter {
-                !$0.isDisposed && $0.page == .web
-                    && (foreground?.selectedTab?.id == $0.id || foreground?.visibleSplit?.contains($0.id) == true)
-            }.map(\.id) ?? [])
-        let wantsActivity = policy.gameMode && !foregroundTabs.isEmpty
+            application.windows.filter {
+                $0.nativeWindow?.isVisible == true && $0.nativeWindow?.isMiniaturized == false
+            }.flatMap { window in
+                window.tabs.filter {
+                    !$0.isDisposed && $0.page == .web
+                        && (window.selectedTab?.id == $0.id || window.visibleSplit?.contains($0.id) == true)
+                }.map(\.id)
+            })
+        let focused = NSApp.isActive ? application.windows.first { $0.nativeWindow?.isKeyWindow == true } : nil
+        let wantsActivity = policy.gameMode && focused?.tabs.contains { foregroundTabs.contains($0.id) } == true
         if wantsActivity && gameActivity == nil {
             gameActivity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
@@ -114,7 +114,9 @@ nonisolated struct BrowsingTimeRecord: Codable {
         for runtime in application.runtimes.values {
             for tab in runtime.tabs.values {
                 guard let preferences = tab.existingWebView?.configuration.preferences else { continue }
-                let scheduling = policy.schedulingPolicy(foreground: foregroundTabs.contains(tab.id))
+                let foreground = foregroundTabs.contains(tab.id)
+                WebKitAdapter.setHighRefreshRendering(preferences, enabled: policy.highRefreshRendering(foreground: foreground && focused?.id == tab.windowID))
+                let scheduling = policy.schedulingPolicy(foreground: foreground)
                 if preferences.inactiveSchedulingPolicy != scheduling {
                     preferences.inactiveSchedulingPolicy = scheduling
                 }
@@ -140,18 +142,21 @@ nonisolated struct BrowsingTimeRecord: Codable {
         }
         let day = Self.localDay()
 
+        var updatedRecords = records
         var recorded = Set<String>()
         for tab in tabs {
             guard let host = tab.url?.host, recorded.insert(tab.profileID.uuidString + host).inserted else { continue }
-            if let index = records.firstIndex(where: {
+            if let index = updatedRecords.firstIndex(where: {
                 $0.day == day && $0.profileID == tab.profileID && $0.host == host
             }) {
-                records[index].seconds += elapsed
+                updatedRecords[index].seconds += elapsed
             } else {
-                records.append(.init(day: day, profileID: tab.profileID, host: host, seconds: elapsed))
+                updatedRecords.append(.init(day: day, profileID: tab.profileID, host: host, seconds: elapsed))
             }
         }
-        if records.count > 5_000 { records.removeFirst(records.count - 5_000) }
+        if !recorded.isEmpty {
+            records = Array(updatedRecords.suffix(5_000))
+        }
         if ticks % 6 == 0 { save() }
     }
     func minutesToday(profileID: UUID) -> Int {

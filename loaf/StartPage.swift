@@ -10,6 +10,7 @@ import UniformTypeIdentifiers
     let tint: Int
     let privateMode: Bool
     let personalization: Personalization
+    let colorTheme: ExtensionColorTheme?
     let sidebarPresented: Bool
 
     init(store: BrowserStore) {
@@ -22,6 +23,7 @@ import UniformTypeIdentifiers
         tint = profile.tint
         privateMode = profile.privateMode
         personalization = profile.personalization ?? Personalization()
+        colorTheme = profile.extensionColorTheme
         sidebarPresented = store.sidebarPresented
     }
 }
@@ -58,7 +60,7 @@ struct StartPage: View, Equatable {
     private var widgets: [String] { preferences.visibleStartWidgets }
     private var tint: Color {
         snapshot.privateMode && preferences.privateUsesProfileColor != true
-            ? PrivateChrome.accent : preferences.customTint?.color ?? profileTint(snapshot.tint)
+            ? PrivateChrome.accent : snapshot.colorTheme?.frame.color ?? preferences.customTint?.color ?? profileTint(snapshot.tint)
     }
     private func update(_ edit: (inout Personalization) -> Void) {
         store.updateCurrent { profile in
@@ -562,6 +564,9 @@ private struct StartPageBackground: View {
         }
         let preferences = profile.personalization ?? Personalization()
         let usesTint = preferences.background == "profile"
+        if usesTint, let theme = profile.extensionColorTheme {
+            return (theme.colors["ntp_background"] ?? theme.frame).color
+        }
         let tint = usesTint ? profileTint(profile) : Color(nsColor: .windowBackgroundColor)
         let strength = usesTint ? ProfileColor.surfaceOpacity(preferences.tintStrength) : (scheme == .dark ? 0.32 : 1)
         return tint.opacity(strength * (top ? (usesTint ? 0.94 : 0.65) : 1))

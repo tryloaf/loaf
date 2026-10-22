@@ -3,6 +3,26 @@ import Combine
 import SwiftUI
 import WebKit
 
+struct ExtensionErrorDiagnostics {
+    private var observed: Set<String> = []
+
+    mutating func additions(_ errors: [NSError]) -> [String] {
+        errors.compactMap { error in
+            let diagnostic =
+                "WebKit error: \(String(error.localizedDescription.prefix(512))) [\(error.domain):\(error.code)]"
+            guard observed.count < 128, observed.insert(diagnostic).inserted else { return nil }
+            return diagnostic
+        }
+    }
+
+    static func merging(_ additions: [String], into known: [String]) -> [String] {
+        guard !additions.isEmpty else { return known }
+        let recent = Array((known.filter { $0.hasPrefix("WebKit error: ") }
+            .filter { !additions.contains($0) } + additions).suffix(5))
+        return known.filter { !$0.hasPrefix("WebKit error: ") } + recent
+    }
+}
+
 @MainActor final class ExtensionManager: NSObject, ObservableObject, WKWebExtensionControllerDelegate {
     let profileID: UUID
     weak var application: BrowserApplication?
@@ -20,8 +40,11 @@ import WebKit
     private var popupRecordID: UUID?
     private var loadRevisions: [UUID: UUID] = [:]
     private var userScripts: [UUID: ExtensionUserScripts] = [:]
+    private var contextDiagnostics: [UUID: ExtensionErrorDiagnostics] = [:]
+    private var offscreenDocuments: [UUID: ExtensionOffscreenDocument] = [:]
 
     private func enabledStatus(for record: InstalledExtension) -> String {
+        if record.isTheme == true { return "installed · color theme" }
         if (record.diagnostics ?? []).contains(where: {
             $0.hasPrefix("Background error: ") || $0.hasPrefix("WebKit error: ")
         }) { return "installed · runtime errors · see diagnostics" }
@@ -181,19 +204,25 @@ import WebKit
             !profile.privateMode
         else { throw PackageError(reason: "Extensions cannot be installed in a private profile.") }
         try validateFolder(source)
-        let ext = try await WKWebExtension(resourceBaseURL: source)
+        let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: source.appendingPathComponent("manifest.json"))) as? [String: Any] ?? [:]
+        let theme = try (manifest["theme"] as? [String: Any]).map(ExtensionColorTheme.parse)
+        let ext: WKWebExtension? = theme == nil ? try await WKWebExtension(resourceBaseURL: source) : nil
         guard !isDisposed else { throw CancellationError() }
-        let raw = ext.manifest
+        let raw = ext?.manifest ?? manifest
+        let name = ext?.displayName ?? raw["name"] as? String ?? "extension"
+        guard let version = raw["version"] as? String, !version.isEmpty, !name.isEmpty else {
+            throw PackageError(reason: "The extension manifest needs a name and version.")
+        }
         let rawPermissions = raw["permissions"] as? [String] ?? []
         let permissions = Array(
             Set(
-                ext.requestedPermissions.map(\.rawValue)
+                (ext?.requestedPermissions.map(\.rawValue) ?? [])
                     + rawPermissions.filter { !$0.contains("://") && $0 != "<all_urls>" })
         ).sorted()
-        let hosts = ext.requestedPermissionMatchPatterns.map(\.string).sorted()
+        let hosts = ext?.requestedPermissionMatchPatterns.map(\.string).sorted() ?? []
         if confirm {
             let alert = NSAlert()
-            alert.messageText = "install \(ext.displayName ?? "extension") in \(profile.name)?"
+            alert.messageText = "install \(name) in \(profile.name)?"
             alert.informativeText =
                 "requested permissions: "
                 + (permissions.isEmpty
@@ -201,6 +230,9 @@ import WebKit
                 + "\n\nwebsite access:\n"
                 + (hosts.isEmpty ? "none" : hosts.map(ExtensionPermissionText.website).joined(separator: "\n"))
                 + "\n\nCompatibility is checked after installation. Extensions cannot launch other apps."
+            if theme != nil {
+                alert.informativeText = "applies this theme's solid colors to loaf in this profile. theme images and image tints are not supported. website colors are controlled by each website or its extensions."
+            }
             alert.addButton(withTitle: "install")
             alert.addButton(withTitle: "cancel")
             guard let owner = owner ?? store, let coordinator = application.coordinator else {
@@ -218,9 +250,9 @@ import WebKit
             throw PackageError(reason: "This extension is already installed in this profile.")
         }
         var record = InstalledExtension(
-            name: ext.displayName ?? "extension", enabled: false, permissions: permissions, hosts: hosts,
-            storeID: storeID, version: raw["version"] as? String, diagnostics: ext.errors.map(\.localizedDescription),
-            status: "installed · compatibility pending")
+            name: name, enabled: false, permissions: permissions, hosts: hosts,
+            storeID: storeID, version: version, diagnostics: ext?.errors.map(\.localizedDescription) ?? [],
+            status: "installed · compatibility pending", colorTheme: theme, isTheme: theme != nil)
         let root = folder.appendingPathComponent(record.id.uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         do {
@@ -232,10 +264,14 @@ import WebKit
             throw error
         }
         do {
-            record.diagnostics =
-                (record.diagnostics ?? [])
-                + (try ExtensionCompatibility.prepare(
-                    root.appendingPathComponent("runtime"), extensionID: record.storeID))
+            if theme == nil {
+                record.diagnostics =
+                    (record.diagnostics ?? [])
+                    + (try ExtensionCompatibility.prepare(
+                        root.appendingPathComponent("runtime"), extensionID: record.storeID))
+            } else {
+                record.diagnostics = ["Solid interface colors are supported. Theme images and image tints are not applied; websites keep their own colors."]
+            }
             if record.storeID == ExtensionShazam.identifier {
                 record.diagnostics?.removeAll(where: ExtensionShazam.resolvedDiagnostic)
             }
@@ -247,7 +283,10 @@ import WebKit
             record.status = "installed · incompatible · disabled"
         }
         guard !isDisposed else { throw CancellationError() }
-        application.updateProfile(profileID) { $0.extensions.append(record) }
+        application.updateProfile(profileID) {
+            $0.extensions.append(record)
+            if record.enabled && record.colorTheme != nil { $0.activeThemeID = record.id }
+        }
         if let context = contexts[record.id] { recordContextDiagnostics(context) }
         application.persistSoon()
     }
@@ -296,6 +335,20 @@ import WebKit
 
     private func load(_ record: InstalledExtension) async throws {
         guard !isDisposed else { throw CancellationError() }
+        if record.isTheme == true { return }
+        let originalManifest = folder.appendingPathComponent("\(record.id)/original/manifest.json")
+        if let data = try? Data(contentsOf: originalManifest),
+            let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let theme = manifest["theme"] as? [String: Any] {
+            let parsed = try ExtensionColorTheme.parse(theme)
+            application?.updateProfile(profileID) { profile in
+                guard let index = profile.extensions.firstIndex(where: { $0.id == record.id }) else { return }
+                profile.extensions[index].colorTheme = parsed
+                profile.extensions[index].isTheme = true
+                if profile.activeThemeID == nil { profile.activeThemeID = record.id }
+            }
+            return
+        }
         guard contexts[record.id] == nil else { return }
         let revision = loadRevisions[record.id]
         let root = folder.appendingPathComponent(record.id.uuidString)
@@ -470,6 +523,7 @@ import WebKit
             throw error
         }
         contexts[record.id] = context
+        contextDiagnostics[record.id] = ExtensionErrorDiagnostics()
         if let scripts = userScripts[record.id] {
             for tab in application?.runtimes[profileID]?.tabs.values ?? Dictionary<UUID, BrowserTab>().values {
                 if let view = tab.existingWebView { scripts.attach(view) }
@@ -478,8 +532,10 @@ import WebKit
             if ext.manifest["background"] != nil {
                 do { try await context.loadBackgroundContent() } catch {
                     if contexts[record.id] === context {
+                        offscreenDocuments.removeValue(forKey: record.id)?.stop()
                         userScripts.removeValue(forKey: record.id)?.stop()
                         contexts.removeValue(forKey: record.id)
+                        contextDiagnostics.removeValue(forKey: record.id)
                         try? controller.unload(context)
                     }
                     throw error
@@ -506,18 +562,17 @@ import WebKit
             })
         else { return }
         let known = record.diagnostics ?? []
-        var additions: [String] = []
-        let remaining = max(0, 5 - known.filter { $0.hasPrefix("WebKit error: ") }.count)
-        for error in context.errors where additions.count < remaining {
-            let error = error as NSError
-            let diagnostic =
-                "WebKit error: \(String(error.localizedDescription.prefix(512))) [\(error.domain):\(error.code)]"
-            if !known.contains(diagnostic), !additions.contains(diagnostic) { additions.append(diagnostic) }
-        }
+        let additions = contextDiagnostics[id, default: ExtensionErrorDiagnostics()].additions(
+            context.errors.map { $0 as NSError })
         guard !additions.isEmpty else { return }
+        #if DEBUG
+            for diagnostic in additions { print("[extension: \(record.name)] \(diagnostic)") }
+        #endif
+        let diagnostics = ExtensionErrorDiagnostics.merging(additions, into: known)
+        guard diagnostics != known else { return }
         application.updateProfile(profileID) { profile in
             guard let index = profile.extensions.firstIndex(where: { $0.id == id }) else { return }
-            profile.extensions[index].diagnostics = known + additions
+            profile.extensions[index].diagnostics = diagnostics
             if profile.extensions[index].enabled {
                 profile.extensions[index].status = "installed · runtime errors · see diagnostics"
             }
@@ -536,8 +591,12 @@ import WebKit
         controller.delegate = nil
         for scripts in userScripts.values { scripts.stop() }
         userScripts.removeAll()
+        let documents = offscreenDocuments.values
+        offscreenDocuments.removeAll()
+        for document in documents { document.stop() }
         for context in contexts.values { try? controller.unload(context) }
         contexts.removeAll()
+        contextDiagnostics.removeAll()
     }
 
     func setEnabled(_ record: InstalledExtension, _ enabled: Bool) async {
@@ -553,9 +612,11 @@ import WebKit
             if enabled {
                 try await load(record)
             } else if let context = contexts[record.id] {
+                offscreenDocuments.removeValue(forKey: record.id)?.stop()
                 try controller.unload(context)
                 userScripts.removeValue(forKey: record.id)?.stop()
                 contexts.removeValue(forKey: record.id)
+                contextDiagnostics.removeValue(forKey: record.id)
             }
             guard loadRevisions[record.id] == revision else { return }
             store.updateProfile(profileID) { p in
@@ -563,6 +624,8 @@ import WebKit
                     p.extensions[index].enabled = enabled
                     p.extensions[index].status =
                         enabled ? enabledStatus(for: p.extensions[index]) : "installed · disabled"
+                    if enabled && p.extensions[index].colorTheme != nil { p.activeThemeID = record.id }
+                    if !enabled && p.activeThemeID == record.id { p.activeThemeID = nil }
                 }
             }
             store.persistSoon()
@@ -590,14 +653,19 @@ import WebKit
         loadRevisions[record.id] = UUID()
         do {
             if let context = contexts[record.id] {
+                offscreenDocuments.removeValue(forKey: record.id)?.stop()
                 try controller.unload(context)
                 userScripts.removeValue(forKey: record.id)?.stop()
                 contexts.removeValue(forKey: record.id)
+                contextDiagnostics.removeValue(forKey: record.id)
             }
 
             try FileManager.default.trashItem(
                 at: folder.appendingPathComponent(record.id.uuidString), resultingItemURL: nil)
-            store.updateProfile(profileID) { $0.extensions.removeAll { $0.id == record.id } }
+            store.updateProfile(profileID) {
+                $0.extensions.removeAll { $0.id == record.id }
+                if $0.activeThemeID == record.id { $0.activeThemeID = nil }
+            }
             store.persistSoon()
         } catch { store.error = error.localizedDescription }
     }
@@ -769,6 +837,53 @@ import WebKit
             return
         }
         switch operation {
+        case "offscreen.hasDocument", "offscreen.createDocument", "offscreen.closeDocument":
+            guard record.permissions.contains("offscreen") else {
+                deny("offscreen permission was not granted")
+                return
+            }
+            if operation == "offscreen.hasDocument" {
+                replyHandler(["value": offscreenDocuments[record.id] != nil], nil)
+                return
+            }
+            if operation == "offscreen.closeDocument" {
+                guard let document = offscreenDocuments.removeValue(forKey: record.id) else {
+                    deny("The extension has no hidden document to close.")
+                    return
+                }
+                document.stop()
+                replyHandler(["value": NSNull()], nil)
+                return
+            }
+            guard offscreenDocuments[record.id] == nil else {
+                deny("The extension already has a hidden document.")
+                return
+            }
+            guard let args = message["args"] as? [String: Any],
+                let rawURL = args["url"] as? String, rawURL.utf8.count <= 4096,
+                let url = URL(string: rawURL), url.scheme == context.baseURL.scheme,
+                url.host == context.baseURL.host, url.user == nil, url.password == nil,
+                let reasons = args["reasons"] as? [String], !reasons.isEmpty,
+                Set(reasons).isSubset(of: ["BLOBS", "DOM_PARSER"]),
+                let justification = args["justification"] as? String, !justification.isEmpty,
+                justification.utf8.count <= 4096,
+                let configuration = context.webViewConfiguration
+            else {
+                deny("Hidden documents require a local extension URL and a BLOBS or DOM_PARSER reason.")
+                return
+            }
+            let document = ExtensionOffscreenDocument(url: url, configuration: configuration)
+            offscreenDocuments[record.id] = document
+            document.didTerminate = { [weak self, weak document] in
+                guard let self, self.offscreenDocuments[record.id] === document else { return }
+                self.offscreenDocuments.removeValue(forKey: record.id)?.stop()
+            }
+            document.load { [weak self, weak document] error in
+                if error != nil, let self, self.offscreenDocuments[record.id] === document {
+                    self.offscreenDocuments.removeValue(forKey: record.id)?.stop()
+                }
+                replyHandler(["value": NSNull()], error)
+            }
         case "runtime.reportError":
             guard let args = message["args"] as? [String: Any], let raw = args["message"] as? String,
                 !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -806,17 +921,40 @@ import WebKit
             #endif
             replyHandler(["value": ["os": "mac", "arch": architecture, "nacl_arch": architecture]], nil)
         case "theme.getCurrent":
+            let theme = store?.profileFor(profileID).extensionColorTheme
+            replyHandler(
+                [
+                    "value": [
+                        "colors": theme?.apiColors ?? ExtensionTheme.colors,
+                        "properties": ["color_scheme": (theme?.scheme ?? LoafAppearance.shared.systemScheme) == .dark ? "dark" : "light"],
+                    ]
+                ], nil)
+        case "theme.update", "theme.reset":
             guard record.permissions.contains("theme") else {
                 deny("theme permission was not granted")
                 return
             }
-            replyHandler(
-                [
-                    "value": [
-                        "colors": ExtensionTheme.colors,
-                        "properties": ["color_scheme": LoafAppearance.shared.systemScheme == .dark ? "dark" : "light"],
-                    ]
-                ], nil)
+            let args = message["args"] as? [String: Any] ?? [:]
+            guard args["windowId"] == nil else {
+                deny("loaf applies extension themes per profile; window-specific themes are unsupported")
+                return
+            }
+            do {
+                let theme: ExtensionColorTheme?
+                if operation == "theme.update" {
+                    guard let details = args["theme"] as? [String: Any] else {
+                        throw PackageError(reason: "A theme with interface colors is required.")
+                    }
+                    theme = try ExtensionColorTheme.parse(details)
+                } else { theme = nil }
+                application?.updateProfile(profileID) { profile in
+                    guard let index = profile.extensions.firstIndex(where: { $0.id == record.id }) else { return }
+                    profile.extensions[index].colorTheme = theme
+                    if theme != nil { profile.activeThemeID = record.id }
+                    else if profile.activeThemeID == record.id { profile.activeThemeID = nil }
+                }
+                replyHandler(["value": true], nil)
+            } catch { deny(error.localizedDescription) }
         case "fontSettings.getFontList":
             guard record.permissions.contains("fontSettings") else {
                 deny("fontSettings permission was not granted")

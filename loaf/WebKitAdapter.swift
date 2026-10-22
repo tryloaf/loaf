@@ -108,23 +108,44 @@ struct PointerCapturePosition {
         typealias TryClose = @convention(c) (AnyObject, Selector) -> Bool
         return unsafeBitCast(implementation, to: TryClose.self)(view, selector)
     }
-    static func enableWebGPU(_ preferences: WKPreferences) {
-
-
-        guard #available(macOS 26, *), WKPreferences.responds(to: NSSelectorFromString("_features")),
+    private static let renderingFeatures: [String: (feature: NSObject, defaultEnabled: Bool)] = {
+        let keys: Set<String> = ["WebGPUEnabled", "WebGPUHDREnabled", "PreferPageRenderingUpdatesNear60FPSEnabled"]
+        let getter = NSSelectorFromString("_isEnabledForFeature:")
+        let preferences = WKPreferences()
+        guard WKPreferences.responds(to: NSSelectorFromString("_features")), preferences.responds(to: getter),
             let features = WKPreferences.perform(NSSelectorFromString("_features"))?.takeUnretainedValue() as? [NSObject]
-        else { return }
-        let selector = NSSelectorFromString("_setEnabled:forFeature:")
-        guard preferences.responds(to: selector), let implementation = preferences.method(for: selector) else { return }
-        typealias Setter = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
-        let set = unsafeBitCast(implementation, to: Setter.self)
+        else { return [:] }
+        typealias Getter = @convention(c) (AnyObject, Selector, AnyObject) -> Bool
+        let read = unsafeBitCast(preferences.method(for: getter), to: Getter.self)
+        var result: [String: (feature: NSObject, defaultEnabled: Bool)] = [:]
         for feature in features {
             guard feature.responds(to: NSSelectorFromString("key")),
-                let key = feature.value(forKey: "key") as? String,
-                ["WebGPUEnabled", "WebGPUHDREnabled"].contains(key)
-            else { continue }
-            set(preferences, selector, true, feature)
+                let key = feature.value(forKey: "key") as? String, keys.contains(key) else { continue }
+            result[key] = (feature, read(preferences, getter, feature))
         }
+        return result
+    }()
+    private static func setRenderingFeature(_ key: String, in preferences: WKPreferences, enabled: Bool) {
+        guard let capability = renderingFeatures[key] else { return }
+        let getter = NSSelectorFromString("_isEnabledForFeature:")
+        let setter = NSSelectorFromString("_setEnabled:forFeature:")
+        guard preferences.responds(to: getter), preferences.responds(to: setter) else { return }
+        typealias Getter = @convention(c) (AnyObject, Selector, AnyObject) -> Bool
+        let read = unsafeBitCast(preferences.method(for: getter), to: Getter.self)
+        guard read(preferences, getter, capability.feature) != enabled else { return }
+        typealias Setter = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
+        unsafeBitCast(preferences.method(for: setter), to: Setter.self)(preferences, setter, enabled, capability.feature)
+    }
+    static func enableWebGPU(_ preferences: WKPreferences) {
+        guard #available(macOS 26, *) else { return }
+        for key in ["WebGPUEnabled", "WebGPUHDREnabled"] {
+            setRenderingFeature(key, in: preferences, enabled: true)
+        }
+    }
+    static func setHighRefreshRendering(_ preferences: WKPreferences, enabled: Bool) {
+        let key = "PreferPageRenderingUpdatesNear60FPSEnabled"
+        guard let capability = renderingFeatures[key] else { return }
+        setRenderingFeature(key, in: preferences, enabled: enabled ? false : capability.defaultEnabled)
     }
     static func enablePictureInPicture(_ preferences: WKPreferences) {
         let selector = NSSelectorFromString("_setAllowsPictureInPictureMediaPlayback:")

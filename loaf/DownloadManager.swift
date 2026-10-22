@@ -3,6 +3,50 @@ import Combine
 import UniformTypeIdentifiers
 import WebKit
 
+nonisolated struct DownloadAvailabilityRequest: Equatable, Sendable {
+    let destination: URL
+    let bookmark: Data?
+    let folderBookmark: Bool
+}
+
+nonisolated struct DownloadAvailabilityResult: Sendable {
+    let file: URL
+    let missing: Bool
+    let bytes: Int64?
+}
+
+actor DownloadAvailabilityWorker {
+    static let shared = DownloadAvailabilityWorker()
+    func check(_ request: DownloadAvailabilityRequest) -> DownloadAvailabilityResult? {
+        var stale = false
+        let scoped = request.bookmark.flatMap {
+            try? URL(resolvingBookmarkData: $0, options: [.withSecurityScope, .withoutUI, .withoutMounting],
+                relativeTo: nil, bookmarkDataIsStale: &stale)
+        }
+        let scope = scoped ?? request.destination
+        let access = scope.startAccessingSecurityScopedResource()
+        defer { if access { scope.stopAccessingSecurityScopedResource() } }
+        let file = request.folderBookmark
+            ? (scoped?.appendingPathComponent(request.destination.lastPathComponent) ?? request.destination) : scope
+        do {
+            let reachable = try file.checkResourceIsReachable()
+            var relationship: FileManager.URLRelationship = .other
+            if reachable {
+                try? FileManager.default.getRelationship(&relationship, of: .trashDirectory,
+                    in: .userDomainMask, toItemAt: file)
+            }
+            let missing = !reachable || relationship == .contains
+            let bytes = missing ? nil : (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
+            return .init(file: file, missing: missing, bytes: bytes)
+        } catch {
+            let error = error as NSError
+            guard error.domain == NSCocoaErrorDomain,
+                [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) else { return nil }
+            return .init(file: file, missing: true, bytes: nil)
+        }
+    }
+}
+
 struct DownloadRecord: Codable {
     var id: UUID
     var profileID: UUID
@@ -53,6 +97,7 @@ struct DownloadRecord: Codable {
     @Published private(set) var statistics = DownloadStatistics()
     private var transferClock = DownloadTransferClock()
     private var lastStatisticsSample: TimeInterval = 0
+    private var availabilityTask: Task<Void, Never>?
     var observation: NSKeyValueObservation?
     init(_ download: WKDownload, owner: BrowserWindowState, profileID: UUID) {
         id = UUID()
@@ -114,44 +159,19 @@ struct DownloadRecord: Codable {
         }
     }
     func refreshFileAvailability(refreshSize: Bool = false) {
-        guard finished, let destination else { return }
-        var stale = false
-        let scoped = bookmark.flatMap {
-            try? URL(
-                resolvingBookmarkData: $0, options: [.withSecurityScope, .withoutUI], relativeTo: nil,
-                bookmarkDataIsStale: &stale)
-        }
-        let scope = scoped ?? destination
-        let access = scope.startAccessingSecurityScopedResource()
-        defer { if access { scope.stopAccessingSecurityScopedResource() } }
-        let file =
-            folderBookmark ? (scoped?.appendingPathComponent(destination.lastPathComponent) ?? destination) : scope
-        do {
-            let reachable = try file.checkResourceIsReachable()
-            var relationship: FileManager.URLRelationship = .other
-            if reachable {
-                try? FileManager.default.getRelationship(
-                    &relationship, of: .trashDirectory, in: .userDomainMask, toItemAt: file)
-            }
-            let inTrash = relationship == .contains
-            let missing = !reachable || inTrash
-            if fileMissing != missing { fileMissing = missing }
-            if !missing, self.destination != file { self.destination = file }
-            if !missing, refreshSize || statistics.totalBytes == nil,
-                let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize
-            {
-                let bytes = Int64(size)
-                if statistics.totalBytes != bytes || statistics.receivedBytes != bytes {
-                    statistics.totalBytes = bytes
-                    statistics.receivedBytes = bytes
-                }
-            }
-        } catch {
-            let error = error as NSError
-            if error.domain == NSCocoaErrorDomain
-                && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code)
-            {
-                if !fileMissing { fileMissing = true }
+        guard finished, let destination, availabilityTask == nil else { return }
+        let request = DownloadAvailabilityRequest(destination: destination, bookmark: bookmark, folderBookmark: folderBookmark)
+        availabilityTask = Task { [weak self] in
+            let result = await DownloadAvailabilityWorker.shared.check(request)
+            guard let self else { return }
+            self.availabilityTask = nil
+            guard self.finished, self.destination == request.destination, self.bookmark == request.bookmark,
+                self.folderBookmark == request.folderBookmark, let result else { return }
+            if self.fileMissing != result.missing { self.fileMissing = result.missing }
+            if !result.missing, self.destination != result.file { self.destination = result.file }
+            if let bytes = result.bytes, self.statistics.totalBytes != bytes || self.statistics.receivedBytes != bytes {
+                self.statistics.totalBytes = bytes
+                self.statistics.receivedBytes = bytes
             }
         }
     }
@@ -185,6 +205,7 @@ struct DownloadRecord: Codable {
     private var dockTimer: Timer?
     private var cacheTimer: Timer?
     private var availabilityTimer: Timer?
+    private var activationObserver: NSObjectProtocol?
     var cacheRetentionDays: () -> Int = { 7 }
     var hasActiveDownloads: Bool { items.contains { $0.active } }
     private var file: URL?
@@ -252,16 +273,27 @@ struct DownloadRecord: Codable {
             MainActor.assumeIsolated { if let self { self.cleanupCache(olderThanDays: self.cacheRetentionDays()) } }
         }
         availabilityTimer?.invalidate()
-        availabilityTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        availabilityTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard NSApp.isActive else { return }
                 self?.refreshFileAvailability()
             }
         }
+        if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
+        activationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshFileAvailability() }
+            }
         refreshFileAvailability()
     }
     func refreshFileAvailability() {
         for item in items where item.finished { item.refreshFileAvailability() }
+    }
+    deinit {
+        cacheTimer?.invalidate()
+        availabilityTimer?.invalidate()
+        dockTimer?.invalidate()
+        if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
     }
     func persist() {
         updateDockProgress()

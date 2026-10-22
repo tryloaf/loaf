@@ -413,7 +413,7 @@ struct DownloadsView: View {
                     }
                 }.frame(maxWidth: 600).padding(28).frame(maxWidth: .infinity)
             }
-        }
+        }.onAppear { manager.refreshFileAvailability() }
     }
 }
 

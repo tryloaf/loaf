@@ -253,6 +253,8 @@ import WebKit
             }
         }
     }
+    private var sleepProbeAfter: UUID?
+
     private func startIdleTabSleeping() {
         sleepingTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -272,10 +274,18 @@ import WebKit
                         ? min(300, preferences.sleepInterval) : preferences.sleepInterval)
             }.sorted { $0.lastActivated < $1.lastActivated }
 
-        for tab in candidates.prefix(1) {
-            await tab.sleepIfIdle(
+        guard !candidates.isEmpty else { sleepProbeAfter = nil; return }
+        let start = sleepProbeAfter.flatMap { id in candidates.firstIndex { $0.id == id } }
+            .map { ($0 + 1) % candidates.count } ?? 0
+
+        for offset in 0..<min(8, candidates.count) {
+            guard !Task.isCancelled else { return }
+            let tab = candidates[(start + offset) % candidates.count]
+            sleepProbeAfter = tab.id
+            if await tab.sleepIfIdle(
                 at: now,
                 idleInterval: resources.saverEnabled ? min(300, preferences.sleepInterval) : preferences.sleepInterval)
+            { break }
         }
     }
     deinit { sleepingTask?.cancel() }

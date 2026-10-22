@@ -4,6 +4,10 @@ import LocalAuthentication
 import SwiftUI
 import WebKit
 
+@MainActor final class WonderbarEditingState: ObservableObject {
+    @Published var query = ""
+}
+
 @MainActor final class BrowserWindowState: ObservableObject {
     let id: UUID
     let feedback = BrowserFeedback()
@@ -71,7 +75,11 @@ import WebKit
     @Published var omnibarFocusID = UUID()
     @Published var omnibarVisible = false
     @Published var omnibarCreatesTab = false
-    @Published var omnibarQuery = ""
+    let omnibarEditing = WonderbarEditingState()
+    var omnibarQuery: String {
+        get { omnibarEditing.query }
+        set { if omnibarEditing.query != newValue { omnibarEditing.query = newValue } }
+    }
     var omnibarBufferedInput = false
     var omnibarOriginalURL: URL?
     var settingsVisible: Bool {

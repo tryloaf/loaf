@@ -37,13 +37,28 @@ import WebKit
                     });
                 });
             };
+            if (!api.offscreen && runtime.getManifest().permissions?.includes('offscreen') &&
+                (typeof document === 'undefined' || /^(?:webkit|moz|chrome|safari)-extension:$/.test(location.protocol))) {
+                api.offscreen = {
+                    Reason: {BLOBS:'BLOBS', DOM_PARSER:'DOM_PARSER'},
+                    hasDocument: () => invoke('offscreen.hasDocument', {}),
+                    createDocument: properties => invoke('offscreen.createDocument', {
+                        ...properties, url:runtime.getURL(properties.url)
+                    }),
+                    closeDocument: () => invoke('offscreen.closeDocument', {})
+                };
+            }
             if (!api.theme) {
                 const listeners = new Set();
                 api.theme = {
                     getCurrent: (windowId, callback) => invoke('theme.getCurrent', {}, typeof windowId === 'function' ? windowId : callback),
                     onUpdated: {addListener: fn => listeners.add(fn), removeListener: fn => listeners.delete(fn), hasListener: fn => listeners.has(fn)},
-                    update: (...args) => invoke('unsupported.theme.update', {}, typeof args.at(-1) === 'function' ? args.at(-1) : undefined),
-                    reset: (...args) => invoke('unsupported.theme.reset', {}, typeof args.at(-1) === 'function' ? args.at(-1) : undefined)
+                    update: (...args) => {
+                        const windowId = typeof args[0] === 'number' ? args.shift() : undefined;
+                        const theme = args.shift();
+                        return invoke('theme.update', {theme, windowId}, args[0]);
+                    },
+                    reset: (...args) => invoke('theme.reset', {windowId: typeof args[0] === 'number' ? args[0] : undefined}, typeof args.at(-1) === 'function' ? args.at(-1) : undefined)
                 };
                 if (typeof matchMedia === 'function') matchMedia('(prefers-color-scheme: dark)').addEventListener('change', async () => {
                     try { const theme = await api.theme.getCurrent(); for (const listener of listeners) listener({theme}); } catch (_) {}
@@ -172,7 +187,7 @@ import WebKit
     static let vimiumID = "dbepggeogbaibhgnhhndojpepiihcmeb"
     static let vimiumMarker = "_loaf_vimium_navigation_v1"
     static let tampermonkeyID = "dhdgffkkebhmkfjojejmpbldmpobfkfo"
-    static let tampermonkeyMarker = "_loaf_tampermonkey_startup_v3"
+    static let tampermonkeyMarker = "_loaf_tampermonkey_startup_v4"
 
 
     static let tampermonkeyRulesScript = ##"""
@@ -227,9 +242,15 @@ import WebKit
         }
         let installationRules = "return t.push(i),t},rp=async e=>"
         let installationCategories = "4===e.priority&&o.push(e)"
+        let offscreenContexts = "await ft.getContexts({contextTypes:[\"OFFSCREEN_DOCUMENT\"]})"
+
+
+        let offscreenPolling = #"else s(new Error("no response"));if(i){await F(i);const e=Math.random().toString(36).substring(2);await t({action:"port",details:{id:e}})}"#
         guard source.components(separatedBy: installationRules).count == 2,
             source.components(separatedBy: installationCategories).count == 2,
-            source.contains("let KA,$A"), source.contains("id:KA++")
+            source.contains("let KA,$A"), source.contains("id:KA++"),
+            source.components(separatedBy: offscreenContexts).count == 2,
+            source.components(separatedBy: offscreenPolling).count == 2
         else {
             throw PackageError(reason: "This Tampermonkey package needs a new script URL adapter.")
         }
@@ -260,12 +281,15 @@ import WebKit
             .replacingOccurrences(of: installationCategories,
                 with: "(4===e.priority||5===e.priority)&&o.push(e)")
             .replacingOccurrences(of: "v.error(\"dNr:\",e)", with: "v.error(\"dNr: \"+(e?.message||String(e)))")
+            .replacingOccurrences(of: offscreenContexts, with: "(await C.offscreen.hasDocument()?[true]:[])")
+            .replacingOccurrences(of: offscreenPolling,
+                with: #"else{i=0;s(new Error("no response"))}if(i){await F(i);const e=Math.random().toString(36).substring(2);await t({action:"port",details:{id:e}}).catch(error=>{if(error?.message!=="no response")throw error})}"#)
         for (path, text) in adapted {
             try Data(text.utf8).write(to: runtime.appendingPathComponent(path), options: .atomic)
         }
         try Data("1".utf8).write(to: runtime.appendingPathComponent(tampermonkeyMarker), options: .atomic)
         return
-            "Tampermonkey's startup, userscript messaging and script-install URL rules use loaf's WebKit adapter."
+            "Tampermonkey's startup, userscript messaging, hidden document and script-install URL rules use loaf's WebKit adapter."
     }
     static func prepareVimium(_ runtime: URL, original: URL) throws -> String {
         let path = "background_scripts/main.js"

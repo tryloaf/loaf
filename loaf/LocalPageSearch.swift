@@ -3,6 +3,19 @@ import Foundation
 import NaturalLanguage
 
 nonisolated enum LocalPageSearch {
+    actor SemanticWorker {
+        private var embedding: NLEmbedding?
+        private var loaded = false
+        func query(_ text: String) -> Query {
+            guard !Task.isCancelled else { return Query(text) }
+            if !loaded { embedding = NLEmbedding.wordEmbedding(for: .english); loaded = true }
+            guard !Task.isCancelled else { return Query(text) }
+            return Query(text, embedding: embedding)
+        }
+    }
+    static func requiresSemanticExpansion(_ text: String) -> Bool {
+        words(text).contains { $0.count >= 4 }
+    }
     struct Text: Sendable {
         private let bytes: [UInt8]
         init(_ value: String) {

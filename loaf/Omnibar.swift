@@ -19,7 +19,7 @@ nonisolated enum OmnibarMetrics {
 }
 
 nonisolated enum SuggestionKind: Hashable, Sendable { case tab, history, favorite, site, search, page, command, closed }
-struct Suggestion: Identifiable {
+struct Suggestion: Identifiable, Equatable {
     let id: String
     let title: String
     var detail: String
@@ -288,7 +288,9 @@ nonisolated enum HistorySuggestionWork {
     @Published var remoteLoading = false
     @Published private(set) var localSearching = false
     @Published var keyboardSelection = false
-    private lazy var embedding = NLEmbedding.wordEmbedding(for: .english)
+    private let semanticWorker = LocalPageSearch.SemanticWorker()
+    private var semanticTask: Task<Void, Never>?
+    private var semanticQuery: (text: String, query: LocalPageSearch.Query)?
     private var task: Task<Void, Never>?
     private var generation = UUID()
     private var previousQuery = ""
@@ -440,7 +442,7 @@ nonisolated enum HistorySuggestionWork {
             explicitSelection = true
         }
     }
-    func update(_ query: String, store: BrowserStore) {
+    func update(_ query: String, store: BrowserStore, semanticRefresh: Bool = false) {
         currentStore = store
         if !store.profile.privateMode { loadLearning(from: store) }
         if query != previousQuery || profileID != store.selectedProfileID {
@@ -451,19 +453,22 @@ nonisolated enum HistorySuggestionWork {
             keyboardSelection = false
         }
         task?.cancel()
-        remoteLoading = false
-        localSearching = false
+        semanticTask?.cancel()
+        if remoteLoading { remoteLoading = false }
+        if localSearching { localSearching = false }
         let token = UUID()
         generation = token
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let input = WonderbarInput(query)
         if input.isLocal {
-            updateLocal(input, store: store, token: token)
+            if case .scoped(_, let text) = input { prepareSemanticQuery(text, input: query, store: store, token: token) }
+            updateLocal(input, store: store, token: token, semanticRefresh: semanticRefresh)
             return
         }
         let domainPrefix = BrowserAddress.domainCompletionPrefix(text)
         let needle = domainPrefix ?? text.lowercased()
-        let localQuery = LocalPageSearch.Query(needle, embedding: domainPrefix == nil ? embedding : nil)
+        let localQuery = preparedQuery(needle)
+        if domainPrefix == nil { prepareSemanticQuery(needle, input: query, store: store, token: token) }
         prepareHistory(for: store)
         func preparedScore(_ title: String, _ address: String, _ host: String) -> Double? {
             if needle.isEmpty { return 0 }
@@ -699,7 +704,7 @@ nonisolated enum HistorySuggestionWork {
                 [($0, $0.kind == .site ? 200.0 : 70.0)]
             } ?? [])
         let baseResults = ranked(baseLocal, query: text, domainPrefix: domainPrefix)
-        publish(baseResults)
+        publish(baseResults, remoteUpdate: semanticRefresh)
 
         let historyRows = preparedHistory
         let historyAddressVisits = addressVisits
@@ -836,7 +841,26 @@ nonisolated enum HistorySuggestionWork {
             titleSearch: LocalPageSearch.Text(title), addressSearch: LocalPageSearch.Text(address),
             hostSearch: LocalPageSearch.Text(host), document: LocalPageSearch.Document(title: title, address: address))
     }
-    private func updateLocal(_ input: WonderbarInput, store: BrowserStore, token: UUID) {
+    private func preparedQuery(_ text: String) -> LocalPageSearch.Query {
+        if let semanticQuery, semanticQuery.text == text { return semanticQuery.query }
+        return LocalPageSearch.Query(text)
+    }
+    private func prepareSemanticQuery(_ text: String, input: String, store: BrowserStore, token: UUID) {
+        guard semanticQuery?.text != text, text.count <= 200,
+            LocalPageSearch.requiresSemanticExpansion(text) else { return }
+        let worker = semanticWorker
+        let profile = store.selectedProfileID
+        semanticTask = Task { [weak self, weak store] in
+            let query = await worker.query(text)
+            guard !Task.isCancelled, let self, let store, self.generation == token,
+                store.selectedProfileID == profile, self.previousQuery == input else { return }
+            self.semanticQuery = (text, query)
+            guard query.terms != LocalPageSearch.Query(text).terms else { return }
+            self.update(input, store: store, semanticRefresh: true)
+        }
+    }
+    private func updateLocal(_ input: WonderbarInput, store: BrowserStore, token: UUID, semanticRefresh: Bool) {
+        func publishLocal(_ values: [Suggestion]) { publish(values, remoteUpdate: semanticRefresh) }
         func best(_ values: [(Suggestion, Double)]) -> [Suggestion] {
             values.enumerated().sorted {
                 $0.element.1 == $1.element.1 ? $0.offset < $1.offset : $0.element.1 > $1.element.1
@@ -845,13 +869,13 @@ nonisolated enum HistorySuggestionWork {
         switch input {
         case .normal: return
         case .commands(let query):
-            publish(
+            publishLocal(
                 best(
                     WonderbarCommands.suggestions(store: store).compactMap { value in
                         WonderbarCommands.score(value, query: query).map { (value, $0) }
                     }))
         case .scopes(let prefix):
-            publish(
+            publishLocal(
                 WonderbarScope.allCases.filter { $0.rawValue.hasPrefix(prefix) }.map { scope in
                     let command = WonderbarCommand.scope(scope)
                     return Suggestion(
@@ -865,10 +889,10 @@ nonisolated enum HistorySuggestionWork {
             }
             let rows = preparedHistory
             let counts = addressVisits
-            let query = LocalPageSearch.Query(text, embedding: embedding)
+            let query = preparedQuery(text)
             let profileID = store.selectedProfileID
             localSearching = true
-            publish([])
+            if !semanticRefresh { publish([]) }
             task = Task { [weak self, weak store] in
                 let work = Task.detached(priority: .userInitiated) {
                     HistorySuggestionWork.distinctMatches(rows: rows, addressVisits: counts, query: query, now: Date())
@@ -887,14 +911,14 @@ nonisolated enum HistorySuggestionWork {
                         Suggestion(
                             id: "history-" + match.visit.address, title: match.visit.title,
                             detail: match.label, icon: .history, destination: match.visit.address, kind: .history)
-                    })
+                    }, remoteUpdate: semanticRefresh)
             }
         case .scoped(.bookmarks, let text) where store.profile.favorites.count > 128:
             let favorites = store.profile.favorites
-            let query = LocalPageSearch.Query(text, embedding: embedding)
+            let query = preparedQuery(text)
             let profileID = store.selectedProfileID
             localSearching = true
-            publish([])
+            if !semanticRefresh { publish([]) }
             task = Task { [weak self, weak store] in
                 let work = Task.detached(priority: .userInitiated) {
                     BookmarkScopeWork.matches(favorites, query: query)
@@ -916,10 +940,10 @@ nonisolated enum HistorySuggestionWork {
                             detail: favorite.split == nil ? "open bookmark" : "open saved split view", icon: .favorite,
                             destination: favorite.address, kind: .favorite,
                             savedSplitID: favorite.split == nil ? nil : favorite.id)
-                    })
+                    }, remoteUpdate: semanticRefresh)
             }
         case .scoped(let scope, let text):
-            let query = LocalPageSearch.Query(text, embedding: embedding)
+            let query = preparedQuery(text)
             func score(_ title: String, _ address: String) -> Double? {
                 LocalPageSearch.Document(title: title, address: address).score(query)
             }
@@ -948,9 +972,9 @@ nonisolated enum HistorySuggestionWork {
                 preparedOpenTabs = next
                 openTabProfileID = profileID
                 openTabProfileIsPrivate = store.profile.privateMode
-                publish(best(values))
+                publishLocal(best(values))
             case .bookmarks:
-                publish(
+                publishLocal(
                     best(
                         store.profile.favorites.compactMap { favorite in
                             guard let score = score(favorite.title, favorite.searchAddress) else { return nil }
@@ -964,7 +988,7 @@ nonisolated enum HistorySuggestionWork {
                             )
                         }))
             case .closed:
-                publish(
+                publishLocal(
                     best(
                         store.recentlyClosedTabs.compactMap { closed in
                             let saved = closed.saved
@@ -1215,7 +1239,8 @@ nonisolated enum HistorySuggestionWork {
 
         if remoteUpdate && keyboardSelection && values.contains(where: { $0.id == selectedID }) {
             let surviving = suggestions.compactMap { previous in values.first { $0.id == previous.id } }
-            suggestions = surviving + values.filter { next in !surviving.contains { $0.id == next.id } }
+            let next = surviving + values.filter { next in !surviving.contains { $0.id == next.id } }
+            if suggestions != next { suggestions = next }
             publishedQuery = previousQuery
             return
         }
@@ -1224,9 +1249,10 @@ nonisolated enum HistorySuggestionWork {
             explicitSelection = false
         }
         let old = selectedID
-        suggestions = values
+        if suggestions != values { suggestions = values }
         publishedQuery = previousQuery
-        selectedID = explicitSelection && values.contains { $0.id == old } ? old : values.first?.id
+        let next = explicitSelection && values.contains { $0.id == old } ? old : values.first?.id
+        if selectedID != next { selectedID = next }
     }
     func inline(for prefix: String) -> String? {
         guard !WonderbarInput(prefix).isLocal, prefix == publishedQuery, !prefix.isEmpty,
@@ -1300,6 +1326,9 @@ nonisolated enum HistorySuggestionWork {
     }
     func cancel() {
         currentStore = nil
+        semanticTask?.cancel()
+        semanticTask = nil
+        semanticQuery = nil
         task?.cancel()
         task = nil
         generation = UUID()
@@ -1366,6 +1395,23 @@ private struct OmnibarPanelHeight: AnimatableModifier {
     }
 }
 
+private struct OmnibarBottomFade: ViewModifier {
+    var height: CGFloat
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        content.mask {
+            VStack(spacing: 0) {
+                Rectangle()
+                if !reduceTransparency {
+                    LinearGradient(colors: [.white, .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: height)
+                }
+            }
+        }
+    }
+}
+
 struct OmnibarView: View {
     private enum ModifiedAction {
         case alternateSearch, newTab, backgroundTab, copyAddress
@@ -1374,6 +1420,7 @@ struct OmnibarView: View {
     private static let actionModifiers: NSEvent.ModifierFlags = [.command, .option, .shift, .control]
 
     @ObservedObject var store: BrowserStore
+    @ObservedObject private var editing: WonderbarEditingState
     @StateObject private var engine = SuggestionEngine()
     @State private var hoveredID: String?
     @State private var pointerMovedSinceTyping = false
@@ -1386,6 +1433,7 @@ struct OmnibarView: View {
     var width: CGFloat = 520
     init(store: BrowserStore, suggestionHeight: CGFloat = 320, width: CGFloat = 520) {
         self.store = store
+        _editing = ObservedObject(wrappedValue: store.omnibarEditing)
         self.suggestionHeight = suggestionHeight
         self.width = width
         _engine = StateObject(wrappedValue: store.suggestionEngine)
@@ -1413,7 +1461,7 @@ struct OmnibarView: View {
                     }
                 }.frame(width: 20, height: 20)
                 OmnibarTextField(
-                    windowID: store.id, text: $store.omnibarQuery,
+                    windowID: store.id, text: $editing.query,
                     submit: { commit(focusID: focusID, profileID: profileID) },
                     alternateSubmit: { modifiers in
                         submitWithModifiers(modifiers, focusID: focusID, profileID: profileID)
@@ -1517,6 +1565,7 @@ struct OmnibarView: View {
                 }.padding(8).frame(
                     height: rowsHeight, alignment: .top
                 ).clipped()
+                    .modifier(OmnibarBottomFade(height: 12))
                     .allowsHitTesting(current)
                     .transition(.opacity)
             }
@@ -1555,6 +1604,7 @@ struct OmnibarView: View {
                 ).allowsHitTesting(false)
             }
             .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.08)))
+            .modifier(OmnibarBottomFade(height: 10))
             .shadow(color: .black.opacity(0.14), radius: 20, y: 8)
             .onAppear {
                 pointerMovedSinceTyping = false

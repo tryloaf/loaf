@@ -7,6 +7,7 @@ nonisolated struct SessionWrite: Sendable {
 
 nonisolated final class SessionWriter: @unchecked Sendable {
     private let lock = NSLock()
+    private let commitLock = NSLock()
     private var revision = 0
     func reserve() -> Int {
         lock.lock()
@@ -20,9 +21,9 @@ nonisolated final class SessionWriter: @unchecked Sendable {
         return candidate == revision
     }
     @discardableResult func commit(_ data: Data, to file: URL, revision candidate: Int) throws -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard candidate == revision else { return false }
+        commitLock.lock()
+        defer { commitLock.unlock() }
+        guard isCurrent(candidate) else { return false }
         try data.write(to: file, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
         return true

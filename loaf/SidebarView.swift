@@ -224,11 +224,9 @@ struct SidebarView: View {
     }
     private func previewScheme(_ profile: Profile) -> ColorScheme {
         let base = LoafAppearance.shared.colorScheme(for: appearance, privateMode: profile.privateMode)
-        return profile.privateMode
-            ? .dark
-            : ProfileColor.surfaceScheme(
+        return profile.interfaceScheme(fallback: ProfileColor.surfaceScheme(
                 profileTint(profile),
-                strength: profile.personalization?.tintStrength ?? 0.06, dark: base == .dark)
+                strength: profile.personalization?.tintStrength ?? 0.06, dark: base == .dark))
     }
     private var address: some View {
         AddressFeedback(feedback: store.feedback, activate: { store.openOmnibar() }) {

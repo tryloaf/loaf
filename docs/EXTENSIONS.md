@@ -8,6 +8,10 @@ Safari extensions purchased in the App Store do not load automatically in loaf. 
 
 Extension packages can be up to 256 MB, with at most 1 GB extracted across 20,000 entries. These limits apply to downloads, local CRX packages, and unpacked folders. CRX3 developer signatures and Chrome Web Store publisher proofs remain required; archive path, link, duplicate, checksum, and streamed byte checks still apply.
 
+Chrome color themes apply their solid frame, toolbar, and new-tab colors to the current profile. Installing or enabling another theme replaces the active theme. Disabling or removing it restores the profile's own colors. Private windows keep their private appearance. Theme images and image tints are unsupported; a theme without supported interface colors reports that limitation instead of installing silently.
+
+The compatibility bridge supports profile-wide `theme.getCurrent`, `theme.update`, and `theme.reset` with RGB arrays or hex colors. Window-specific updates return an error. Browser themes do not recolor websites. Page color, brightness, and saturation adjustments need a content extension such as Dark Reader; reload existing pages after enabling it.
+
 Startup load failures preserve the enabled setting and retry on the next launch. Installations previously disabled by an automatic load failure also retry; extensions explicitly disabled in settings remain disabled. If the runtime folder or its manifest is missing, loaf rebuilds the runtime from its retained original without changing approved permissions, the original package, or manager registrations. Errors remain visible when recovery is unavailable.
 
 The compatibility layer implements the Manifest V3 `userScripts` registration API used by Tampermonkey: `register`, `update`, `unregister`, `getScripts`, `configureWorld`, `getWorldConfigurations`, and `resetWorldConfiguration`.

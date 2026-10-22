@@ -159,6 +159,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     var visibleWebView: WKWebView? { readerDocument != nil ? readerWebView : existingWebView }
     @Published var media: [MediaSource] = []
     private var mediaFramesSeen: [String: Date] = [:]
+    private var mediaExpiryTimer: Timer?
     @Published var dismissedMedia = Set<String>()
     var navigationID = UUID()
     var pointerCapturePosition = PointerCapturePosition()
@@ -222,6 +223,29 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         }
     }
 
+    private func scheduleMediaExpiry() {
+        guard !media.isEmpty else {
+            mediaExpiryTimer?.invalidate()
+            mediaExpiryTimer = nil
+            return
+        }
+        guard mediaExpiryTimer == nil else { return }
+        let oldest = media.compactMap { mediaFramesSeen[$0.frameID] }.min() ?? Date()
+        let interval = max(0.1, 8.1 - Date().timeIntervalSince(oldest))
+        mediaExpiryTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.mediaExpiryTimer = nil
+                let current = Date()
+                let remaining = self.media.filter { current.timeIntervalSince(self.mediaFramesSeen[$0.frameID] ?? $0.updated) < 8 }
+                if remaining.count != self.media.count { self.media = remaining }
+                self.mediaFramesSeen = self.mediaFramesSeen.filter { current.timeIntervalSince($0.value) < 8 }
+                self.scheduleMediaExpiry()
+            }
+        }
+        mediaExpiryTimer?.tolerance = 0.2
+    }
+
     init(saved: SavedTab, profileID: UUID, store: BrowserStore, configuration: WKWebViewConfiguration? = nil) {
         id = saved.id
         self.profileID = profileID
@@ -259,53 +283,12 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         WebKitAdapter.enablePictureInPicture(config.preferences)
         WebKitAdapter.enableWebGPU(config.preferences)
         if !inheritsPopupPreferences { config.preferences.javaScriptCanOpenWindowsAutomatically = false }
-        config.userContentController.addUserScript(WKUserScript(
-            source: PopupBlocking.script, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
+        installPageScripts(in: config.userContentController, store: store)
         config.userContentController.add(WeakScriptHandler(self), contentWorld: .page, name: "loafBlockedPopup")
         config.upgradeKnownHostsToHTTPS = true
-
         config.mediaTypesRequiringUserActionForPlayback = .audio
-        config.userContentController.addUserScript(
-            WKUserScript(
-                source: PageScripts.layoutViewport, injectionTime: .atDocumentStart, forMainFrameOnly: true,
-                in: .page))
-        config.userContentController.addUserScript(
-            WKUserScript(
-                source: SiteShortcutBridge.script, injectionTime: .atDocumentStart, forMainFrameOnly: false,
-                in: .defaultClient))
-        config.userContentController.addUserScript(
-            WKUserScript(
-                source: AudioRecovery.script, injectionTime: .atDocumentStart, forMainFrameOnly: false,
-                in: .page))
-        config.userContentController.addUserScript(
-            WKUserScript(
-                source: NotificationScriptHandler.script, injectionTime: .atDocumentStart, forMainFrameOnly: true,
-                in: .page))
         config.userContentController.addScriptMessageHandler(
             NotificationScriptHandler(self), contentWorld: .page, name: "loafNotification")
-        config.userContentController.addUserScript(
-            WKUserScript(
-                source: StorePageIntegration.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true,
-                in: .defaultClient))
-        config.userContentController.addUserScript(
-            WKUserScript(
-                source: PageScripts.linkPreview + "\n" + PageScripts.pageEdits + "\n" + PageScripts.canvasGestures, injectionTime: .atDocumentStart, forMainFrameOnly: false,
-                in: .defaultClient))
-        config.userContentController.addUserScript(
-            WKUserScript(
-                source: PageScripts.favicon, injectionTime: .atDocumentStart, forMainFrameOnly: true,
-                in: .defaultClient))
-        config.userContentController.addUserScript(
-            WKUserScript(
-                source: PageScripts.media, injectionTime: .atDocumentEnd, forMainFrameOnly: false, in: .defaultClient))
-        if !store.profileFor(profileID).privateMode
-            && (store.preferences.savePasswords || store.preferences.autofillPasswords != false)
-        {
-            config.userContentController.addUserScript(
-                WKUserScript(
-                    source: PageScripts.passwordCapture, injectionTime: .atDocumentEnd, forMainFrameOnly: true,
-                    in: PageScripts.passwordWorld))
-        }
         let webView = LoafWebView(frame: .zero, configuration: config)
         if url?.scheme?.hasSuffix("-extension") == true { extensionThemeObservation = ExtensionTheme.bind(webView) }
         webView.browserTab = self
@@ -520,10 +503,9 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         appliedRules = rules
     }
 
-    func updatePasswordCapture() {
-        guard let store, let webView = existingWebView else { return }
-        let controller = webView.configuration.userContentController
-        controller.removeAllUserScripts()
+    private func installPageScripts(in controller: WKUserContentController, store: BrowserStore) {
+        controller.addUserScript(WKUserScript(
+            source: PageScripts.layoutViewport, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
         controller.addUserScript(WKUserScript(
             source: PopupBlocking.script, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
         controller.addUserScript(
@@ -561,6 +543,13 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                     source: PageScripts.passwordCapture, injectionTime: .atDocumentEnd, forMainFrameOnly: true,
                     in: PageScripts.passwordWorld))
         }
+    }
+
+    func updatePasswordCapture() {
+        guard let store, let webView = existingWebView else { return }
+        let controller = webView.configuration.userContentController
+        controller.removeAllUserScripts()
+        installPageScripts(in: controller, store: store)
         store.runtime(for: profileID).extensions.attachUserScripts(to: webView)
     }
 
@@ -600,6 +589,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
 
     func releaseWebView() {
+        mediaExpiryTimer?.invalidate()
+        mediaExpiryTimer = nil
         clearHoveredLink()
         faviconTask?.cancel()
         observations.removeAll()
@@ -1241,6 +1232,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 media = combined
             }
             mediaFramesSeen = mediaFramesSeen.filter { Date().timeIntervalSince($0.value) < 8 }
+            scheduleMediaExpiry()
         }
         if message.name == "loafPassword", message.frameInfo.isMainFrame, let store,
             webView.hasOnlySecureContent, !store.profileFor(profileID).privateMode,

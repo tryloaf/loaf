@@ -309,6 +309,8 @@ nonisolated struct InstalledExtension: Codable, Identifiable, Sendable {
     var version: String?
     var diagnostics: [String]?
     var status: String?
+    var colorTheme: ExtensionColorTheme?
+    var isTheme: Bool?
 }
 
 nonisolated struct Profile: Codable, Identifiable, Sendable {
@@ -325,6 +327,7 @@ nonisolated struct Profile: Codable, Identifiable, Sendable {
     var favorites: [Favorite] = []
     var bookmarkFolders: [BookmarkFolder]?
     var extensions: [InstalledExtension] = []
+    var activeThemeID: UUID?
     var blockerEnabled = true
     var allowedSites: [String] = []
     var privateMode = false
